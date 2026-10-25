@@ -54,9 +54,46 @@
       }
     }
   },
-  "phase": "archaeology",
-  "completed": [],
-  "gates": {},
+  "phase": "done",
+  "completed": [
+    "archaeology",
+    "change-spec",
+    "impact",
+    "build",
+    "review"
+  ],
+  "gates": {
+    "archaeology": {
+      "approved": true,
+      "approvedAt": "2026-10-26",
+      "auto": true,
+      "basis": "backend.md 212 行，10 节均带文件:行号证据；前端面由主流程直接读源码完成（前端考古子智能体两次异常中断）"
+    },
+    "change-spec": {
+      "approved": true,
+      "approvedAt": "2026-10-26",
+      "auto": true,
+      "basis": "agentbot-09-change-spec.md：15 条 P0、明确不做的 5 项、8 条关键决定"
+    },
+    "impact": {
+      "approved": true,
+      "approvedAt": "2026-10-26",
+      "auto": true,
+      "basis": "agentbot-06-impact.md：契约扩展向后兼容、迁移 v2 可空列、无进程生命周期与权限回传已核对"
+    },
+    "build": {
+      "approved": true,
+      "approvedAt": "2026-10-26",
+      "auto": true,
+      "basis": "N1-N6 全部落地；tsc/vue-tsc/boundaries 通过；365/372 测试通过，7 个失败与基线完全一致；smoke:builtin 通过"
+    },
+    "review": {
+      "approved": true,
+      "approvedAt": "2026-10-26",
+      "auto": true,
+      "basis": "agentbot-07-review-builtin-engine.md：15 条 P0 全部有证据；主流程自检，非独立 critic"
+    }
+  },
   "board": {
     "enabled": true,
     "reason": "T4 且 change 涉及 provider/loop/tools/MCP/skills/前端多模块",
@@ -263,14 +300,22 @@
       "decision": "自动化测试用本地 mock provider（OpenAI chat-completions + Anthropic messages 两套）；若环境提供 API key，再补一次真实 smoke（不把 key 写进仓库/日志）。",
       "basis": "设计 §1 已有 pix 实测证据，但仓库内无 key；不能把验收押在外部网络。",
       "affects": "验收证据强度"
+    },
+    {
+      "id": "Q7-builtin-engine",
+      "question": "内置引擎是否需要在首版支持真实供应商 live 验证、图片输入、MCP HTTP 传输？",
+      "status": "deferred",
+      "decision": "首版不做；已记录在 agentbot-07-review-builtin-engine.md 的未验证项。",
+      "affects": "二期范围"
     }
   ],
   "reviewNotes": "15 条 P0：11 条完全通过，4 条带本机环境限制（P0-09 越界实时拒绝仅单测、P0-12 累计值 warning 未验、P0-15 窗口裁剪未触发、P0-07 30min 超时未等待）。首轮发现 6 阻断（CLI 不注入人格记忆、CLI 每轮误判 crashed、刷新事件全丢、2200+ 事件未虚拟滚动、手动添加运行时缺失、删除 Bot 缺失）全部修复。安全修复：CLI 运行时强制 worktree（用户裁定）。文档对齐：P0-06 超时 20s、P0-07 并发 1。报告：.forge/agentbot-07-review.md",
   "features": {
     "builtin-engine": {
       "startedAt": "2026-10-25",
+      "finishedAt": "2026-10-26",
+      "status": "done",
       "design": ".forge/agentbot-06-builtin-engine.md",
-      "runId": "dwfrun-54461c9d-d713-4ccb-9d99-2b16aee7ed1c",
       "modules": [
         "N1 provider 层",
         "N2 agent loop + builtin 驱动",
@@ -279,26 +324,24 @@
         "N5 技能",
         "N6 前端"
       ],
-      "why": "用户裁定：内置引擎与外部运行时并存，自带工具/MCP/技能，provider 支持 OpenAI 与 Anthropic 两种协议",
-      "evidence": {
-        "zcodeCli": "13-16s/轮，prompt 68104 token，无权限通道",
-        "pixDeepseek": "非流式 4.2s；流式首 token 4.4s/总 5.5s；prompt 324 token；tool_calls 支持"
+      "commits": [
+        "9db2b0d",
+        "6dc8ddc",
+        "6344cb5",
+        "e0b54fe"
+      ],
+      "verification": {
+        "tests": "365 passed / 7 failed（基线同 7）",
+        "smoke": "npm run smoke:builtin 通过",
+        "build": "build:web + build:server 通过",
+        "boundaries": "通过"
       },
-      "status": "routed",
-      "mode": "change",
-      "phase": "archaeology",
-      "branch": "continue-dev",
-      "baseline": {
-        "at": "2026-10-26",
-        "command": "tsc --noEmit && vue-tsc --noEmit && node scripts/check-boundaries.mjs && vitest run",
-        "files": 20,
-        "tests": 336,
-        "passed": 329,
-        "failed": 7,
-        "failedFiles": 5,
-        "log": "/tmp/agentbot-baseline.log",
-        "note": "失败多为 Windows→Linux 环境假设（路径大小写、taskkill、git 根判定）。build 以「不新增失败」为验收基线。"
-      }
+      "decisions": [
+        "迁移 v2：ALTER TABLE bots ADD COLUMN provider_id TEXT（可空，不重写旧数据；PRAGMA 判重）",
+        "验收基线：既有 7 个 Windows 环境失败不属本轮回归，口径为「不新增失败」",
+        "真实 provider：未用真实 key，本地假网关覆盖协议与全链路",
+        "MCP：仅 stdio；启动时并行连接，单 server 最多 20s"
+      ]
     }
   },
   "history": [

@@ -124,7 +124,11 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
             toolCalls.push(delta.call);
             break;
           case "usage":
-            opts.callbacks.onUsage(delta);
+            opts.callbacks.onUsage({
+              inputTokens: delta.inputTokens,
+              outputTokens: delta.outputTokens,
+              reported: delta.reported,
+            });
             break;
           case "finish":
             finish = delta.reason;

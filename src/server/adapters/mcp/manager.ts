@@ -1,7 +1,7 @@
 import { config } from "../../config.js";
 import type { ToolDefinition, ToolResult } from "../../core/agent/tools/registry.js";
 import { truncateText } from "../../core/agent/tools/truncate.js";
-import { McpClient, type McpConnectionStatus, type McpToolInfo } from "./client.js";
+import { McpClient, type McpConnectionStatus } from "./client.js";
 import { readMcpFile, type McpServerConfig } from "./config.js";
 
 /**
@@ -38,7 +38,6 @@ function toolNameOf(server: string, tool: string): string {
 export class McpManager {
   private clients = new Map<string, McpClient>();
   private configs: McpServerConfig[] = [];
-  private toolsCache: McpToolInfo[][] = [];
   private disposed = false;
 
   constructor(private readonly configPath: string = config.mcpPath) {}
@@ -47,24 +46,20 @@ export class McpManager {
     const file = readMcpFile(this.configPath);
     this.configs = file.servers;
     this.clients.clear();
-    this.toolsCache = [];
     await Promise.all(
       this.configs.map(async (cfg) => {
         const client = new McpClient(cfg);
         this.clients.set(cfg.id, client);
         if (!cfg.enabled) {
           client.status = "disabled";
-          this.toolsCache.push([]);
           return;
         }
         try {
           await client.connect();
-          this.toolsCache.push(client.tools);
         } catch (err) {
           console.warn(
             `[mcp] ${cfg.id} 连接失败：${err instanceof Error ? err.message : String(err)}`,
           );
-          this.toolsCache.push([]);
         }
       }),
     );
@@ -75,22 +70,22 @@ export class McpManager {
     if (!this.disposed) await this.start();
   }
 
-  async reconnect(id: string): Promise<boolean> {
+  async reconnect(id: string): Promise<"not_found" | "connected" | "failed"> {
     const existing = this.clients.get(id);
     if (existing) await existing.dispose();
     const cfg = readMcpFile(this.configPath).servers.find((s) => s.id === id);
-    if (!cfg) return false;
+    if (!cfg) return "not_found";
     const client = new McpClient(cfg);
     this.clients.set(id, client);
     if (!cfg.enabled) {
       client.status = "disabled";
-      return true;
+      return "connected";
     }
     try {
       await client.connect();
-      return true;
+      return "connected";
     } catch {
-      return false;
+      return "failed";
     }
   }
 

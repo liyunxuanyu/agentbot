@@ -86,8 +86,12 @@ export class McpClient {
       this.tools = await this.listTools();
       this.status = "connected";
     } catch (err) {
-      this.fail(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      this.fail(message);
       await this.dispose();
+      // dispose 会把状态置为 disabled；连接失败要保留 unavailable 供 UI 显示原因
+      this.status = "unavailable";
+      this.error = message;
       throw err;
     }
   }

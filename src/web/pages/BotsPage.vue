@@ -95,7 +95,9 @@ const newBotRepoErr = ref("");
 const creating = ref(false);
 
 const readyRuntimes = computed(() =>
-  runtimes.value.filter((r) => r.healthStatus === "ready" || r.healthStatus === "unprobed"),
+  runtimesStore.runtimes.filter(
+    (r) => r.healthStatus === "ready" || r.healthStatus === "unprobed",
+  ),
 );
 
 /**

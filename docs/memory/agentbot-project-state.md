@@ -32,3 +32,33 @@ metadata:
 
 **Why**：这是当前主力在做的新产品，跨会话还会继续迭代；上面的坑全部是真机实测踩出来的，重复踩一遍要花几个小时。
 **How to apply**：改这块代码前先看"几处踩过的坑"；跑验证用 `npm run build && npm run start:local`，真实对话用 ZCode（注意每轮 15–30s）。原型与视觉权威是 `.forge/agentbot-prototype-v2/index.html`（4691 行，UI 改动照它做）。验收报告在 `.forge/agentbot-07-review.md`。相关流程见 [[product-forge-plugin]]。
+
+---
+
+## 2026-10-26：内置引擎（builtin 通道）已落地
+
+**分支**：`continue-dev`（未合并 main）。新增第四条运行时通道 `builtin`：agent loop 跑在服务进程内，直连模型 API，不启动子进程。
+
+**关键文件**
+- 供应商：`src/server/core/agent/provider.ts`、`src/server/adapters/providers/*`、`src/server/http/routes/providers.ts`
+- 循环与提示：`src/server/core/agent/{loop,prompt,limits}.ts`
+- 工具：`src/server/core/agent/tools/**`（registry / paths / truncate / builtin 八个工具）
+- 技能：`src/server/core/agent/skills.ts` + `routes/skills.ts`
+- MCP：`src/server/adapters/mcp/*` + `routes/mcp.ts`
+- 驱动：`src/server/adapters/channels/builtin/driver.ts`、`adapters/builtin-runtime.ts`
+- 迁移 v2：`bots.provider_id`；`supervisor` 把 botId/providerId 传给驱动
+- 前端：`stores/{providers,mcp,skills}.ts`、SettingsPage 三个新分区、BotsPage/BotDetailPage 供应商选择
+
+**状态目录新增**：`~/.agentbot/providers.json`（0600，含 apiKey）、`mcp.json`、`skills/<name>/SKILL.md`。
+
+**新的坑 / 注意点**
+- 内置引擎的权限是 `internal` 通道：`requiresWorktree()` 只认 `none`，所以它允许 local；每个 write/exec/network 都在 loop 里事前问权限。
+- 默认边界是只读：`allowDirs` 为空时写操作会直接被边界拒绝（不弹卡）。要测权限卡必须先给 Bot 授权目录。
+- 无进程驱动不发 `onExit`，managed 条目留到 idle reap；`dispose` 负责 abort + 拒绝挂起权限 + 丢历史。
+- 重启后 `resumeSession` 必然失败（内存历史没了），supervisor 用 messages 表重建并走 `newSession(systemPrompt)`。
+- 网关可能不支持 `stream_options` 或掐流：loop 会降级一次非流式；已产出文本保留。
+- MCP 工具默认 `exec`，名字 `mcp__<server>__<tool>`；单 server 失败隔离。
+- `grep` 不能用带 `g` 的正则 `.test()`（lastIndex 会跳行）。
+- 冒烟：`npm run smoke:builtin`（假 OpenAI 网关，不碰真实 key）。
+
+**验收**：365 passed / 7 failed（7 个与基线同一批 Windows 环境假设）；tsc/vue-tsc/boundaries/build 通过；`smoke:builtin` 通过。报告：`.forge/agentbot-07-review-builtin-engine.md`；变更日志：`.forge/agentbot-10-change-log.md`。

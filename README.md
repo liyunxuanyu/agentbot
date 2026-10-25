@@ -166,6 +166,9 @@ src/web/
 |---|---|
 | `agentbot.db` | SQLite 主库（WAL，伴随 `-wal` / `-shm`） |
 | `token` | 本地访问 token，权限收紧为仅当前用户 |
+| `providers.json` | 内置引擎的模型供应商（含 apiKey，权限 0600；接口只回掩码） |
+| `mcp.json` | MCP stdio server 配置（命令、参数、env、enabled） |
+| `skills/` | 技能目录：`<name>/SKILL.md`，索引进系统提示、全文由 `read_skill` 按需读取 |
 | `secrets.json` | 自定义运行时 env（尚未落地） |
 | `wt/` | git worktree 根目录（`executionLocation=worktree` 的 Bot 在这里各有一个目录） |
 
@@ -420,6 +423,48 @@ ACP fixture 是按架构 §3.5 映射表手写的协议样本（本机没有 Gem
 改行为不用动代码。探测（`initialize`）只证明「进程活着且说 JSON-RPC」，
 `permissionRequest` / `resume` / `streaming` 是协议内置能力可置 `true`，
 `plan` / `images` / `contextWindow` 留 `unknown` 由声明兜底。
+
+## 内置引擎（builtin 通道）
+
+除了三条外部运行时通道，产品自带一个**不启动子进程**的运行时：agent loop 跑在服务进程内，直连模型 API（OpenAI Chat Completions / Anthropic Messages）。它解决两件事：
+
+- 外部 CLI 一轮 15–20s、prompt 6 万 token 且没有权限通道；内置引擎每轮几百 token，且每个工具调用都能事前拦截。
+- 工具、MCP、技能都在自己的循环里执行，权限判定走**现有** `core/permissions/resolver.ts`（边界 → 授权 → 用户），与 ACP 同构，没有第二条管线。
+
+```
+src/server/
+  core/agent/
+    provider.ts        纯接口（ChatMessage / ToolCall / ProviderDelta / ProviderClient）
+    loop.ts            调模型 → 执行工具 → 回灌 → 循环（maxIterations 20 / maxToolCalls 40）
+    prompt.ts          人格记忆（编排层已拼好）+ 运行规则 + 技能索引
+    skills.ts          ~/.agentbot/skills/<name>/SKILL.md 扫描与索引
+    tools/             registry + paths（realpath 防逃逸）+ truncate + builtin 八个工具
+  adapters/providers/  openai-chat / anthropic / providers.json 读写
+  adapters/mcp/        stdio JSON-RPC 客户端 + 管理器 + mcp.json
+  adapters/channels/builtin/driver.ts   无进程 ChannelDriver
+```
+
+**可用性**：内置引擎在运行时列表里常驻首位；没有配置任何供应商时置灰（`probeDetail` 提示去设置页添加），配置后立即变为 ready。它**不参与 PATH 探测**。
+
+**工具与权限**：`read_file` / `list_dir` / `grep` / `read_skill` 只读；`write_file` / `edit_file`（write）、`run_shell`（exec）、`web_fetch`（network）执行前必须经权限裁决。MCP 工具统一按 `exec` 处理，名字为 `mcp__<server>__<tool>`。用户拒绝后回灌的话术明确要求模型换做法，不会让它死循环重试同一调用。
+
+**边界**：所有文件工具走 `resolveInside(cwd, path)`，`..` 与符号链接逃逸都会被拒；`run_shell` 的 cwd 固定为会话 cwd，超时/取消走树杀；`web_fetch` 只允许 http(s) GET。
+
+**失败处理**：流被网关掐断 → 自动降级一次非流式；429/5xx 退避 2 次（1s、3s）；工具参数不是合法 JSON → 回灌原文让模型重试；上下文溢出 → 丢掉最旧的一半重试一次；达到上限 → 非致命 error + done，用户可继续发消息接着做。
+
+**REST**：
+
+| 端点 | 说明 |
+|---|---|
+| `GET/POST /api/providers` · `PATCH/DELETE /api/providers/:id` | 供应商 CRUD；响应只含 `apiKeyMasked` |
+| `POST /api/providers/:id/test` | 发一次最小请求，返回 `{ok,latencyMs,model,error?}` |
+| `POST /api/providers/:id/default` | 设为默认供应商 |
+| `GET/POST /api/mcp` · `PATCH/DELETE /api/mcp/:id` · `POST /api/mcp/:id/reconnect` | MCP 配置与连接状态 |
+| `GET /api/skills` · `POST /api/skills/rescan` | 技能索引与重扫 |
+
+**Bot 绑定**：`POST/PATCH /api/bots` 接受 `providerId`（可空，空则用默认供应商）；`GET /api/bots` 的 DTO 带 `providerId`。设置页「模型供应商 / MCP / 技能」三个分区负责配置。
+
+**冒烟**：`npm run smoke:builtin` 会起一个假 OpenAI 网关、启动服务、建 Bot、发消息、批准权限卡、校验工具落盘与事件链，全程不访问真实模型。
 
 ## 最小 Turn 的实现要点
 

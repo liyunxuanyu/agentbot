@@ -147,10 +147,10 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: ServerContext): voi
 
   app.post<{ Params: { id: string } }>("/api/mcp/:id/reconnect", async (req, reply) => {
     if (!ctx.mcp) return json(reply, 409, { error: "mcp_unavailable" });
-    const ok = await ctx.mcp.reconnect(req.params.id);
-    if (!ok) return json(reply, 404, { error: "mcp_server_not_found" });
+    const result = await ctx.mcp.reconnect(req.params.id);
+    if (result === "not_found") return json(reply, 404, { error: "mcp_server_not_found" });
     return {
-      ok: true,
+      ok: result === "connected",
       server: ctx.mcp.statuses().find((s) => s.id === req.params.id) ?? null,
     };
   });

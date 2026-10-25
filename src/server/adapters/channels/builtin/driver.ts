@@ -8,7 +8,6 @@ import type {
   SessionHandle,
   SpawnContext,
 } from "../../contract.js";
-import { metaEvent } from "../../contract.js";
 import type { CanonicalEvent } from "../../../../shared/events.js";
 import { getTurnContext } from "../../turn-context.js";
 import {
@@ -27,7 +26,6 @@ import {
   type ToolDefinition,
   type ToolPermissionRequest,
 } from "../../../core/agent/tools/registry.js";
-import { AGENT_LIMITS } from "../../../core/agent/limits.js";
 import type { McpManager } from "../../mcp/manager.js";
 
 /**
@@ -49,6 +47,8 @@ export interface BuiltinDriverOptions {
   skillsDir?: string;
   /** 便于单测注入；生产用 providers.json。 */
   resolveProvider?: (providerId: string | null) => ProviderConfig | null;
+  /** 便于单测注入假 provider；生产按配置创建真实客户端。 */
+  createClient?: (cfg: ProviderConfig) => import("../../../core/agent/provider.js").ProviderClient;
   /** 便于单测注入；生产用内置工具全集。 */
   tools?: ToolDefinition[];
   log?: (message: string) => void;
@@ -87,6 +87,7 @@ function makeEvent(
 export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDriver {
   const states = new Map<string, SessionState>();
   const resolveCfg = opts.resolveProvider ?? ((id: string | null) => resolveProvider(id));
+  const makeClient = opts.createClient ?? createProviderClient;
   const baseTools = opts.tools ?? createBuiltinTools();
   const log = opts.log ?? ((msg: string) => console.warn(`[builtin] ${msg}`));
 
@@ -201,7 +202,7 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     let reasoningOpen = false;
     let result: AgentLoopResult;
     try {
-      const client = createProviderClient(provider);
+      const client = makeClient(provider);
       result = await runAgentLoop({
         provider: client,
         registry,
@@ -363,13 +364,12 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
       const state = stateOf(h);
       if (!state) throw new Error(`内置引擎会话不存在：${h.sessionId}`);
       state.cwd = session.cwd;
+      const providerName = resolveCfg(state.providerId)?.name;
       state.systemPrompt = buildSystemPrompt({
         ...(session.systemPrompt === undefined ? {} : { baseSystemPrompt: session.systemPrompt }),
         cwd: session.cwd,
         skills: scanSkills(opts.skillsDir),
-        ...(resolveCfg(state.providerId)?.name !== undefined
-          ? { providerName: resolveCfg(state.providerId)?.name }
-          : {}),
+        ...(providerName !== undefined ? { providerName } : {}),
       });
       state.history = [{ role: "system", content: state.systemPrompt }];
       return { runtimeSessionId: `builtin_${h.sessionId}` };
@@ -434,6 +434,3 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     },
   };
 }
-
-/** 供装配层/测试使用的 meta 事件构造器（保持与其它通道一致）。 */
-export { metaEvent, AGENT_LIMITS };
