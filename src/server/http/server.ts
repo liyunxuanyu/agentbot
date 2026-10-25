@@ -10,6 +10,7 @@ import type { AssignmentRunner } from "../core/assignment/runner.js";
 import type { Scheduler } from "../core/scheduling/scheduler.js";
 import type { Summarizer } from "../core/memory/summarizer.js";
 import type { AdapterDeclaration } from "../adapters/contract.js";
+import type { McpManager } from "../adapters/mcp/manager.js";
 import {
   authLockRemainingMs,
   clearAuthFailures,
@@ -159,6 +160,8 @@ export interface ServerContext {
    * `runtime_definitions` 里 builtin 行的 health_status。
    */
   onProvidersChanged?: () => void;
+  /** MCP server 管理器（N4）；缺省时 /api/mcp 返回空列表。 */
+  mcp?: McpManager;
 }
 
 /** `/api/meta` 里的运行时摘要：形状对齐 `src/web/net/types.ts` 的 RuntimeSummary。 */
