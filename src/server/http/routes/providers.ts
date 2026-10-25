@@ -1,0 +1,322 @@
+import type { FastifyInstance, FastifyReply } from "fastify";
+import type { ServerContext } from "../server.js";
+import {
+  getProvider,
+  isProviderProtocol,
+  listProviders,
+  newProviderId,
+  providerDto,
+  readProviderFile,
+  writeProviderFile,
+  type ProviderDto,
+} from "../../adapters/providers/store.js";
+import { createProviderClient } from "../../adapters/providers/index.js";
+import type { ProviderConfig, ProviderProtocol } from "../../core/agent/provider.js";
+
+/**
+ * 模型供应商端点（内置引擎 N1）。
+ *
+ *   GET    /api/providers              → 列表（apiKey 只回掩码）
+ *   POST   /api/providers              → 新增
+ *   PATCH  /api/providers/:id          → 修改（apiKey 省略 = 不变）
+ *   DELETE /api/providers/:id          → 删除
+ *   POST   /api/providers/:id/test     → 发一次最小请求测连通性
+ *   POST   /api/providers/:id/default  → 设为默认供应商
+ *
+ * 纪律：**任何响应都不含明文 apiKey**，日志也不打印。
+ */
+
+interface FieldError {
+  field: string;
+  code: string;
+  message: string;
+}
+
+function json(reply: FastifyReply, code: number, body: unknown): FastifyReply {
+  return reply.code(code).header("content-type", "application/json; charset=utf-8").send(body);
+}
+
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+interface ProviderBody {
+  id?: unknown;
+  name?: unknown;
+  protocol?: unknown;
+  baseUrl?: unknown;
+  apiKey?: unknown;
+  model?: unknown;
+  contextWindow?: unknown;
+  supportsTools?: unknown;
+  supportsStreaming?: unknown;
+  headers?: unknown;
+}
+
+function readHeaders(raw: unknown, fields: FieldError[]): Record<string, string> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    fields.push({ field: "headers", code: "not_object", message: "headers 必须是键值对象" });
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== "string") {
+      fields.push({ field: "headers", code: "not_string", message: `headers.${key} 必须是字符串` });
+      return undefined;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+function readProviderInput(
+  body: ProviderBody,
+  fields: FieldError[],
+  opts: { requireId: boolean },
+): Partial<ProviderConfig> & { id?: string } {
+  const out: Partial<ProviderConfig> & { id?: string } = {};
+
+  if (opts.requireId) {
+    if (typeof body.id === "string" && body.id.length > 0) {
+      if (!ID_PATTERN.test(body.id)) {
+        fields.push({
+          field: "id",
+          code: "invalid_value",
+          message: "id 只能包含字母、数字、- 和 _，且不超过 64 个字符",
+        });
+      } else {
+        out.id = body.id;
+      }
+    }
+  }
+
+  if (body.name !== undefined) {
+    if (typeof body.name !== "string" || body.name.trim().length === 0) {
+      fields.push({ field: "name", code: "invalid_value", message: "名称不能为空" });
+    } else if (body.name.length > 64) {
+      fields.push({ field: "name", code: "too_long", message: "名称最多 64 个字符" });
+    } else {
+      out.name = body.name.trim();
+    }
+  }
+
+  if (body.protocol !== undefined) {
+    if (!isProviderProtocol(body.protocol)) {
+      fields.push({
+        field: "protocol",
+        code: "invalid_value",
+        message: "协议只能是 openai-chat 或 anthropic-messages",
+      });
+    } else {
+      out.protocol = body.protocol;
+    }
+  }
+
+  if (body.baseUrl !== undefined) {
+    if (typeof body.baseUrl !== "string" || !isHttpUrl(body.baseUrl.trim())) {
+      fields.push({ field: "baseUrl", code: "invalid_value", message: "baseUrl 必须是 http(s) 地址" });
+    } else {
+      out.baseUrl = body.baseUrl.trim().replace(/\/+$/, "");
+    }
+  }
+
+  if (body.apiKey !== undefined) {
+    if (typeof body.apiKey !== "string" || body.apiKey.trim().length === 0) {
+      fields.push({ field: "apiKey", code: "invalid_value", message: "apiKey 不能为空" });
+    } else {
+      out.apiKey = body.apiKey.trim();
+    }
+  }
+
+  if (body.model !== undefined) {
+    if (typeof body.model !== "string" || body.model.trim().length === 0) {
+      fields.push({ field: "model", code: "invalid_value", message: "model 不能为空" });
+    } else {
+      out.model = body.model.trim();
+    }
+  }
+
+  if (body.contextWindow !== undefined) {
+    if (body.contextWindow === null) out.contextWindow = null;
+    else if (typeof body.contextWindow !== "number" || !Number.isInteger(body.contextWindow) || body.contextWindow <= 0) {
+      fields.push({
+        field: "contextWindow",
+        code: "invalid_value",
+        message: "contextWindow 必须是正整数或 null",
+      });
+    } else out.contextWindow = body.contextWindow;
+  }
+
+  if (body.supportsTools !== undefined) {
+    if (typeof body.supportsTools !== "boolean") {
+      fields.push({ field: "supportsTools", code: "invalid_value", message: "supportsTools 必须是布尔值" });
+    } else out.supportsTools = body.supportsTools;
+  }
+
+  if (body.supportsStreaming !== undefined) {
+    if (typeof body.supportsStreaming !== "boolean") {
+      fields.push({
+        field: "supportsStreaming",
+        code: "invalid_value",
+        message: "supportsStreaming 必须是布尔值",
+      });
+    } else out.supportsStreaming = body.supportsStreaming;
+  }
+
+  const headers = readHeaders(body.headers, fields);
+  if (headers !== undefined) out.headers = headers;
+
+  return out;
+}
+
+function requireComplete(input: Partial<ProviderConfig>, fields: FieldError[]): void {
+  const required: (keyof ProviderConfig)[] = ["protocol", "baseUrl", "apiKey", "model"];
+  for (const key of required) {
+    if (input[key] === undefined) {
+      fields.push({ field: String(key), code: "required", message: `${String(key)} 不能为空` });
+    }
+  }
+}
+
+function dtoOf(p: ProviderConfig, defaultId: string | null): ProviderDto {
+  return providerDto(p, defaultId);
+}
+
+export function registerProviderRoutes(app: FastifyInstance, ctx: ServerContext): void {
+  app.get("/api/providers", async () => {
+    const file = readProviderFile();
+    return { providers: file.providers.map((p) => dtoOf(p, file.defaultId)), defaultId: file.defaultId };
+  });
+
+  app.post<{ Body: ProviderBody }>("/api/providers", async (req, reply) => {
+    const body = req.body ?? {};
+    const fields: FieldError[] = [];
+    const input = readProviderInput(body, fields, { requireId: false });
+    requireComplete(input, fields);
+    const id = input.id ?? newProviderId();
+    const file = readProviderFile();
+    if (file.providers.some((p) => p.id === id)) {
+      fields.push({ field: "id", code: "duplicate", message: `供应商 id 已存在：${id}` });
+    }
+    if (fields.length > 0) return json(reply, 400, { error: "invalid_provider", fields });
+
+    const provider: ProviderConfig = {
+      id,
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      protocol: input.protocol as ProviderProtocol,
+      baseUrl: input.baseUrl as string,
+      apiKey: input.apiKey as string,
+      model: input.model as string,
+      contextWindow: input.contextWindow ?? null,
+      supportsTools: input.supportsTools ?? true,
+      supportsStreaming: input.supportsStreaming ?? true,
+      ...(input.headers !== undefined ? { headers: input.headers } : {}),
+    };
+    const next = {
+      defaultId: file.defaultId ?? provider.id,
+      providers: [...file.providers, provider],
+    };
+    writeProviderFile(next);
+    ctx.onProvidersChanged?.();
+    return json(reply, 201, { provider: dtoOf(provider, next.defaultId) });
+  });
+
+  app.patch<{ Params: { id: string }; Body: ProviderBody }>(
+    "/api/providers/:id",
+    async (req, reply) => {
+      const file = readProviderFile();
+      const current = file.providers.find((p) => p.id === req.params.id);
+      if (!current) return json(reply, 404, { error: "provider_not_found" });
+
+      const body = req.body ?? {};
+      const fields: FieldError[] = [];
+      const input = readProviderInput(body, fields, { requireId: false });
+      if (fields.length > 0) return json(reply, 400, { error: "invalid_provider", fields });
+
+      const updated: ProviderConfig = {
+        ...current,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.protocol !== undefined ? { protocol: input.protocol } : {}),
+        ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
+        ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.contextWindow !== undefined ? { contextWindow: input.contextWindow } : {}),
+        ...(input.supportsTools !== undefined ? { supportsTools: input.supportsTools } : {}),
+        ...(input.supportsStreaming !== undefined ? { supportsStreaming: input.supportsStreaming } : {}),
+        ...(input.headers !== undefined ? { headers: input.headers } : {}),
+      };
+      const next = {
+        defaultId: file.defaultId,
+        providers: file.providers.map((p) => (p.id === current.id ? updated : p)),
+      };
+      writeProviderFile(next);
+      ctx.onProvidersChanged?.();
+      return { provider: dtoOf(updated, next.defaultId) };
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>("/api/providers/:id", async (req, reply) => {
+    const file = readProviderFile();
+    if (!file.providers.some((p) => p.id === req.params.id)) {
+      return json(reply, 404, { error: "provider_not_found" });
+    }
+    const providers = file.providers.filter((p) => p.id !== req.params.id);
+    const defaultId = file.defaultId === req.params.id ? (providers[0]?.id ?? null) : file.defaultId;
+    writeProviderFile({ defaultId, providers });
+    ctx.onProvidersChanged?.();
+    return reply.code(204).send();
+  });
+
+  app.post<{ Params: { id: string } }>("/api/providers/:id/default", async (req, reply) => {
+    const file = readProviderFile();
+    if (!file.providers.some((p) => p.id === req.params.id)) {
+      return json(reply, 404, { error: "provider_not_found" });
+    }
+    writeProviderFile({ defaultId: req.params.id, providers: file.providers });
+    ctx.onProvidersChanged?.();
+    return { ok: true, defaultId: req.params.id };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/providers/:id/test", async (req, reply) => {
+    const provider = getProvider(req.params.id);
+    if (!provider) return json(reply, 404, { error: "provider_not_found" });
+
+    const started = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    timer.unref?.();
+    try {
+      const client = createProviderClient(provider);
+      await client.complete({
+        messages: [{ role: "user", content: "Reply with OK." }],
+        tools: [],
+        maxOutputTokens: 8,
+        signal: controller.signal,
+      });
+      return { ok: true, latencyMs: Date.now() - started, model: provider.model };
+    } catch (err) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        model: provider.model,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+
+  // 供内置驱动复用：列出可用供应商（不含密钥），避免两处各读一次文件。
+  app.get("/api/providers/available", async () => {
+    const providers = listProviders();
+    return { count: providers.length, defaultId: readProviderFile().defaultId };
+  });
+}

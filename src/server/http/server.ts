@@ -153,6 +153,12 @@ export interface ServerContext {
    * 内置运行时回 `409 declaration_missing`，不假装探测成功。
    */
   declarations?: ReadonlyMap<string, AdapterDeclaration>;
+  /**
+   * 供应商配置变化后的回调（新增/修改/删除/设默认）。
+   * 内置引擎的可用性取决于是否至少配置了一个供应商；装配层用它刷新
+   * `runtime_definitions` 里 builtin 行的 health_status。
+   */
+  onProvidersChanged?: () => void;
 }
 
 /** `/api/meta` 里的运行时摘要：形状对齐 `src/web/net/types.ts` 的 RuntimeSummary。 */

@@ -15,6 +15,7 @@ import { registerUsageRoutes } from "./usage.js";
 import { registerScheduleRoutes } from "./schedules.js";
 import { registerTokenRoutes } from "./token.js";
 import { registerAdminRoutes } from "./admin.js";
+import { registerProviderRoutes } from "./providers.js";
 
 /**
  * 路由注册入口。
@@ -40,6 +41,8 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerContext): void {
   }));
 
   registerRuntimeRoutes(app, ctx);
+  // 内置引擎的模型供应商（N1）：apiKey 只回掩码
+  registerProviderRoutes(app, ctx);
   registerBotRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
   // P0-04/P0-05：刷新后重建事件流（含 meta 与用量），SSE 只负责增量

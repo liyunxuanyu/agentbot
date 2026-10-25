@@ -18,6 +18,12 @@ export const config = {
   dbPath: join(AGENTBOT_HOME, "agentbot.db"),
   tokenPath: join(AGENTBOT_HOME, "token"),
   secretsPath: join(AGENTBOT_HOME, "secrets.json"),
+  /** 内置引擎的模型供应商（含 apiKey，文件权限 0600）。 */
+  providersPath: join(AGENTBOT_HOME, "providers.json"),
+  /** MCP server 配置（stdio 命令与参数）。 */
+  mcpPath: join(AGENTBOT_HOME, "mcp.json"),
+  /** 技能目录：<name>/SKILL.md，与 ZCode 的约定一致。 */
+  skillsDir: join(AGENTBOT_HOME, "skills"),
   worktreeRoot: join(AGENTBOT_HOME, "wt"),
 
   http: {

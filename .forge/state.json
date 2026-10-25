@@ -2,13 +2,13 @@
   "project": "agentbot",
   "slug": "agentbot",
   "created": "2026-10-23",
-  "mode": "greenfield",
+  "mode": "change",
   "autonomy": "auto",
   "tier": "T4",
   "tierScore": 9,
   "tierBasis": {
     "projectTier": 9,
-    "changeTier": null,
+    "changeTier": 8,
     "breakdown": {
       "screens_gt5": {
         "score": 2,
@@ -34,76 +34,45 @@
         "score": 1,
         "basis": "agentbot-03-ui.md 为完整视觉规范（vivid 定稿），含令牌、对比度实测、8 个 Bot 身份色"
       }
+    },
+    "changeBreakdown": {
+      "files_gt5": {
+        "score": 2,
+        "basis": "设计 §3 新增 core/agent/**、adapters/providers/**、adapters/mcp/**、adapters/channels/builtin/**、3 个 http 路由、前端设置与 Bot 表单；另需改 contract.ts / main.ts / migrate.ts / routes/index.ts / 前端 types+stores。远超 5 个文件。"
+      },
+      "data_model_or_contract": {
+        "score": 2,
+        "basis": "bots.provider_id（数据模型）、ProtocolKind 增 builtin、PermissionChannel 增 internal、新增 ProviderClient/ToolDefinition 接口、新增 /api/providers|mcp|skills 契约。"
+      },
+      "migration": {
+        "score": 3,
+        "basis": "迁移 v2：ALTER TABLE bots ADD COLUMN provider_id TEXT。可空列追加、不重写旧数据，但按 router 规则「迁移」计入破坏性并走不可逆确认。"
+      },
+      "new_ui": {
+        "score": 1,
+        "basis": "设置页新增「模型供应商 / MCP / 技能」分区（现有 SettingsPage 仅 runtimes/security/data/audit 四个 tab）；Bot 表单新增 provider 选择。"
+      }
     }
   },
-  "phase": "builtin-engine",
-  "completed": [
-    "brief",
-    "prd",
-    "ux",
-    "ui",
-    "prototype",
-    "architecture",
-    "build",
-    "review"
-  ],
-  "gates": {
-    "brief": {
-      "approved": true,
-      "approvedAt": "2026-10-23",
-      "auto": true
-    },
-    "prd": {
-      "approved": true,
-      "approvedAt": "2026-10-23",
-      "auto": true
-    },
-    "ux": {
-      "approved": true,
-      "approvedAt": "2026-10-23",
-      "auto": true
-    },
-    "ui": {
-      "approved": true,
-      "approvedAt": "2026-10-24",
-      "auto": true
-    },
-    "prototype": {
-      "approved": true,
-      "approvedAt": "2026-10-24",
-      "auto": true,
-      "basis": "critic 独立验收 1 阻断 + 11 重要 + 12 次要；阻断项（停止按钮非终态）与 11 重要项全部修复并经主流程独立复测；12 次要项全部完成。复测：暗色 14 页 0 处 <4.5:1、五宽度 x 14 路由 0 横向滚动、F1-F6 六流程通过、0 JS 错误。"
-    },
-    "architecture": {
-      "approved": true,
-      "approvedAt": "2026-10-24",
-      "auto": true
-    },
-    "build": {
-      "approved": true,
-      "approvedAt": "2026-10-25",
-      "auto": true,
-      "basis": "331 单测全绿、vue-tsc/tsc 0 错、boundaries 通过、真实 ZCode 端到端跑通（人格+记忆注入、会话重建、停止终态）。"
-    },
-    "review": {
-      "approved": true,
-      "approvedAt": "2026-10-25",
-      "auto": true,
-      "basis": "两个 critic 实例并行只读验收 15 条 P0；6 阻断 + 11 重要 + 13 次要全部修复并复测。7 项因本机环境未验证（已列明）。"
-    }
-  },
+  "phase": "archaeology",
+  "completed": [],
+  "gates": {},
   "board": {
     "enabled": true,
-    "reason": "T4 大型项目",
-    "topic": "product-positioning",
+    "reason": "T4 且 change 涉及 provider/loop/tools/MCP/skills/前端多模块",
+    "topic": "builtin-engine",
     "open": [],
-    "resolved": [
-      "01-pm-question.md",
-      "02-ux-designer-question.md",
-      "03-decisions.md",
-      "04-architect-question.md",
-      "05-pm-answer.md"
-    ]
+    "resolved": [],
+    "previous": {
+      "topic": "product-positioning",
+      "resolved": [
+        "01-pm-question.md",
+        "02-ux-designer-question.md",
+        "03-decisions.md",
+        "04-architect-question.md",
+        "05-pm-answer.md"
+      ]
+    }
   },
   "prototypeNotes": "v2 原型（.forge/agentbot-prototype-v2/index.html，4691 行单文件）已达可交付状态。本轮修复轨迹：① 按 agentbot-03-ui.md 逐条实测比对，找出 11 处不符（暗色仅覆盖 76/166 令牌、.av--28 未定义致 /usage 头像塌成 15px、Turn 头不吸顶、权限卡不吸附、缺活动行组件、chips 非 secondary、Session 分隔条 0 渲染、连续消息 0 实例等）；② ui-designer 修复 11 项 + 补 3 处细节（折叠块展开态白底+card、未知事件虚线块、频道行 56px）；③ critic 独立验收判不通过（1 阻断 + 11 重要 + 12 次要）；④ ui-designer 全部修完：阻断项停止按钮改为终态（引入 run.gen 代号 + trackInterval/trackTimeout/stopRun，私聊与群聊 5s 内文本不再增长、光标移除、头部不回退）；F1 重名内联拦截 + 首条消息 token 用量；F6 三种触发方式真切换 + <5min 内联拒绝；非流式运行时不再出现假光标；记忆注入量三处同数（1,560/6,000）；F3 任务状态脱离 DOM 独立推进；1024-1280 导航悬停展开、右面板抽屉可达；.is-dim 因 animation-fill-mode:both 锁死 opacity 的 bug 已修。复测：暗色 14 页 0 处 <4.5:1（888/894 文本节点）、亮暗均 0 处非禁用文字 <4.5:1、五宽度（1440/1280/1024/768/375）x 14 路由 0 横向滚动、F1-F6 六流程通过、0 JS 错误 0 404。已知遗留（规范层，非实现缺陷）：primary/ghost/danger 禁用态对比度 2.78-2.92:1（规范 §7.1 既定取值，WCAG 对 disabled 豁免）；暗色 --color-text-faint 取 #8A99A7 而非 tokens.css 的 #6E7D8A（有意提可读性，3.84->5.56）。",
   "variants": {
@@ -135,10 +104,53 @@
     }
   },
   "rollback": {
-    "at": "2026-10-24",
-    "reason": "原型阶段收尾：修复 state.json 非法 JSON（chosen 未闭合 + board/variants/chosen 重复四组）；纠正 chosen.ui 为 vivid（原记 instrument，与 03-ui.md 及 tokens.css md5 一致的事实不符）；variants.ui 补全为 6 套；board.resolved 纠正为实际 5 个文件名。",
-    "previousPhase": "build",
-    "note": "phase 仍为 build（阶段 4 原型已在 completed 内，下一步是阶段 6 实现）"
+    "at": "2026-10-26",
+    "fromPhase": "builtin-engine",
+    "toPhase": "archaeology",
+    "fromMode": "greenfield",
+    "toMode": "change",
+    "reason": "state.mode=greenfield 与实际不符：src 下 118 个源文件、完整可运行实现；phase='builtin-engine' 不是 greenfield 合法阶段；completed 的八个 greenfield 阶段不属于 change 合法序列。项目已进入第二轮功能开发（内置引擎 N1–N6），按 change 模式从 archaeology 起算。",
+    "previousCompleted": [
+      "brief",
+      "prd",
+      "ux",
+      "ui",
+      "prototype",
+      "architecture",
+      "build",
+      "review"
+    ],
+    "previousGatesApprovedAt": {
+      "brief": "2026-10-23",
+      "prd": "2026-10-23",
+      "ux": "2026-10-23",
+      "ui": "2026-10-24",
+      "prototype": "2026-10-24",
+      "architecture": "2026-10-24",
+      "build": "2026-10-25",
+      "review": "2026-10-25"
+    },
+    "previousTier": {
+      "tier": "T4",
+      "tierScore": 9
+    },
+    "evidence": {
+      "sourceFiles": 118,
+      "missingModules": [
+        "src/server/core/agent/",
+        "src/server/adapters/providers/",
+        "src/server/adapters/mcp/",
+        "src/server/adapters/channels/builtin/",
+        "src/server/http/routes/providers.ts|mcp.ts|skills.ts"
+      ],
+      "contractGaps": [
+        "ProtocolKind 无 'builtin'（src/server/adapters/contract.ts:6-11）",
+        "PermissionChannel 无 'internal'（contract.ts:17）",
+        "bots 表无 provider_id（src/server/core/db/schema.sql:29-47）",
+        "SCHEMA_VERSION=1，仅 v1 迁移（src/server/core/db/migrate.ts:13）"
+      ],
+      "docsClaim": "README.md:19 已写「配模型供应商」，但 src 内 grep provider/供应商 为 0 命中。"
+    }
   },
   "openQuestions": [
     {
@@ -186,6 +198,71 @@
       "status": "resolved",
       "decision": "已由 critic 独立验收闭环：14 路由 x 亮/暗 x 四态 + 权限四态 + 三种弹层全部实测，1 阻断 + 11 重要 + 12 次要问题均已修复并复测通过。",
       "resolvedAt": "2026-10-24"
+    },
+    {
+      "id": "Q7-provider-id-migration",
+      "question": "内置引擎需要把 Bot 绑定到模型供应商。采用迁移 v2 新增可空列 bots.provider_id，还是把 providerId 编进 runtime_bindings.runtime_id（零迁移但语义脏）？",
+      "status": "pending-approval",
+      "decision": "迁移 v2：ALTER TABLE bots ADD COLUMN provider_id TEXT（可空，不重写旧数据，旧 Bot 行为不变）。",
+      "basis": "设计 §9/§15.1；migrate.ts 已支持按版本增量。可空列追加向后兼容，但属于数据迁移，必须走不可逆确认。",
+      "affects": "数据模型、迁移、Bot DTO、前端 Bot 表单",
+      "requiresApproval": true
+    },
+    {
+      "id": "Q8-api-key-storage",
+      "question": "provider 的 apiKey 存明文 JSON 还是系统凭据库？",
+      "status": "decided-by-default",
+      "decision": "沿用 ~/.agentbot/providers.json，文件权限 0600；不引入 keytar 等原生依赖。",
+      "basis": "设计 §9/§15.2；现有 auth.ts 已是文件 + 权限收紧方案。",
+      "affects": "安全、部署依赖"
+    },
+    {
+      "id": "Q9-mcp-permission-default",
+      "question": "MCP 工具默认权限？",
+      "status": "decided-by-default",
+      "decision": "默认 exec，每次调用都问；首版不提供 autoApprove（二期可加 per-server 开关）。",
+      "basis": "设计 §11/§15.3；MCP 工具能力不可预判。",
+      "affects": "权限体验、MCP 可用性"
+    },
+    {
+      "id": "Q10-images",
+      "question": "内置引擎是否支持图片输入？",
+      "status": "decided-by-default",
+      "decision": "首版 images: false，不支持多模态消息体。",
+      "basis": "设计 §10/§15.4；provider 层需额外消息体，非本轮 P0。",
+      "affects": "能力声明、前端上传"
+    },
+    {
+      "id": "Q11-limits",
+      "question": "agent loop 的迭代与工具调用上限？",
+      "status": "decided-by-default",
+      "decision": "maxIterations=20、maxToolCalls=40，集中放 core/agent/limits.ts，后续可配置。",
+      "basis": "设计 §8.5/§15.5。",
+      "affects": "成本、失败语义"
+    },
+    {
+      "id": "Q12-baseline-failures",
+      "question": "基线测试 7 个失败（5 文件）是否先修？",
+      "status": "decided-by-default",
+      "decision": "不先修；固化基线清单，本次验收标准为「不新增失败」。若失败项与内置引擎改动直接相关（权限/路径），在对应模块内顺带修正并单列提交。",
+      "basis": "2026-10-26 基线：20 文件 / 336 测试 / 329 通过 / 7 失败；失败集中在路径大小写、taskkill、git 根判定，属 Windows→Linux 环境假设。",
+      "affects": "验收口径、build 范围"
+    },
+    {
+      "id": "Q13-branch-push",
+      "question": "提交与推送策略？",
+      "status": "decided-by-default",
+      "decision": "只在 continue-dev 分支；每个逻辑单元一次提交并推送；首次推送用 git push -u origin continue-dev（当前无远端追踪分支）；不开 PR、不合并 main。",
+      "basis": "用户明确要求；git branch -a 仅有 origin/main，continue-dev 未推送过。",
+      "affects": "交付流程"
+    },
+    {
+      "id": "Q14-live-provider",
+      "question": "是否用真实供应商做端到端验证？",
+      "status": "decided-by-default",
+      "decision": "自动化测试用本地 mock provider（OpenAI chat-completions + Anthropic messages 两套）；若环境提供 API key，再补一次真实 smoke（不把 key 写进仓库/日志）。",
+      "basis": "设计 §1 已有 pix 实测证据，但仓库内无 key；不能把验收押在外部网络。",
+      "affects": "验收证据强度"
     }
   ],
   "reviewNotes": "15 条 P0：11 条完全通过，4 条带本机环境限制（P0-09 越界实时拒绝仅单测、P0-12 累计值 warning 未验、P0-15 窗口裁剪未触发、P0-07 30min 超时未等待）。首轮发现 6 阻断（CLI 不注入人格记忆、CLI 每轮误判 crashed、刷新事件全丢、2200+ 事件未虚拟滚动、手动添加运行时缺失、删除 Bot 缺失）全部修复。安全修复：CLI 运行时强制 worktree（用户裁定）。文档对齐：P0-06 超时 20s、P0-07 并发 1。报告：.forge/agentbot-07-review.md",
@@ -206,7 +283,56 @@
       "evidence": {
         "zcodeCli": "13-16s/轮，prompt 68104 token，无权限通道",
         "pixDeepseek": "非流式 4.2s；流式首 token 4.4s/总 5.5s；prompt 324 token；tool_calls 支持"
+      },
+      "status": "routed",
+      "mode": "change",
+      "phase": "archaeology",
+      "branch": "continue-dev",
+      "baseline": {
+        "at": "2026-10-26",
+        "command": "tsc --noEmit && vue-tsc --noEmit && node scripts/check-boundaries.mjs && vitest run",
+        "files": 20,
+        "tests": 336,
+        "passed": 329,
+        "failed": 7,
+        "failedFiles": 5,
+        "log": "/tmp/agentbot-baseline.log",
+        "note": "失败多为 Windows→Linux 环境假设（路径大小写、taskkill、git 根判定）。build 以「不新增失败」为验收基线。"
       }
     }
-  }
+  },
+  "history": [
+    {
+      "cycle": "greenfield-v1",
+      "mode": "greenfield",
+      "completed": [
+        "brief",
+        "prd",
+        "ux",
+        "ui",
+        "prototype",
+        "architecture",
+        "build",
+        "review"
+      ],
+      "gates": {
+        "brief": "2026-10-23",
+        "prd": "2026-10-23",
+        "ux": "2026-10-23",
+        "ui": "2026-10-24",
+        "prototype": "2026-10-24",
+        "architecture": "2026-10-24",
+        "build": "2026-10-25",
+        "review": "2026-10-25"
+      },
+      "artifacts": ".forge/agentbot-00-brief.md / 01-prd / 02-ux / 03-ui / 05-architecture / agentbot-prototype-v2 / 07-review.md",
+      "note": "首个完整版本已交付（10 页 Vue 前端 + Fastify/SQLite 后端 + 五运行时适配）。本轮为 change 模式，在其上新增内置引擎 N1–N6。",
+      "previousRollback": {
+        "at": "2026-10-24",
+        "reason": "原型阶段收尾：修复 state.json 非法 JSON（chosen 未闭合 + board/variants/chosen 重复四组）；纠正 chosen.ui 为 vivid（原记 instrument，与 03-ui.md 及 tokens.css md5 一致的事实不符）；variants.ui 补全为 6 套；board.resolved 纠正为实际 5 个文件名。",
+        "previousPhase": "build",
+        "note": "phase 仍为 build（阶段 4 原型已在 completed 内，下一步是阶段 6 实现）"
+      }
+    }
+  ]
 }
