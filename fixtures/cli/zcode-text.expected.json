@@ -1,0 +1,8 @@
+[
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "我是一个能够协助你分析问题、编写代码和处理资料的人工智能助手。" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "\n我会先理解你的目标，再提供清晰、实用且可执行的帮助。" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "\n你可以把我当作一名随时协作的技术伙伴。" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "end", "text": "" } },
+  { "type": "done", "payload": { "stopReason": "end", "durationMs": 0 } }
+]

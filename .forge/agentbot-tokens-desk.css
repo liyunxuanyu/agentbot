@@ -1,0 +1,137 @@
+/* AgentBot · dispatch-desk tokens
+   用法：<link rel="stylesheet" href="agentbot-tokens-desk.css">，全部为自定义属性。
+   原则：分层靠明度（≤6% 差）+ 规则线，不靠阴影；衬线只给标题与单据表头。 */
+
+:root {
+  /* ── 表面：暖象牙四阶 ─────────────────────────── */
+  --color-paper:        #F2EEE2; /* 页面底 */
+  --color-sheet:        #FAF7EF; /* 单据 / 卡片 / 输入区 */
+  --color-alt:          #EBE6D8; /* 侧栏 / 表头 / 斑马行 / 悬停行 */
+  --color-sunk:         #E2DCCB; /* 代码块 / 展开内容 / 禁用字段 */
+
+  /* ── 前景：四级墨色 ───────────────────────────── */
+  --color-ink-1:        #221C16; /* 正文标题   14.53:1 on paper */
+  --color-ink-2:        #4A4034; /* 次要正文    8.73:1 */
+  --color-ink-3:        #6A5F50; /* 元信息      5.38:1 */
+  --color-ink-4:        #857963; /* 仅占位/禁用/≥24px 大字  3.69:1 on paper（非文本 3:1 达标） */
+
+  /* ── 主色：编辑红笔 / 焦糖砖 ──────────────────── */
+  --color-primary:      #8C4A1C; /* 5.82:1 on paper */
+  --color-primary-hover:#74390F;
+  --color-primary-soft: #F0E2D1; /* 其上 primary 文字 5.30:1 */
+  --color-on-primary:   #FBF8F0; /* 主按钮文字 6.36:1 */
+  --color-mark:         #B4431F; /* 红笔：编号 / 批注 / 权限标记 */
+
+  /* ── 语义色（实色 / 浅底） ────────────────────── */
+  --color-success:      #3D6B3A; --color-success-soft: #E2ECDD;
+  --color-warning:      #8A6410; --color-warning-soft: #F2E8D0;
+  --color-danger:       #A8331E; --color-danger-soft:  #F5DFD9;
+  --color-focus:        #8C4A1C;
+
+  /* ── 印章色板（文字 / 底） ────────────────────── */
+  --color-stamp-approved: #2C5A2E; --color-stamp-approved-bg: #E2ECDD;
+  --color-stamp-rejected: #8E2A18; --color-stamp-rejected-bg: #F5DFD9;
+  --color-stamp-queued:   #7A5A0E; /* 透明底 + 虚线框 */
+  --color-stamp-running:  #8C4A1C; --color-stamp-running-bg:  #F2E4D4;
+  --color-stamp-held:     #4A4034; --color-stamp-held-bg:     #EDE6D6;
+  --color-stamp-timeout:  #85571A; /* 透明底 + 虚线框 */
+  --color-stamp-done:     #3F4438; --color-stamp-done-bg:     #E6E7DC;
+  --color-stamp-void:     #6B6051; --color-stamp-void-bg:     #EDE9DE;
+
+  /* ── 九类事件：色 + 符号 ──────────────────────── */
+  --event-message:      var(--color-ink-1);  --event-message-mark:      none;
+  --event-thinking:     var(--color-ink-3);  --event-thinking-mark:     "\2261"; /* ≡ */
+  --event-tool-call:    var(--color-ink-2);  --event-tool-call-mark:    "\25B8"; /* ▸ */
+  --event-tool-result:  var(--color-success);--event-tool-result-mark:  "\2514"; /* └ */
+  --event-plan:         var(--color-primary);--event-plan-mark:         "\25C7"; /* ◇ */
+  --event-permission:   var(--color-mark);   --event-permission-mark:   "\25A3"; /* ▣ */
+  --event-usage:        var(--color-ink-3);  --event-usage-mark:        "\2116"; /* № */
+  --event-end:          var(--color-ink-3);  --event-end-mark:          "\220E"; /* ∎ */
+  --event-error:        var(--color-danger); --event-error-mark:        "\00D7"; /* × */
+
+  /* ── 字体 ─────────────────────────────────────── */
+  --font-serif: "Spectral", "Source Serif 4", "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", Georgia, serif;
+  --font-sans:  "IBM Plex Sans", "Public Sans", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-mono:  "IBM Plex Mono", "JetBrains Mono", "SF Mono", "Cascadia Mono", "Consolas", monospace;
+
+  /* ── 字号阶梯（9 级） ─────────────────────────── */
+  --text-display: 34px; --lh-display: 1.15;  /* serif 600 页面主标题 / Bot 名 */
+  --text-title:   25px; --lh-title:   1.25;  /* serif 600 区块 / 报告标题 */
+  --text-heading: 19px; --lh-heading: 1.32;  /* serif 600 单据表头 / 卡片名 */
+  --text-subhead: 16px; --lh-subhead: 1.45;  /* serif 500 引文 / 空态引导 */
+  --text-body:    15px; --lh-body:    1.65;  /* sans 400 正文 / 表单值 */
+  --text-small:   13px; --lh-small:   1.55;  /* sans 400 元信息 */
+  --text-micro:   11.5px; --lh-micro: 1.4;   /* sans 500 字段标签 / 印章 */
+  --text-code:    13px; --lh-code:    1.6;   /* mono 代码块 / 命令 */
+  --text-data:    12px; --lh-data:    1.5;   /* mono 路径 / 编号 / token */
+  --track-micro:  0.04em;
+  --weight-regular: 400; --weight-medium: 500; --weight-semibold: 600;
+
+  /* ── 间距（基准 4） ───────────────────────────── */
+  --space-0: 2px;  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
+  --space-8: 64px; --space-9: 80px;
+
+  /* ── 规则线（替代阴影） ───────────────────────── */
+  --rule-hair:  1px; --rule-mid-w: 1px; --rule-thick: 2px; --rule-spine: 3px;
+  --rule-hair-color:  #D8D0BC;
+  --rule-mid-color:   #BFB39B;
+  --rule-thick-color: #221C16;
+  --rule-spine-color: #8C4A1C;
+  --rule-double-gap: 3px;
+
+  /* ── 圆角：单据/卡片 6px，字段 3px，印章 2px，导航与表格直角 ── */
+  --radius-sheet: 6px;
+  --radius-card:  6px;
+  --radius-field: 3px;
+  --radius-stamp: 2px;
+  --radius-none:  0;
+
+  /* ── 版式尺寸 ─────────────────────────────────── */
+  --nav-width:        240px;
+  --nav-width-rail:   64px;
+  --panel-width:      320px;
+  --reading-max:      720px;
+  --docket-max:       880px;
+  --bot-card-min:     300px;
+  --bot-card-h:       148px;
+  --row-h-nav:        36px;
+  --row-h-turn:       36px;
+  --row-h-event:      30px;
+  --row-h-table:      40px;
+  --field-label-w:    96px;
+  --control-h:        34px;
+
+  /* ── 动效（温和；reduced-motion 见下） ────────── */
+  --dur-cursor:     1000ms;
+  --dur-event:      140ms;
+  --dur-docket-in:  240ms;
+  --dur-stamp:      260ms;
+  --ease-out:       cubic-bezier(.2,.7,.3,1);
+  --ease-docket:    cubic-bezier(.2,.8,.25,1);
+  --ease-stamp:     cubic-bezier(.3,1.4,.5,1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-cursor: 0ms; --dur-event: 0ms; --dur-docket-in: 0ms; --dur-stamp: 80ms;
+    --ease-stamp: linear;
+  }
+}
+
+/* 用法示例（不属于令牌，供实现者对齐；全站不使用 box-shadow 做层级）：
+   .docket       { background: var(--color-sheet); border: var(--rule-hair) solid var(--color-ink-1);
+                   border-radius: var(--radius-sheet); }
+   .docket__head { font-family: var(--font-serif); font-size: var(--text-heading);
+                   border-bottom: var(--rule-mid-w) solid var(--rule-mid-color);
+                   padding-bottom: var(--rule-double-gap); }   ← 与下方字段行再叠 1px，成双线
+   .event-row    { height: var(--row-h-event); border-top: var(--rule-hair) solid var(--rule-hair-color);
+                   font-size: var(--text-small); }
+   .event-row::before { content: var(--event-tool-call-mark); font-family: var(--font-mono); }
+   .stamp--approved { color: var(--color-stamp-approved); background: var(--color-stamp-approved-bg);
+                      border-radius: var(--radius-stamp); font-size: var(--text-micro);
+                      letter-spacing: var(--track-micro); }
+   .path         { font-family: var(--font-mono); font-size: var(--text-data); }
+   .nav__item--active { border-left: var(--rule-spine) solid var(--rule-spine-color); }
+   :focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+*/

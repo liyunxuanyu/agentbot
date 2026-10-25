@@ -1,0 +1,32 @@
+[
+  {
+    "type": "meta",
+    "payload": {
+      "kind": "unknown_protocol",
+      "data": {
+        "kind": "item/brandNewItem",
+        "params": { "type": "brandNewItem", "id": "x" }
+      }
+    }
+  },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "正文一" } },
+  {
+    "type": "meta",
+    "payload": {
+      "kind": "unknown_protocol",
+      "data": { "kind": "turn/whatever/newThing", "params": {} }
+    }
+  },
+  {
+    "type": "tool_result",
+    "payload": {
+      "callId": "call_orphan",
+      "status": "ok",
+      "output": "hi",
+      "exitCode": 0
+    }
+  },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "end", "text": "" } },
+  { "type": "done", "payload": { "stopReason": "end", "durationMs": 0 } }
+]

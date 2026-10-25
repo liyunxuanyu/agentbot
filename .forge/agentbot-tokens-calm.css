@@ -1,0 +1,168 @@
+/* AgentBot · calm — 暖奶油底 + 低饱和墨绿。层次靠 4 级表面色差，阴影只做确认。对比度实测见 agentbot-03-ui-calm.md §2 */
+:root {
+  /* 表面 4 级（相邻明度差 1.5–2.5%，不用边框分区） */
+  --surface-0: #F7F5F0;     /* 页面底 */
+  --surface-1: #F1EEE6;     /* 导航 / 右面板 / 折叠块 / 输入内槽 */
+  --surface-2: #FCFBF8;     /* 卡片 / Bot 气泡 */
+  --surface-3: #FFFFFF;     /* 输入胶囊 / 弹层 */
+  --surface-inset: #EBE7DD; /* 进度槽 / 骨架底 */
+
+  /* 文字 4 级：对 s0 实测 13.6 / 6.6 / 4.1 / 2.8 */
+  --text-1: #1F2A25;
+  --text-2: #4C5B54;
+  --text-3: #6B7A72;
+  --text-4: #8A968F;        /* 仅禁用态 */
+  --text-on-primary: #FCFBF8;
+
+  /* 主色阶 · 墨绿 H153 S21% */
+  --green-950: #182A22;
+  --green-900: #20382C;
+  --green-700: #345344;
+  --green-600: #3F6152;
+  --green-500: #517A67;
+  --green-300: #94B3A4;
+  --green-100: #DCE8E1;
+  --green-50: #E8F0EA;
+
+  --color-primary: #3F6152;        /* 对 s0 6.3:1 */
+  --color-primary-hover: #33503F;
+  --color-primary-active: #2B4436;
+  --color-primary-soft: #E8F0EA;
+  --color-primary-soft-hover: #DDE9E1;
+  --color-primary-soft-active: #D2E2D8;
+  --color-primary-soft-fg: #345344; /* on soft 7.3:1 */
+  --color-focus-ring: rgba(63, 97, 82, .14);
+
+  /* 语义色（全压饱和，对 s0 均 ≥5.5） */
+  --color-success: #3E6B45;
+  --color-success-soft: #E9F0E6;
+  --color-warning: #7C5E27;
+  --color-warning-soft: #F5EEE0;
+  --color-danger: #9B4A3C;
+  --color-danger-soft: #F6E9E5;
+  --color-danger-soft-hover: #EFDCD6;
+  --color-danger-ring: rgba(155, 74, 60, .16);
+  --color-info: #4A6072;
+  --color-info-soft: #E9EEF1;
+  --color-on-semantic: #FFFFFF;
+
+  /* Bot 六态 */
+  --bot-idle: #8A968F;
+  --bot-thinking: #517A67;
+  --bot-working: #3F6152;
+  --bot-waiting: #7C5E27;
+  --bot-blocked: #9B4A3C;
+  --bot-done: #3E6B45;
+  --bot-avatar-bg: #DCE8E1;
+  --bot-avatar-bg-2: #E7E2D6;
+  --bot-avatar-bg-3: #E4E7EC;
+  --bot-avatar-fg: #345344;
+
+  /* 字体：字重只用 400 / 500 */
+  --font-sans: "Inter", "PingFang SC", "Noto Sans SC", "Segoe UI", -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", ui-monospace, monospace;
+  --fw-regular: 400;
+  --fw-medium: 500;
+
+  /* 字号 9 级 · 大字号收紧，小字号放开 */
+  --fs-display: 32px;  --lh-display: 1.30;  --ls-display: -.02em;
+  --fs-h1: 26px;       --lh-h1: 1.35;       --ls-h1: -.015em;
+  --fs-h2: 20px;       --lh-h2: 1.40;       --ls-h2: -.01em;
+  --fs-h3: 17px;       --lh-h3: 1.45;       --ls-h3: -.005em;
+  --fs-body-lg: 16px;  --lh-body-lg: 1.70;  --ls-body-lg: 0;
+  --fs-body: 15px;     --lh-body: 1.75;     --ls-body: .01em;
+  --fs-sm: 13px;       --lh-sm: 1.60;       --ls-sm: .01em;
+  --fs-xs: 12px;       --lh-xs: 1.50;       --ls-xs: .02em;
+  --fs-label: 11px;    --lh-label: 1.40;    --ls-label: .04em;
+
+  /* 间距：留白是主角 */
+  --sp-1: 4px;   --sp-2: 8px;   --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px;  --sp-6: 24px;  --sp-7: 32px;  --sp-8: 40px;
+  --sp-9: 48px;  --sp-10: 64px; --sp-11: 80px;
+  --gap-turn: 40px;
+  --gap-event: 12px;
+  --pad-card: 24px;
+
+  /* 栅格 */
+  --page-max: 1180px; --stream-max: 720px; --table-max: 960px;
+  --nav-w: 248px; --panel-w: 320px; --gutter: 40px; --col-gap: 32px;
+
+  /* 圆角 */
+  --r-badge: 6px;   --r-btn: 10px;  --r-block: 14px;
+  --r-card: 18px;   --r-bubble: 18px; --r-pill: 26px; --r-full: 999px;
+
+  /* 阴影：极细腻，只确认层级 */
+  --shadow-card: 0 1px 2px rgba(63, 97, 82, .03);
+  --shadow-raised: 0 3px 10px rgba(63, 97, 82, .05);
+  --shadow-overlay: 0 10px 28px rgba(63, 97, 82, .08);
+  --focus-ring: 0 0 0 3px var(--color-focus-ring);
+  --focus-ring-danger: 0 0 0 3px var(--color-danger-ring);
+  --scrim: rgba(31, 42, 37, .18); /* 无毛玻璃 */
+
+  /* 动效：更慢更缓，标准缓入缓出，无回弹 */
+  --ease-calm: cubic-bezier(.25, .1, .25, 1);
+  --dur-press: 180ms; --dur-state: 240ms; --dur-bubble: 280ms;
+  --dur-overlay: 320ms; --dur-block: 400ms; --stagger: 60ms;
+  --dur-cursor: 1100ms; --dur-dots: 2400ms; --dur-ring: 2800ms;
+  --dur-wait: 3200ms; --dur-skeleton: 2400ms;
+
+  /* 层级 */
+  --z-sticky-turn: 10; --z-input: 20; --z-overlay: 40; --z-toast: 50;
+}
+
+/* 可选暗色：同一物理关系整体反相，不是默认主题 */
+:root[data-theme="dark"] {
+  --surface-0: #141917; --surface-1: #101412; --surface-2: #1D2420;
+  --surface-3: #232B26; --surface-inset: #0C0F0D;
+  --text-1: #E8EDE9; --text-2: #B4C0B8; --text-3: #9FB0A7; --text-4: #6E7B74;
+  --text-on-primary: #141917;
+  --color-primary: #7FB79A; --color-primary-hover: #8CC49A; --color-primary-active: #6FA98D;
+  --color-primary-soft: #23342C; --color-primary-soft-hover: #2A4A3B;
+  --color-primary-soft-active: #2E5343; --color-primary-soft-fg: #A8C6B4;
+  --color-focus-ring: rgba(127, 183, 154, .22);
+  --color-success: #8CC49A; --color-success-soft: #1E2C21;
+  --color-warning: #D8A85E; --color-warning-soft: #2E2718;
+  --color-danger: #D98C7A; --color-danger-soft: #2E1E1A;
+  --color-danger-soft-hover: #3A2521; --color-danger-ring: rgba(217, 140, 122, .22);
+  --color-info: #8FA9BE; --color-info-soft: #1D252B; --color-on-semantic: #141917;
+  --bot-idle: #9FB0A7; --bot-thinking: #7FB79A; --bot-working: #8CC49A;
+  --bot-waiting: #D8A85E; --bot-blocked: #D98C7A; --bot-done: #8CC49A;
+  --bot-avatar-bg: #23342C; --bot-avatar-bg-2: #2B2820; --bot-avatar-bg-3: #232A31;
+  --bot-avatar-fg: #A8C6B4;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .16);
+  --shadow-raised: 0 3px 10px rgba(0, 0, 0, .22);
+  --shadow-overlay: 0 10px 28px rgba(0, 0, 0, .32);
+  --scrim: rgba(0, 0, 0, .42);
+}
+
+/* 动效关键帧 */
+@keyframes calm-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes calm-bubble { from { opacity: 0; transform: translateY(6px) scale(.995); } to { opacity: 1; transform: none; } }
+@keyframes calm-overlay { from { opacity: 0; transform: translateY(12px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes calm-cursor { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+@keyframes calm-dots { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@keyframes calm-ring { 0% { transform: scale(1); opacity: .35; } 70%, 100% { transform: scale(2.4); opacity: 0; } }
+@keyframes calm-wait { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@keyframes calm-skeleton { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* 减少动态：只留透明度，停掉一切循环 */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-press: 1ms; --dur-state: 1ms; --dur-bubble: 1ms;
+    --dur-overlay: 1ms; --dur-block: 1ms; --stagger: 0ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  @keyframes calm-rise { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes calm-bubble { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes calm-overlay { from { opacity: 0; } to { opacity: 1; } }
+}
+
+/* 断点 */
+@media (max-width: 1280px) { :root { --gutter: 32px; --stream-max: 640px; } }
+@media (max-width: 1024px) { :root { --nav-w: 64px; --panel-w: 0px; } }
+@media (max-width: 768px) { :root { --gutter: 20px; --sp-10: 48px; --sp-11: 56px; } }

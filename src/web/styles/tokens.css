@@ -1,0 +1,250 @@
+/* ============================================================
+   AgentBot · vivid design tokens
+   Bot 是同事。圆角 + 三级柔和阴影 + 回弹动效 + 8 个身份色。
+   注释内对比度为 WCAG 2.1 实测值（对白卡 / 对页底）。
+   ============================================================ */
+:root {
+  /* ---- 表面 ---- */
+  --color-bg: #F6F8FA;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #EEF2F5;      /* 凹陷、折叠块、徽标底 */
+  --color-surface-3: #E7F2F4;      /* 选中行 = 主色 10% 混白 */
+  --color-surface-hover: #F1F5F7;
+
+  /* ---- 文字 ---- */
+  --color-text: #16202B;           /* 16.5 / 15.5 */
+  --color-text-secondary: #3D4E5C; /*  8.6 /  8.1 */
+  --color-text-muted: #5A6B7A;     /*  5.5 /  5.2 */
+  --color-text-faint: #77879A;     /*  3.7 /  3.5  仅占位符与禁用 */
+  --color-text-on-dark: #FFFFFF;
+
+  /* ---- 边框与焦点环 ---- */
+  --color-border: #DCE3E8;
+  --color-border-strong: #C6D0D8;
+  --color-border-focus: #0C7A8F;
+  --ring-focus: 0 0 0 3px rgba(12, 122, 143, .28);
+  --ring-danger: 0 0 0 3px rgba(179, 55, 42, .30);
+
+  /* ---- 主色：青蓝 H188（非紫非靛） ---- */
+  --color-primary: #0C7A8F;        /* 白字 5.0 */
+  --color-primary-hover: #096775;  /* 白字 6.5 */
+  --color-primary-active: #075260; /* 白字 8.8 */
+  --color-primary-ink: #07596A;    /* 主色文字；对 soft 6.9 */
+  --color-primary-soft: #E4F2F5;
+  --color-primary-tint: #EDF5F7;
+  --color-primary-bright: #4FC3CF; /* 仅装饰（扫光/光环），禁做文字 */
+
+  /* ---- 语义 ---- */
+  --color-success: #1E7A46; --color-success-ink: #186B3C; --color-success-soft: #E8F5ED;
+  --color-warning: #8A5B00; --color-warning-ink: #8A5B00; --color-warning-soft: #FDF3E0;
+  --color-danger:  #B3372A; --color-danger-ink:  #96291F; --color-danger-soft:  #FDECEA;
+  --color-info:    #2A6FC0; --color-info-ink:    #1F4E8C; --color-info-soft:    #EAF1FB;
+  --color-accent-live: #F2643F;    /* ≤8px 点缀：未读点、新消息脉冲；3.15 非文本可用 */
+
+  /* ---- Bot 身份色：base / ink(文字) / tint(气泡底) ---- */
+  --bot-1: #2A6FC0; --bot-1-ink: #205492; --bot-1-tint: #F0F5FB; /* 钴蓝 · 研究助手 */
+  --bot-2: #6A57BE; --bot-2-ink: #514290; --bot-2-tint: #F5F3FA; /* 紫藤 · 审查助手 */
+  --bot-3: #A8459B; --bot-3-ink: #803476; --bot-3-tint: #F9F2F8; /* 品红 · 文案助手 */
+  --bot-4: #B23A57; --bot-4-ink: #872C42; --bot-4-tint: #FAF1F3; /* 莓红 · 客服助手 */
+  --bot-5: #C2410C; --bot-5-ink: #933109; --bot-5-tint: #FBF2EE; /* 赭橙 · 实现助手 */
+  --bot-6: #57791C; --bot-6-ink: #425C15; --bot-6-tint: #F3F6EF; /* 橄榄 · 运维助手 */
+  --bot-7: #8C6A12; --bot-7-ink: #6A510E; --bot-7-tint: #F7F5EE; /* 芥金 · 数据分析 */
+  --bot-8: #2F7D4A; --bot-8-ink: #245F38; --bot-8-tint: #F0F6F2; /* 松绿 · 未分配兜底 */
+
+  /* ---- Bot 六态：点色 / 文字 / 底 ---- */
+  --state-idle:     #8494A3; --state-idle-ink:     #5E7182; --state-idle-soft:     #EFF3F6;
+  --state-thinking: #B7791F; --state-thinking-ink: #8A5B00; --state-thinking-soft: #FDF3E0;
+  --state-working:  #0A8565; --state-working-ink:  #07596A; --state-working-soft:  #E4F2F5;
+  --state-waiting:  #2A6FC0; --state-waiting-ink:  #1F4E8C; --state-waiting-soft:  #EAF1FB;
+  --state-blocked:  #C0392B; --state-blocked-ink:  #96291F; --state-blocked-soft:  #FDECEA;
+  --state-done:     #1E7A46; --state-done-ink:     #186B3C; --state-done-soft:     #E8F5ED;
+
+  /* ---- 字体 ---- */
+  --font-sans: -apple-system, "Segoe UI Variable Text", "Segoe UI", "PingFang SC",
+               "Microsoft YaHei", Inter, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  --font-size-display: 34px; --font-size-h1: 28px; --font-size-h2: 22px;
+  --font-size-h3: 18px;      --font-size-body-lg: 16px; --font-size-body: 15px;
+  --font-size-body-sm: 14px; --font-size-caption: 13px; --font-size-micro: 12px;
+  --font-size-mono: 12.5px;
+  --line-display: 1.15; --line-h1: 1.2; --line-h2: 1.3; --line-h3: 1.35;
+  --line-body-lg: 1.6;  --line-body: 1.6; --line-body-sm: 1.55;
+  --line-caption: 1.45; --line-micro: 1.4; --line-mono: 1.55;
+  --weight-regular: 400; --weight-medium: 500; --weight-semibold: 600;
+  --weight-bold: 700;    --weight-heavy: 800;
+  --tracking-tight: -0.02em; --tracking-snug: -0.01em; --tracking-wide: 0.02em;
+
+  /* ---- 间距（4 基准） ---- */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-7: 32px; --space-8: 40px;
+  --space-9: 48px; --space-10: 64px;
+
+  /* ---- 圆角 ---- */
+  --radius-xs: 4px;   --radius-sm: 8px;   --radius-md: 10px;  --radius-lg: 12px;
+  --radius-xl: 14px;  --radius-2xl: 16px; --radius-3xl: 20px;
+  --radius-pill: 24px; --radius-full: 999px;
+
+  /* 连续消息气泡（TL TR BR BL） */
+  --radius-bubble-single: 16px 16px 16px 4px;
+  --radius-bubble-first:  16px 16px 16px 4px;
+  --radius-bubble-mid:    4px 16px 16px 4px;
+  --radius-bubble-last:   4px 16px 16px 16px;
+  --radius-bubble-user:   16px 16px 4px 16px;
+
+  /* ---- 阴影三级（墨蓝而非纯黑） ---- */
+  --shadow-card:    0 1px 2px rgba(22, 32, 43, .05), 0 2px 8px rgba(22, 32, 43, .04);
+  --shadow-raise:   0 6px 16px rgba(22, 32, 43, .08);
+  --shadow-overlay: 0 16px 40px rgba(22, 32, 43, .12);
+
+  /* ---- 动效 ---- */
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ease-out:    cubic-bezier(.22, .61, .36, 1);
+  --ease-in-out: cubic-bezier(.4, 0, .2, 1);
+  --duration-press: 120ms; --duration-hover: 160ms; --duration-fast: 200ms;
+  --duration-base: 240ms;  --duration-slow: 280ms;  --duration-page: 360ms;
+  --stagger-step: 40ms;
+
+  /* ---- 组件局部色（按钮各态、折叠块底） ---- */
+  --btn-primary-disabled-bg: #C9D6DC; --btn-primary-disabled-fg: #6F7F8C;
+  --btn-secondary-hover-bg: #F1F5F7;  --btn-secondary-hover-border: #B7C4CD;
+  --btn-secondary-active-bg: #E7EDF1;
+  --btn-ghost-fg: #46586A; --btn-ghost-hover-bg: #EDF2F4; --btn-ghost-active-bg: #E2E9ED;
+  --btn-disabled-fg: #8A99A7;
+  --btn-danger-hover: #97291E; --btn-danger-active: #7F2017;
+  --btn-danger-disabled-bg: #E7C9C4; --btn-danger-disabled-fg: #8A625C;
+  --block-bg: #F3F6F8;             /* 折叠块 / 思考展开底 */
+
+  /* ---- 布局 ---- */
+  --nav-width: 240px; --nav-width-rail: 64px; --aside-width: 320px;
+  --stream-max: 860px; --bubble-max: 660px;
+  --card-width: 320px; --card-height: 200px; --row-height: 56px;
+}
+
+/* ============================================================
+   可选暗色（非默认主题，需显式 data-theme="dark"）
+   ============================================================ */
+[data-theme="dark"] {
+  --color-bg: #11161B; --color-surface: #1A2129; --color-surface-2: #0C1014;
+  --color-surface-3: #153036; --color-surface-hover: #232B33;
+  --color-text: #E9EEF2;           /* 13.9 */
+  --color-text-secondary: #C2CDD6; /* 10.1 */
+  --color-text-muted: #9AA9B6;     /*  6.8 */
+  --color-text-faint: #6E7D8A;
+  --color-border: #2B343D; --color-border-strong: #3A4550; --color-border-focus: #35B8C8;
+
+  --color-primary: #35B8C8; --color-primary-hover: #4CC8D6;
+  --color-primary-active: #62D6E2; --color-primary-ink: #7DD9E4;
+  --color-primary-soft: #153036; --color-primary-tint: #11262B;
+
+  --color-success: #4FD08A; --color-success-ink: #7ADFA8; --color-success-soft: #12291D;
+  --color-warning: #E0A33A; --color-warning-ink: #F0BE68; --color-warning-soft: #2A2010;
+  --color-danger:  #F27A6B; --color-danger-ink:  #FF9C90; --color-danger-soft:  #2E1714;
+  --color-info:    #7FB0E8; --color-info-ink:    #A6C9F2; --color-info-soft:    #14202E;
+
+  --bot-1: #75A1D6; --bot-1-ink: #75A1D6; --bot-1-tint: #1D2D41;
+  --bot-2: #9E92D5; --bot-2-ink: #9E92D5; --bot-2-tint: #272A41;
+  --bot-3: #C686BE; --bot-3-ink: #C686BE; --bot-3-tint: #31273B;
+  --bot-4: #CD7F92; --bot-4-ink: #CD7F92; --bot-4-tint: #322530;
+  --bot-5: #D78461; --bot-5-ink: #D78461; --bot-5-tint: #352624;
+  --bot-6: #92A86B; --bot-6-ink: #92A86B; --bot-6-tint: #242F27;
+  --bot-7: #B49E65; --bot-7-ink: #B49E65; --bot-7-tint: #2C2D25;
+  --bot-8: #78AA89; --bot-8-ink: #78AA89; --bot-8-tint: #1D302E;
+
+  --state-idle: #9AA9B6;     --state-idle-ink: #9AA9B6;     --state-idle-soft: #1A2129;
+  --state-thinking: #E0A33A; --state-thinking-ink: #E0A33A; --state-thinking-soft: #2A2010;
+  --state-working: #35B8C8;  --state-working-ink: #35B8C8;  --state-working-soft: #153036;
+  --state-waiting: #7FB0E8;  --state-waiting-ink: #7FB0E8;  --state-waiting-soft: #14202E;
+  --state-blocked: #F27A6B;  --state-blocked-ink: #F27A6B;  --state-blocked-soft: #2E1714;
+  --state-done: #4FD08A;     --state-done-ink: #4FD08A;     --state-done-soft: #12291D;
+
+  --shadow-card:    0 1px 2px rgba(0, 0, 0, .40), 0 2px 8px rgba(0, 0, 0, .28);
+  --shadow-raise:   0 6px 16px rgba(0, 0, 0, .45);
+  --shadow-overlay: 0 16px 40px rgba(0, 0, 0, .60);
+  --ring-focus:     0 0 0 3px rgba(53, 184, 200, .35);
+}
+
+/* ============================================================
+   动效降级：位移/缩放归零，循环改静态
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ease-spring: linear; --ease-out: linear; --ease-in-out: linear;
+    --duration-press: 1ms; --duration-hover: 1ms; --duration-fast: 1ms;
+    --duration-base: 1ms; --duration-slow: 1ms; --duration-page: 1ms;
+    --stagger-step: 0ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+    transform: none !important;
+  }
+  .cursor-stream { animation: none !important; opacity: 1 !important; } /* 光标改常显竖条 */
+  .state-dot { animation: none !important; }                          /* 状态仅保留颜色 */
+}
+
+/* ============================================================
+   原型补充令牌（.forge/agentbot-prototype-v2 的 :root 里比本文件多的部分）
+   数值全部照抄原型，未新增任何取值；上方 185 行为 agentbot-tokens.css 原文。
+   补齐原因：原型用到的 --av-fg / --btn-*-fg / --scrim / --composer-max 等
+   必须两套主题都定义，否则暗色下会出现「浅底浅字」的白底残留。
+   ============================================================ */
+:root {
+  /* ---- 前景配对：与底色成对定义，暗色下整体反转 ---- */
+  --av-fg: #FFFFFF;                /* 身份色方牌上的首字 */
+  --btn-primary-fg: #FFFFFF;       /* 主按钮 / 发送键 / 未读数字 */
+  --btn-danger-fg: #FFFFFF;        /* 危险按钮 */
+  --bubble-user-fg: #FFFFFF;       /* 用户气泡文字 */
+  --toast-bg: #16202B; --toast-fg: #F6F8FA;
+  --color-sep: #5A6B7A;            /* 面包屑分隔符：对页底 5.2 */
+
+  /* 遮罩与描边：由令牌合成，暗色下随 --scrim-base 反转 */
+  --scrim-base: #16202B;
+  --scrim: color-mix(in srgb, var(--scrim-base) 34%, transparent);
+  --scrim-soft: color-mix(in srgb, var(--scrim-base) 8%, transparent);
+  --hairline: 1px solid var(--color-border);
+
+  /* ---- 按钮各态（亮色） ---- */
+  --btn-secondary-disabled-bg: #F1F5F7; --btn-secondary-disabled-fg: #8A99A7;
+  --btn-secondary-disabled-border: #DCE3E8;
+
+  /* ---- 布局补充 ---- */
+  --composer-max: 760px;
+}
+
+[data-theme="dark"] {
+  /* 装饰色：仅扫光/光环/未读点，禁做文字 */
+  --color-primary-bright: #6FE0EA;
+  --color-accent-live: #FF7A55;     /* 对 #11161B 非文本 6.4:1 */
+  --color-sep: #9AA9B6;
+  --scrim-base: #000000;            /* 暗色遮罩用纯黑压暗，不用浅色蒙层 */
+  --scrim: color-mix(in srgb, var(--scrim-base) 58%, transparent);
+  --scrim-soft: color-mix(in srgb, var(--scrim-base) 18%, transparent);
+  --hairline: 1px solid var(--color-border);
+  --ring-danger: 0 0 0 3px rgba(242, 122, 107, .35);
+
+  /* 前景配对：暗色下浅底配深墨，深底配浅字 */
+  --av-fg: #0B1418;
+  --btn-primary-fg: #0B1418;
+  --btn-danger-fg: #2A0F0C;
+  --bubble-user-fg: #0B1418;
+  --toast-bg: #232B33; --toast-fg: #E9EEF2;
+
+  /* 按钮各态（暗色：悬停提亮、按下更亮、禁用低饱和） */
+  --btn-primary-disabled-bg: #253038; --btn-primary-disabled-fg: #8A99A7;
+  --btn-secondary-disabled-bg: #232B33; --btn-secondary-disabled-fg: #8A99A7;
+  --btn-secondary-disabled-border: #2B343D;
+  --btn-secondary-hover-bg: #232B33;  --btn-secondary-hover-border: #4A5764;
+  --btn-secondary-active-bg: #2B343D;
+  --btn-ghost-fg: #C2CDD6; --btn-ghost-hover-bg: #1F272F; --btn-ghost-active-bg: #2B343D;
+  --btn-disabled-fg: #8A99A7;
+  --btn-danger-hover: #FF9084; --btn-danger-active: #FFA79B;
+  --btn-danger-disabled-bg: #3A2320; --btn-danger-disabled-fg: #9C7A74;
+  --block-bg: #0C1014;              /* 折叠块 / 思考展开底（凹陷 = surface-2） */
+
+  /* 布局：与亮色相同，显式重复以保证两套主题令牌集合一致 */
+  --nav-width: 240px; --nav-width-rail: 64px; --aside-width: 320px;
+  --stream-max: 860px; --bubble-max: 660px; --composer-max: 760px;
+  --card-width: 320px; --card-height: 200px; --row-height: 56px;
+}

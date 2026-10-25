@@ -1,0 +1,11 @@
+[
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "我需要写入配置文件。" } },
+  { "type": "tool_call", "payload": { "callId": "call_w1", "name": "写入 agentbot.config.json", "kind": "edit", "input": { "path": "D:/work/demo/agentbot.config.json" }, "status": "pending" } },
+  { "type": "permission_request", "payload": { "requestId": "perm-1", "action": "write", "target": "写入 agentbot.config.json", "boundaryVerdict": "pending" } },
+  { "type": "tool_result", "payload": { "callId": "call_w1", "status": "ok", "output": "已写入 12 行", "exitCode": 0 } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "配置已更新。" } },
+  { "type": "usage", "payload": { "inputTokens": 800, "outputTokens": 40, "reported": true } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "end", "text": "" } },
+  { "type": "done", "payload": { "stopReason": "end", "durationMs": 0 } }
+]

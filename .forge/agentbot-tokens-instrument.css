@@ -1,0 +1,147 @@
+/* AgentBot · instrument-panel tokens
+ * 用法：<html data-theme="light|dark">（默认浅色）；可选 data-text-scale="lg|xl"。
+ * 组件 CSS 只引用变量，不写字面色值。禁止 border-radius > --radius-md。
+ */
+:root {
+  /* ── 表面 4 级：0 页面 / 1 凹陷 / 2 卡片 / 3 输入与浮层 ── */
+  --color-surface-0: #E4EAEC;   /* 冷灰白，仪器喷涂面，不是纯白 */
+  --color-surface-1: #DDE4E7;   /* 导航、表头、斑马行、凹陷槽 */
+  --color-surface-2: #F8FAFB;   /* 卡片、面板：比页面亮 */
+  --color-surface-3: #FFFFFF;   /* 输入框、浮层、吸顶条 */
+
+  /* ── 前景 4 级（注释为对 surface-0 的实测对比度） ── */
+  --color-fg-1: #12191B;        /* 14.6:1 正文 */
+  --color-fg-2: #3E4B4E;        /* 7.4:1 次级正文 */
+  --color-fg-3: #586568;        /* 5.0:1 元信息、单位 */
+  --color-fg-4: #727F83;        /* 3.47:1 仅禁用态，不承载必读信息 */
+
+  /* ── 边框 3 级 ── */
+  --color-border-1: #D2DBDE;    /* 发丝网格、分隔线（装饰） */
+  --color-border-2: #B4C0C4;    /* 组件边框、卡片轮廓 */
+  --color-border-3: #6E7C80;    /* 交互态与焦点 4.1:1 */
+
+  /* ── 主色：仪器深青。不用紫/靛/橙/纯蓝 ── */
+  --color-accent: #0B6E69;      /* 5.8:1 on surface-2 */
+  --color-accent-hover: #085C58;
+  --color-accent-active: #064B48;
+  --color-accent-fg: #F8FAFB;   /* 压在 accent 实心块上 5.8:1 */
+  --color-accent-weak-bg: #D3E6E3;  /* 选中行、accent 底纹 */
+  --color-accent-weak-fg: #0A5C58;  /* 压其上 6.0:1 */
+
+  /* ── 语义色（-fg 是压在该色实心块上的文字色） ── */
+  --color-success: #26713A;  --color-success-fg: #FFFFFF;  /* 6.0:1 */
+  --color-warning: #8A5A00;  --color-warning-fg: #FFFFFF;  /* 5.9:1 */
+  --color-danger:  #B33127;  --color-danger-fg:  #FFFFFF;  /* 6.2:1 */
+  --color-info:    #456681;  --color-info-fg:    #FFFFFF;  /* 6.1:1 */
+
+  /* ── 指示灯：6px 方块 + 文字，对其表面 ≥3:1。待决策是唯一允许闪的 ── */
+  --color-led-running: #0A847C;
+  --color-led-idle:    #68767A;
+  --color-led-queued:  #4A6C82;
+  --color-led-pending: #A87200;
+  --color-led-failed:  #B33127;
+  --color-led-done:    #26713A;
+
+  /* ── 字体：Plex 为工程界面设计，字形略方、数字真等宽 ── */
+  --font-sans: "IBM Plex Sans", "Segoe UI Variable Text", "Segoe UI",
+               "Noto Sans SC", "Microsoft YaHei UI", -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", "Cascadia Mono", Consolas, "SF Mono",
+               "Noto Sans Mono", monospace;
+
+  /* ── 字号阶梯 8 级（px / 行高） ── */
+  --text-2xs: 10px; --leading-2xs: 14px;  /* 大写字段名、列头 */
+  --text-xs:  11px; --leading-xs:  16px;  /* 徽标、时间、事件摘要 */
+  --text-sm:  12px; --leading-sm:  18px;  /* 表格单元格、路径 */
+  --text-md:  13px; --leading-md:  20px;  /* 基础 UI：导航、按钮、表单 */
+  --text-lg:  15px; --leading-lg:  22px;  /* 消息正文 */
+  --text-xl:  20px; --leading-xl:  26px;  /* 区块标题、读数 */
+  --text-2xl: 26px; --leading-2xl: 32px;  /* 页面标题 */
+  --text-3xl: 34px; --leading-3xl: 40px;  /* 仅页头读数大数字 */
+  --weight-regular: 400; --weight-medium: 500; --weight-semi: 600;
+  --tracking-label: 0.08em;               /* 只用于大写标签 */
+
+  /* ── 间距：4 基准，2 只用于 LED 与数字-单位间隙 ── */
+  --space-0: 2px;  --space-1: 4px;  --space-2: 6px;  --space-3: 8px;
+  --space-4: 12px; --space-5: 16px; --space-6: 20px; --space-7: 24px;
+  --space-8: 32px; --space-9: 40px; --space-10: 48px; --space-11: 64px;
+
+  /* ── 圆角：上限 4px ── */
+  --radius-sm: 2px;   /* 方牌、LED、徽标、chip */
+  --radius-md: 3px;   /* 卡片、按钮、输入框 */
+  --radius-lg: 4px;   /* 仅浮层 */
+
+  --border-hairline: 1px; --border-strong: 2px; --border-marker: 3px;
+
+  /* ── 阴影：只有浮层与吸顶用 ── */
+  --shadow-overlay: 0 4px 12px rgba(18, 25, 27, .14);
+  --shadow-sticky:  0 1px 0 var(--color-border-1);
+
+  /* ── 布局 ── */
+  --layout-sidebar: 240px; --layout-sidebar-rail: 64px; --layout-context: 320px;
+  --layout-header: 64px;
+  --layout-card-h: 172px;  --layout-row: 36px;
+  --layout-label-col: 64px; --layout-measure: 68ch;
+  /* ── 动效 ── */
+  --duration-instant: 120ms; --duration-quick: 180ms; --duration-state: 240ms;
+  --duration-breathe: 2000ms; --duration-blink: 1400ms;
+  --ease-out: cubic-bezier(.2, .8, .3, 1);
+
+  --focus-ring: 0 0 0 2px var(--color-surface-2), 0 0 0 4px var(--color-accent);
+  --focus-ring-inset: inset 0 0 0 1px var(--color-accent);
+}
+
+[data-theme="dark"] {
+  --color-surface-0: #0F1517; --color-surface-1: #0A1011;
+  --color-surface-2: #1C2528; --color-surface-3: #232E31;
+
+  --color-fg-1: #E4EBEC; --color-fg-2: #B7C3C5;
+  --color-fg-3: #8D9B9E; --color-fg-4: #5F6D70;
+
+  --color-border-1: #2A3639; --color-border-2: #3A484B; --color-border-3: #6B7B7E;
+
+  --color-accent: #3FB3A8; --color-accent-hover: #52C2B7;
+  --color-accent-active: #2E9A90;
+  --color-accent-fg: #0F1517;      /* 深色下 accent 变亮，压深字 7.2:1 */
+  --color-accent-weak-bg: #12312F; --color-accent-weak-fg: #5CC8BD;
+
+  --color-success: #3FAE79; --color-warning: #D8A03A;
+  --color-danger:  #E8756A; --color-info:    #6E9AB5;
+  --color-success-fg: #0F1517; --color-warning-fg: #0F1517;
+  --color-danger-fg:  #0F1517; --color-info-fg:    #0F1517;
+
+  --color-led-running: #3FB3A8; --color-led-idle:    #8A989C;
+  --color-led-queued:  #6E9AB5; --color-led-pending: #D8A03A;
+  --color-led-failed:  #E8756A; --color-led-done:    #3FAE79;
+
+  --shadow-overlay: 0 4px 12px rgba(0, 0, 0, .55);
+}
+
+/* 文字缩放：只放大字号，不动间距（避免布局跳动） */
+[data-text-scale="lg"] {
+  --text-2xs: 11px; --text-xs: 12px; --text-sm: 13px; --text-md: 15px;
+  --text-lg: 17px;  --text-xl: 22px; --text-2xl: 29px; --text-3xl: 38px;
+}
+[data-text-scale="xl"] {
+  --text-2xs: 12px; --text-xs: 14px; --text-sm: 15px; --text-md: 16px;
+  --text-lg: 19px;  --text-xl: 25px; --text-2xl: 33px; --text-3xl: 42px;
+}
+
+/* 强制规则：所有数字列加 .u-num，所有大写字段名加 .u-label */
+.u-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.u-label {
+  font-family: var(--font-sans); font-size: var(--text-2xs);
+  line-height: var(--leading-2xs); letter-spacing: var(--tracking-label);
+  text-transform: uppercase; font-weight: var(--weight-semi);
+  color: var(--color-fg-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 0ms; --duration-quick: 0ms; --duration-state: 0ms;
+    --duration-breathe: 0ms; --duration-blink: 0ms;
+  }
+}

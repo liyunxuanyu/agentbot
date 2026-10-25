@@ -1,0 +1,51 @@
+# Gemini CLI —— 原生 ACP，架构 §3.3 的完整示例。
+#
+# 新增一个原生 ACP 运行时的全量成本就是这个文件：映射表是通道级共享的
+# （channels/acp/mapping.ts），这里只填参数。
+schemaVersion: 1
+id: gemini-cli
+displayName: Gemini CLI
+protocol: acp
+
+launch:
+  command: gemini
+  args: ["--experimental-acp"]
+
+detect:
+  command: gemini
+  versionArgs: ["--version"]
+  versionPattern: '(?<version>\d+\.\d+\.\d+)'
+  timeoutMs: 3000
+
+minVersion: "0.20.0"
+
+# 探测成功则以实测覆盖；失败/超时用此值并标 source=declared。
+capabilities:
+  plan: true
+  permissionRequest: true
+  resume: true
+  images: unknown
+  streaming: true
+  contextWindow: null
+
+# ACP 的 session/update 覆盖全部 9 类，故全声明。
+eventCapabilities:
+  - message_delta
+  - thought
+  - tool_call
+  - tool_result
+  - plan
+  - permission_request
+  - usage
+  - done
+  - error
+
+permission:
+  channel: acp-reverse
+  defaultTimeoutPolicy: reject
+
+resumeStrategy: acp
+executionLocations: [local, worktree]
+
+modes:
+  headless: true

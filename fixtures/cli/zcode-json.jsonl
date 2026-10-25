@@ -1,0 +1,26 @@
+{
+  "sessionId": "sess_a55b1095-8335-4dca-9cc2-2f8d614cb008",
+  "traceId": "e20b501e-d957-4610-8ded-d9eb427c1e12",
+  "turnId": "turn_6793e5a0-5004-4b5c-a5cf-f15980220996",
+  "response": "我是一个能够协助你分析问题、编写代码和处理资料的人工智能助手。",
+  "usage": {
+    "source": "provider",
+    "modelRequestCount": 1,
+    "inputTokens": 51415,
+    "outputTokens": 25,
+    "totalTokens": 51440,
+    "cacheReadTokens": 51328,
+    "cacheWriteTokens": 0,
+    "reasoningTokens": 18,
+    "webFetchRequests": 0,
+    "webSearchRequests": 0
+  },
+  "eventCount": 14,
+  "projection": {
+    "status": "idle",
+    "turnCount": 1,
+    "totalTokenCount": 51440,
+    "contextUsed": 51440,
+    "contextWindow": 200000
+  }
+}

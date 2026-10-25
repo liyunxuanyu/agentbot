@@ -1,0 +1,7 @@
+[
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "我是一个能够协助你分析问题、编写代码和处理资料的人工智能助手。" } },
+  { "type": "usage", "payload": { "inputTokens": 51415, "outputTokens": 25, "reported": true } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "end", "text": "" } },
+  { "type": "done", "payload": { "stopReason": "end", "durationMs": 0 } }
+]

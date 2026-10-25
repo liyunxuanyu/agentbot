@@ -1,0 +1,9 @@
+node:internal/modules/cjs/loader:1145
+  throw err;
+  ^
+
+Error: Cannot find module 'zcode-internal-session-store'
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1145:15)
+    at Module._load (node:internal/modules/cjs/loader:1024:3)
+Require stack:
+- D:\Program software\ZCode\resources\glm\zcode.cjs

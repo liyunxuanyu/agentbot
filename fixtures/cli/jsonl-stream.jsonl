@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"sess_jsonl_1","tools":["Bash","Edit"]}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"我先看一下项目结构。"}]},"session_id":"sess_jsonl_1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"目录里只有 src 与 tests。"}]},"session_id":"sess_jsonl_1"}
+{"type":"result","subtype":"success","result":"目录里只有 src 与 tests。","session_id":"sess_jsonl_1","usage":{"input_tokens":1200,"output_tokens":48}}

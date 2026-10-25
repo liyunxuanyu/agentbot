@@ -1,0 +1,12 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_acp_garbage_1"}}
+this is not json at all
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_garbage_1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"正文一"}}}}
+[1,2,3]
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_garbage_1","update":{"sessionUpdate":"brand_new_update_type_from_acp_v3","whatever":true}}}
+{"jsonrpc":"2.0","method":"session/update","params":{}}
+{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"missing_call","status":"completed","content":[{"type":"text","text":"孤儿结果"}]}}}
+null
+{"jsonrpc":"2.0","id":99,"result":{"unexpected":true}}
+{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"正文二"}}}}
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end"}}

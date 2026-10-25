@@ -1,0 +1,4 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_acp_crash_1"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_crash_1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"开始分析这个仓库"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_crash_1","update":{"sessionUpdate":"tool_call","toolCallId":"call_x","title":"运行测试","kind":"execute","status":"in_progress"}}}

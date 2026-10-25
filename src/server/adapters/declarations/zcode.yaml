@@ -1,0 +1,51 @@
+# ZCode（Z.AI）—— CLI 兜底通道，架构 §3.7。
+#
+# 诚实的能力降级：没有公开的 headless schema，所以只声明「能稳定拿到」的类型。
+# 未声明的类型在 ingest 处直接丢弃，UI 不出现空块（P0-05 边界）。
+#
+# 实测（0.17.0，2026-10）：
+#   zcode --prompt "..."            → 纯文本答案（一次跑完即退，非逐 token 流）
+#   zcode --prompt "..." --json     → 单个 JSON 对象：{sessionId, response, usage:{inputTokens,...}}
+# 两种模式都能被 CLI 通道解析；纯文本模式下整轮降级为「最终文本」。
+#
+# 本机安装位置不是 PATH 上的 `zcode`（只有桌面应用），用环境变量指定：
+#   AGENTBOT_BIN_ZCODE="D:/Program software/ZCode/resources/glm/zcode.cjs"
+# launch.args 里的 -p 由驱动在末尾补 prompt 文本，所以这里不能写 -p。
+schemaVersion: 1
+id: zcode
+displayName: ZCode
+protocol: cli-stdio
+
+launch:
+  command: zcode
+  args: ["--json", "--no-color", "-p"]
+
+detect:
+  command: zcode
+  versionArgs: ["--version"]
+  versionPattern: '(?<version>\d+\.\d+\.\d+)'
+  timeoutMs: 3000
+
+capabilities:
+  # 无公开 schema：能拿到文本与用量，其余一律 unknown（不是 false）
+  plan: unknown
+  permissionRequest: unknown
+  resume: unknown
+  images: unknown
+  streaming: false
+  contextWindow: null
+
+# 只声明确实能产出的：正文、用量（--json 的 usage）、结束、错误。
+# 思考/工具/计划/权限拿不到 → 不声明 → UI 不画这些块。
+eventCapabilities: [message_delta, usage, done, error]
+
+permission:
+  channel: none
+  defaultTimeoutPolicy: reject
+
+# 一次 prompt 一个进程，上下文不跨进程保留（架构 §5 process-lifetime）
+resumeStrategy: process-lifetime
+executionLocations: [local, worktree]
+
+modes:
+  headless: true

@@ -1,0 +1,212 @@
+{
+  "project": "agentbot",
+  "slug": "agentbot",
+  "created": "2026-10-23",
+  "mode": "greenfield",
+  "autonomy": "auto",
+  "tier": "T4",
+  "tierScore": 9,
+  "tierBasis": {
+    "projectTier": 9,
+    "changeTier": null,
+    "breakdown": {
+      "screens_gt5": {
+        "score": 2,
+        "basis": "agentbot-02-ux.md §2.1 页面树定义 10 页；agentbot-prototype-v2/index.html 的 render() 已实现 10 条路由（setup/bots/bot/chats/chat/assignments/assignment/schedules/usage/settings）"
+      },
+      "persistence": {
+        "score": 1,
+        "basis": "src/server/core/db/schema.sql 214 行、12 张表；会话/消息/事件/权限/记忆/定时任务均落库"
+      },
+      "backend": {
+        "score": 2,
+        "basis": "agentbot-05-architecture.md §1 选 Fastify 5 单进程本地服务 + SSE；package.json 已含 fastify、better-sqlite3"
+      },
+      "external_services": {
+        "score": 1,
+        "basis": "架构 §3 定义 acp / codex-app-server / opencode-http / claude-sdk / cli-stdio 五种协议通道；src/server/adapters/contract.ts 已落 ProtocolKind 枚举"
+      },
+      "permissions": {
+        "score": 2,
+        "basis": "架构 §6 + PRD P0-08/P0-09；src/shared/events.ts 含 permission_request，schema.sql 含权限相关表；board 03-decisions.md 定下 reject/hold/preauth 三档"
+      },
+      "brand_visual": {
+        "score": 1,
+        "basis": "agentbot-03-ui.md 为完整视觉规范（vivid 定稿），含令牌、对比度实测、8 个 Bot 身份色"
+      }
+    }
+  },
+  "phase": "builtin-engine",
+  "completed": [
+    "brief",
+    "prd",
+    "ux",
+    "ui",
+    "prototype",
+    "architecture",
+    "build",
+    "review"
+  ],
+  "gates": {
+    "brief": {
+      "approved": true,
+      "approvedAt": "2026-10-23",
+      "auto": true
+    },
+    "prd": {
+      "approved": true,
+      "approvedAt": "2026-10-23",
+      "auto": true
+    },
+    "ux": {
+      "approved": true,
+      "approvedAt": "2026-10-23",
+      "auto": true
+    },
+    "ui": {
+      "approved": true,
+      "approvedAt": "2026-10-24",
+      "auto": true
+    },
+    "prototype": {
+      "approved": true,
+      "approvedAt": "2026-10-24",
+      "auto": true,
+      "basis": "critic 独立验收 1 阻断 + 11 重要 + 12 次要；阻断项（停止按钮非终态）与 11 重要项全部修复并经主流程独立复测；12 次要项全部完成。复测：暗色 14 页 0 处 <4.5:1、五宽度 x 14 路由 0 横向滚动、F1-F6 六流程通过、0 JS 错误。"
+    },
+    "architecture": {
+      "approved": true,
+      "approvedAt": "2026-10-24",
+      "auto": true
+    },
+    "build": {
+      "approved": true,
+      "approvedAt": "2026-10-25",
+      "auto": true,
+      "basis": "331 单测全绿、vue-tsc/tsc 0 错、boundaries 通过、真实 ZCode 端到端跑通（人格+记忆注入、会话重建、停止终态）。"
+    },
+    "review": {
+      "approved": true,
+      "approvedAt": "2026-10-25",
+      "auto": true,
+      "basis": "两个 critic 实例并行只读验收 15 条 P0；6 阻断 + 11 重要 + 13 次要全部修复并复测。7 项因本机环境未验证（已列明）。"
+    }
+  },
+  "board": {
+    "enabled": true,
+    "reason": "T4 大型项目",
+    "topic": "product-positioning",
+    "open": [],
+    "resolved": [
+      "01-pm-question.md",
+      "02-ux-designer-question.md",
+      "03-decisions.md",
+      "04-architect-question.md",
+      "05-pm-answer.md"
+    ]
+  },
+  "prototypeNotes": "v2 原型（.forge/agentbot-prototype-v2/index.html，4691 行单文件）已达可交付状态。本轮修复轨迹：① 按 agentbot-03-ui.md 逐条实测比对，找出 11 处不符（暗色仅覆盖 76/166 令牌、.av--28 未定义致 /usage 头像塌成 15px、Turn 头不吸顶、权限卡不吸附、缺活动行组件、chips 非 secondary、Session 分隔条 0 渲染、连续消息 0 实例等）；② ui-designer 修复 11 项 + 补 3 处细节（折叠块展开态白底+card、未知事件虚线块、频道行 56px）；③ critic 独立验收判不通过（1 阻断 + 11 重要 + 12 次要）；④ ui-designer 全部修完：阻断项停止按钮改为终态（引入 run.gen 代号 + trackInterval/trackTimeout/stopRun，私聊与群聊 5s 内文本不再增长、光标移除、头部不回退）；F1 重名内联拦截 + 首条消息 token 用量；F6 三种触发方式真切换 + <5min 内联拒绝；非流式运行时不再出现假光标；记忆注入量三处同数（1,560/6,000）；F3 任务状态脱离 DOM 独立推进；1024-1280 导航悬停展开、右面板抽屉可达；.is-dim 因 animation-fill-mode:both 锁死 opacity 的 bug 已修。复测：暗色 14 页 0 处 <4.5:1（888/894 文本节点）、亮暗均 0 处非禁用文字 <4.5:1、五宽度（1440/1280/1024/768/375）x 14 路由 0 横向滚动、F1-F6 六流程通过、0 JS 错误 0 404。已知遗留（规范层，非实现缺陷）：primary/ghost/danger 禁用态对比度 2.78-2.92:1（规范 §7.1 既定取值，WCAG 对 disabled 豁免）；暗色 --color-text-faint 取 #8A99A7 而非 tokens.css 的 #6E7D8A（有意提可读性，3.84->5.56）。",
+  "variants": {
+    "ui": [
+      "terminal",
+      "instrument",
+      "desk",
+      "soft",
+      "calm",
+      "vivid"
+    ],
+    "uiFinal": "vivid"
+  },
+  "chosen": {
+    "ui": "vivid",
+    "uiReason": "agentbot-03-ui.md 标题与 §11 定稿说明均写明「vivid」，引用令牌 agentbot-tokens-vivid.css；agentbot-tokens.css 与 agentbot-tokens-vivid.css 的 md5 完全一致（1c9b458d79436b2c566a17adb5bdd690）、均 9834 字节 185 行，确认最终令牌就是 vivid。选型依据：用户点名 DS Bot / Grok Bot 作参考，vivid 是唯一直接对齐它们的方案，并用 8 个 Bot 身份色解决群聊里「一眼分清谁是谁」。吸收 soft 的暖沙用户气泡与柔和三级阴影、calm 的 400/500/600 三档字重与 40ms stagger 节奏。",
+    "uiRejected": {
+      "instrument": "上一版。用户原话「直愣直去的，没有类似圆角卡片那些效果，没有一些动效，看着很生硬」；全站直角 + 禁止阴影 + 密排 + 事件轨 + 等宽主导，像机房监控面板。已由 vivid 取代，agentbot-03-ui-instrument.md 与 agentbot-tokens-instrument.css 仅作历史留档。",
+      "terminal": "早期方向，仅留档。",
+      "desk": "早期方向，仅留档；单据/印章语言被 vivid 部分吸收到 Assignment 与权限卡片。",
+      "soft": "与 DS Bot / Grok Bot 接近度中等，群聊区分 Bot 只能靠头像与名字；暖沙与柔和阴影被 vivid 吸收。",
+      "calm": "与参考产品接近度低，信息密度低、与 S3 有张力；字重与 stagger 节奏被 vivid 吸收。"
+    },
+    "brief": {
+      "cli-channel": "ZCode（验证 CLI 兜底通道真实成本；DSH 走 CLI 驱动，插件形态留二期）",
+      "scheduling": "进首版，最小版：一次性延迟 + 周期触发，无常驻轮询",
+      "memory": "产品层结构化记忆条目（可编辑 + 自动摘要），不做 Git 工作树可视化",
+      "permission-default": "默认只读 + 写操作需批准，允许对单个 Bot 预授权"
+    }
+  },
+  "rollback": {
+    "at": "2026-10-24",
+    "reason": "原型阶段收尾：修复 state.json 非法 JSON（chosen 未闭合 + board/variants/chosen 重复四组）；纠正 chosen.ui 为 vivid（原记 instrument，与 03-ui.md 及 tokens.css md5 一致的事实不符）；variants.ui 补全为 6 套；board.resolved 纠正为实际 5 个文件名。",
+    "previousPhase": "build",
+    "note": "phase 仍为 build（阶段 4 原型已在 completed 内，下一步是阶段 6 实现）"
+  },
+  "openQuestions": [
+    {
+      "id": "Q1-plugin-form",
+      "question": "「插件形态」具体指哪一种：作为各 agent 工具的插件/MCP server 被挂载进去，还是独立本地 Web 应用反过来驱动 agent CLI？",
+      "status": "decided-by-default",
+      "decision": "首版做独立本地 Web 应用（浏览器 UI + 本地后端，驱动 agent 运行时）；但产品内核按「可嵌入内核」设计——编排内核与 UI 解耦，二期可包成宿主插件或 MCP server。",
+      "basis": "用户原话「可以先 web 网页版就可以」「类似于插件的」，同时要求「基于 agent 工具、底层环境和技能还有 mcp 可以直接操作 agent 工具」——说明是被驱动方，不是宿主。",
+      "affects": "整体架构形态"
+    },
+    {
+      "id": "Q2-first-runtimes",
+      "question": "首版必须接入哪几个 agent 运行时？",
+      "status": "decided-by-default",
+      "decision": "首版做 3 个参考 adapter 打通三条通道：ACP 通道（Gemini CLI 或 [CC] via claude-code-acp）、原生协议通道（Codex app-server 或 OpenCode HTTP）、通用 CLI 通道（ZCode / DSH）。其余运行时通过 adapter 声明接入，不改核心。",
+      "basis": "用户点名 ZCode / DSH / Codex / [CC] 并要求「不止这几个」，因此必须验证三条通道都能通，而不是只做两个特例。",
+      "affects": "首版范围与工作量"
+    },
+    {
+      "id": "Q3-single-vs-multi-user",
+      "question": "单用户本地工具还是多用户/团队？",
+      "status": "decided-by-default",
+      "decision": "单用户本地优先，无账号体系；但本地起 HTTP 服务需要 token 鉴权防同机其他程序访问。权限只做 Bot 级工具/目录边界。",
+      "affects": "权限体系计分与后端复杂度"
+    },
+    {
+      "id": "Q4-group-chat-scope",
+      "question": "多 bot 群聊协作是否属于首版必须？",
+      "status": "decided-by-default",
+      "decision": "首版含群聊，但默认「主持 Bot 决定谁发言」，不默认全员回复（token 成本）。数据模型按会话多参与者设计。",
+      "basis": "群聊是多 Bot 产品的核心体验，砍掉就失去与单 agent 聊天工具的区别；用主持人机制控制成本。",
+      "affects": "核心交互模型"
+    },
+    {
+      "id": "Q5-session-ownership",
+      "question": "bot 与运行时会话的关系？",
+      "status": "decided-by-default",
+      "decision": "Bot 持有本产品自己的会话记录（产品层真相）；同时尽量复用运行时的 session resume 能力续接上下文。运行时 resume 不可用时，由产品层重建上下文。",
+      "basis": "各 adapter 的 resume 一致性不可靠（见调研笔记开放问题 3），不能把持久性押在运行时上。",
+      "affects": "集成深度、记忆实现方式"
+    },
+    {
+      "id": "Q6-prototype-v2-evidence",
+      "question": "原型 v2 的验收证据缺口（上一轮只有 2 张 bots 截图且早于文件改动）。",
+      "status": "resolved",
+      "decision": "已由 critic 独立验收闭环：14 路由 x 亮/暗 x 四态 + 权限四态 + 三种弹层全部实测，1 阻断 + 11 重要 + 12 次要问题均已修复并复测通过。",
+      "resolvedAt": "2026-10-24"
+    }
+  ],
+  "reviewNotes": "15 条 P0：11 条完全通过，4 条带本机环境限制（P0-09 越界实时拒绝仅单测、P0-12 累计值 warning 未验、P0-15 窗口裁剪未触发、P0-07 30min 超时未等待）。首轮发现 6 阻断（CLI 不注入人格记忆、CLI 每轮误判 crashed、刷新事件全丢、2200+ 事件未虚拟滚动、手动添加运行时缺失、删除 Bot 缺失）全部修复。安全修复：CLI 运行时强制 worktree（用户裁定）。文档对齐：P0-06 超时 20s、P0-07 并发 1。报告：.forge/agentbot-07-review.md",
+  "features": {
+    "builtin-engine": {
+      "startedAt": "2026-10-25",
+      "design": ".forge/agentbot-06-builtin-engine.md",
+      "runId": "dwfrun-54461c9d-d713-4ccb-9d99-2b16aee7ed1c",
+      "modules": [
+        "N1 provider 层",
+        "N2 agent loop + builtin 驱动",
+        "N3 工具集 + 权限门禁",
+        "N4 MCP",
+        "N5 技能",
+        "N6 前端"
+      ],
+      "why": "用户裁定：内置引擎与外部运行时并存，自带工具/MCP/技能，provider 支持 OpenAI 与 Anthropic 两种协议",
+      "evidence": {
+        "zcodeCli": "13-16s/轮，prompt 68104 token，无权限通道",
+        "pixDeepseek": "非流式 4.2s；流式首 token 4.4s/总 5.5s；prompt 324 token；tool_calls 支持"
+      }
+    }
+  }
+}

@@ -1,0 +1,122 @@
+[
+  {
+    "type": "thought",
+    "payload": {
+      "phase": "start",
+      "text": ""
+    }
+  },
+  {
+    "type": "thought",
+    "payload": {
+      "phase": "delta",
+      "text": "先看目录结构。"
+    }
+  },
+  {
+    "type": "tool_call",
+    "payload": {
+      "callId": "call_1",
+      "name": "列出 src 目录",
+      "kind": "read",
+      "input": {
+        "path": "src"
+      },
+      "status": "pending"
+    }
+  },
+  {
+    "type": "tool_call",
+    "payload": {
+      "callId": "call_1",
+      "name": "列出 src 目录",
+      "kind": "read",
+      "input": {
+        "path": "src"
+      },
+      "status": "running"
+    }
+  },
+  {
+    "type": "tool_result",
+    "payload": {
+      "callId": "call_1",
+      "status": "ok",
+      "output": "adapters\ncore\nhttp",
+      "exitCode": 0
+    }
+  },
+  {
+    "type": "plan",
+    "payload": {
+      "entries": [
+        {
+          "content": "读代码",
+          "status": "done"
+        },
+        {
+          "content": "写映射表",
+          "status": "in_progress"
+        },
+        {
+          "content": "跑契约测试",
+          "status": "pending"
+        }
+      ]
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "start",
+      "text": ""
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "delta",
+      "text": "目录已经看完，"
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "delta",
+      "text": "我把映射表补上了。"
+    }
+  },
+  {
+    "type": "usage",
+    "payload": {
+      "inputTokens": 1234,
+      "outputTokens": 56,
+      "reported": true
+    }
+  },
+  {
+    "type": "thought",
+    "payload": {
+      "phase": "end",
+      "text": ""
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "end",
+      "text": ""
+    }
+  },
+  {
+    "type": "done",
+    "payload": {
+      "stopReason": "end",
+      "durationMs": 0
+    }
+  }
+]

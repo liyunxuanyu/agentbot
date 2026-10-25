@@ -1,0 +1,134 @@
+/* AgentBot · terminal-native 令牌 · variant=terminal
+ * 用法：<link rel="stylesheet" href="agentbot-tokens-terminal.css">，组件里只引用 var()，不写字面 hex。
+ * 规矩：圆角恒为 0；禁止 box-shadow / gradient / backdrop-filter；accent 仅用于 focus / running / pending-decision。
+ * 字体：JetBrains Mono + Sarasa Mono SC 需随包内置（见 agentbot-03-ui-terminal.md §9），否则中文 gutter 会错位。
+ */
+:root {
+  /* ── 背景 5 级：越靠前越深 ── */
+  --color-bg-0: #07090B;  /* 导航底、页面 gutter */
+  --color-bg-1: #0D1014;  /* 页面底、消息流、表格底 */
+  --color-bg-2: #12161B;  /* 卡片、面板、输入区、表头 */
+  --color-bg-3: #191E25;  /* 悬停行、展开的事件体、代码块 */
+  --color-bg-4: #22282F;  /* 激活项、选中行、按下态 */
+
+  /* ── 前景 4 级 ── */
+  --color-fg-1: #D3DAE2;  /* 正文 13.5:1 */
+  --color-fg-2: #98A3AF;  /* 次要 7.4:1 */
+  --color-fg-3: #7C8794;  /* 三级/时间戳 5.2:1 */
+  --color-fg-4: #5C6773;  /* 禁用 3.3:1 */
+
+  /* ── 边框 3 级 ── */
+  --color-border-subtle: #232A32; /* 行内分隔 1.3:1 */
+  --color-border: #333C47;        /* 默认边框/分栏 1.7:1 */
+  --color-border-strong: #55616F; /* 结构/悬停加粗 3.0:1 */
+
+  /* ── 强调：青绿 177°，仅 focus / running / pending ── */
+  --color-accent: #3DBFB8;
+  --color-accent-hover: #4ACFC8;
+  --color-accent-active: #2FA8A2;
+  --color-accent-dim: #2A9A94;
+  --color-accent-bg: #0F2A2E;
+
+  /* ── 语义 ── */
+  --color-success: #63C97B;
+  --color-success-bg: #0F2416;
+  --color-warning: #D6B24A;
+  --color-warning-bg: #2A2310;
+  --color-danger: #E4695C;
+  --color-danger-hover: #F07A6C;
+  --color-danger-active: #C24A3F;
+  --color-danger-bg: #2A1512;
+
+  /* ── 字体（全站等宽，无第二字族） ── */
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", "Cascadia Mono",
+               "Sarasa Mono SC", "Noto Sans Mono CJK SC", ui-monospace, Consolas, monospace;
+
+  /* ── 字号阶梯 7 级 ── */
+  --text-2xs: 11px; --leading-2xs: 15px; --weight-2xs: 400; --track-2xs: 0.02em;
+  --text-xs: 12px;  --leading-xs: 17px;  --weight-xs: 400;  --track-xs: 0;
+  --text-sm: 13px;  --leading-sm: 19px;  --weight-sm: 400;  --track-sm: 0;
+  --text-md: 14px;  --leading-md: 20px;  --weight-md: 400;  --track-md: 0;
+  --text-lg: 16px;  --leading-lg: 22px;  --weight-lg: 600;  --track-lg: -0.005em;
+  --text-xl: 20px;  --leading-xl: 26px;  --weight-xl: 600;  --track-xl: -0.01em;
+  --text-2xl: 24px; --leading-2xl: 30px; --weight-2xl: 700; --track-2xl: -0.015em;
+
+  /* ── 间距：基准 4，含 2/6 半档 ── */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 24px;
+  --space-8: 32px;
+  --space-9: 48px;
+
+  /* ── 边框与圆角（圆角恒 0） ── */
+  --border-w: 1px;
+  --border-w-emphasis: 2px;
+  --border-w-rail: 3px;
+  --radius: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+
+  /* ── 布局 ── */
+  --layout-nav: 240px;
+  --layout-nav-collapsed: 64px;
+  --layout-aside: 320px;
+  --layout-header: 56px;
+  --layout-subheader: 36px;
+  --layout-turn-head: 32px;
+  --layout-event-row: 24px;
+  --layout-card-row: 19px;
+  --layout-button-sm: 24px;
+  --layout-button-md: 28px;
+  --measure-chat: 88ch; /* 中文按 44 全角字符计 */
+
+  /* ── 动效：全部 linear，≤240ms ── */
+  --dur-instant: 0ms;
+  --dur-fast: 120ms;
+  --dur-base: 240ms;
+  --ease: linear;
+  --caret-blink: 1000ms;
+
+  /* ── 焦点环：用 outline 内嵌实现，不引入 box-shadow ── */
+  --focus-outline: 2px solid var(--color-accent);
+  --focus-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --caret-blink: 0ms;
+  }
+}
+
+@media (max-width: 1279px) {
+  :root { --layout-nav: var(--layout-nav-collapsed); }
+}
+
+/* 基础重置：只在原型里引用，生产可覆盖 */
+html, body {
+  margin: 0;
+  background: var(--color-bg-1);
+  color: var(--color-fg-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  line-height: var(--leading-md);
+  font-variant-numeric: tabular-nums;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* 焦点环：优先 outline，避免任何 box-shadow */
+:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-offset);
+}
+
+/* 数字一律等宽右对齐 */
+.num { font-variant-numeric: tabular-nums; text-align: right; }

@@ -1,0 +1,41 @@
+[
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "start",
+      "text": ""
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "delta",
+      "text": "我先看一下项目结构。目录里只有 src 与 tests。"
+    }
+  },
+  {
+    "type": "usage",
+    "payload": {
+      "inputTokens": 1200,
+      "outputTokens": 48,
+      "reported": true
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "end",
+      "text": ""
+    }
+  },
+  {
+    "type": "done",
+    "payload": {
+      "stopReason": "end",
+      "durationMs": 0
+    }
+  }
+]

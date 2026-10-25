@@ -1,0 +1,23 @@
+[
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "开始分析这个仓库" } },
+  {
+    "type": "tool_call",
+    "payload": {
+      "callId": "call_x",
+      "name": "运行命令",
+      "kind": "execute",
+      "input": { "command": "npm test", "cwd": "D:\\work\\demo" },
+      "status": "running"
+    }
+  },
+  {
+    "type": "error",
+    "payload": {
+      "code": "runtime_crashed",
+      "message": "运行时进程已退出（exit 1）",
+      "detail": "$STDERR_TAIL",
+      "fatal": true
+    }
+  }
+]

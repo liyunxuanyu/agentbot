@@ -1,0 +1,10 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false}},"authMethods":[]}}
+{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess_acp_normal_1"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_normal_1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"先看目录结构。"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_normal_1","update":{"sessionUpdate":"tool_call","toolCallId":"call_1","title":"列出 src 目录","kind":"read","status":"pending","rawInput":{"path":"src"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_normal_1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call_1","status":"in_progress"}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_normal_1","update":{"sessionUpdate":"tool_call_update","toolCallId":"call_1","status":"completed","content":[{"type":"text","text":"adapters\ncore\nhttp"}],"exitCode":0}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_normal_1","update":{"sessionUpdate":"plan","entries":[{"content":"读代码","status":"completed"},{"content":"写映射表","status":"in_progress"},{"content":"跑契约测试","status":"pending"}]}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_normal_1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"目录已经看完，"}}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess_acp_normal_1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"我把映射表补上了。"}}}}
+{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end","usage":{"inputTokens":1234,"outputTokens":56}}}

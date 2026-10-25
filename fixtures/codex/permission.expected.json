@@ -1,0 +1,40 @@
+[
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "我需要写入配置文件。" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "end", "text": "" } },
+  {
+    "type": "tool_call",
+    "payload": {
+      "callId": "call_patch_1",
+      "name": "应用补丁",
+      "kind": "edit",
+      "input": {
+        "path": "D:\\work\\demo\\agentbot.config.json",
+        "files": ["D:\\work\\demo\\agentbot.config.json"]
+      },
+      "status": "running"
+    }
+  },
+  {
+    "type": "permission_request",
+    "payload": {
+      "requestId": "approval-1",
+      "action": "write",
+      "target": "D:\\work\\demo\\agentbot.config.json",
+      "boundaryVerdict": "pending"
+    }
+  },
+  {
+    "type": "tool_result",
+    "payload": {
+      "callId": "call_patch_1",
+      "status": "ok",
+      "output": "D:\\work\\demo\\agentbot.config.json"
+    }
+  },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "配置已更新。" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "end", "text": "" } },
+  { "type": "usage", "payload": { "inputTokens": 800, "outputTokens": 40, "reported": true } },
+  { "type": "done", "payload": { "stopReason": "end", "durationMs": 0 } }
+]

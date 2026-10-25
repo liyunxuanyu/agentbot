@@ -1,0 +1,163 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import { useRoute, RouterLink } from "vue-router";
+import { storeToRefs } from "pinia";
+import AppIcon from "./components/common/AppIcon.vue";
+import type { IconName } from "./lib/icons";
+import Toast from "./components/common/Toast.vue";
+import { useUiStore } from "./stores/ui";
+import { useBotsStore } from "./stores/bots";
+import { botVars } from "./lib/botVars";
+
+/**
+ * 应用壳（原型 shell()）。
+ *
+ * 三栏结构：240 侧栏 | 弹性主区（顶栏 + 页面）；右面板属于页面自己（只有 /chat 有），
+ * 所以壳里不预留右列 —— 这与原型一致（原型把 .chat 的两列网格放在 viewChat 内）。
+ *
+ * 布局令牌全部来自 tokens.css：--nav-width / --nav-width-rail / --aside-width。
+ * 1024–1280 侧栏折成 64px 图标栏并悬停展开、<768 变底部导航，
+ * 这些断点行为由 base.css 承担，壳只负责给对 DOM 结构与 class。
+ */
+const ui = useUiStore();
+const bots = useBotsStore();
+const { crumbs, isDark, toasts } = storeToRefs(ui);
+
+const route = useRoute();
+
+interface NavItem {
+  key: string;
+  label: string;
+  to: string;
+  icon: IconName;
+}
+
+const NAV: NavItem[] = [
+  { key: "bots", label: "Bot", to: "/bots", icon: "bots" },
+  { key: "chats", label: "会话", to: "/chats", icon: "chats" },
+  { key: "assignments", label: "任务", to: "/assignments", icon: "tasks" },
+  { key: "schedules", label: "定时", to: "/schedules", icon: "clock" },
+  { key: "usage", label: "用量", to: "/usage", icon: "chart" },
+  { key: "settings", label: "设置", to: "/settings", icon: "gear" },
+];
+
+/** 当前高亮的一级导航：/chat/:id 属于「会话」，/bots/:id 属于「Bot」。 */
+const activeKey = computed(() => {
+  const name = route.name?.toString() ?? "";
+  if (name === "bot-detail") return "bots";
+  if (name === "chat") return "chats";
+  if (name === "assignment-detail") return "assignments";
+  return name;
+});
+
+/** 导航计数：会话未读、执行中任务（原型 NAV.count）。 */
+const chatCount = computed(() => 0);
+const runningTasks = computed(() => 0);
+const pendingTotal = computed(() => bots.pendingCount);
+const workingBots = computed(() => bots.workingCount);
+
+/** 侧栏底部的身份色点阵（原型 .foot-roster）：一眼看出工作区里有谁。 */
+const roster = computed(() =>
+  bots.bots.map((b) => ({
+    id: b.id,
+    name: b.name,
+    vars: botVars(b),
+  })),
+);
+
+function navCount(key: string): number {
+  if (key === "chats") return chatCount.value;
+  if (key === "assignments") return runningTasks.value;
+  return 0;
+}
+
+function onToggleTheme(): void {
+  ui.toggleTheme();
+}
+
+void toasts;
+</script>
+
+<template>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span>
+        <span class="brand-text">
+          <span class="brand-name">AgentBot</span>
+          <span class="brand-sub">本地工作台</span>
+        </span>
+      </div>
+
+      <nav class="nav" aria-label="主导航">
+        <RouterLink
+          v-for="item in NAV"
+          :key="item.key"
+          class="nav-item"
+          :class="{ 'is-active': activeKey === item.key }"
+          :to="item.to"
+          :aria-current="activeKey === item.key ? 'page' : undefined"
+          :title="item.label"
+        >
+          <AppIcon :name="item.icon" />
+          <span class="nav-label">{{ item.label }}</span>
+          <span
+            v-if="navCount(item.key) > 0"
+            class="nav-count"
+            :class="{ 'is-alert': item.key === 'assignments' }"
+          >{{ navCount(item.key) }}</span>
+        </RouterLink>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="foot-roster" aria-hidden="true">
+          <span
+            v-for="dot in roster"
+            :key="dot.id"
+            class="roster-dot"
+            :style="dot.vars"
+            :title="dot.name"
+          />
+        </div>
+        <div class="foot-card">
+          <span class="live-dot" />
+          <b>{{ pendingTotal }}</b><span>条待批权限</span>
+        </div>
+        <div class="foot-card">
+          <span class="state-dot" :style="{ '--s': 'var(--state-working)' }" />
+          <b>{{ workingBots }}</b><span>个在干活</span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <div class="crumb">
+          <template v-for="(c, i) in crumbs" :key="`${c.text}-${i}`">
+            <span v-if="i > 0" class="sep">/</span>
+            <RouterLink v-if="c.to" :to="c.to">{{ c.text }}</RouterLink>
+            <b v-else>{{ c.text }}</b>
+          </template>
+        </div>
+        <div class="spacer" />
+        <button class="chip-pending" @click="$router.push('/chats')">
+          <span class="live-dot" />待批 {{ pendingTotal }}
+        </button>
+        <button
+          class="icon-btn"
+          :aria-label="isDark ? '切换到亮色主题' : '切换到暗色主题'"
+          :title="isDark ? '切换到亮色主题' : '切换到暗色主题'"
+          @click="onToggleTheme"
+        >
+          <AppIcon :name="isDark ? 'sun' : 'moon'" :size="16" />
+        </button>
+      </header>
+
+      <main class="page" :class="{ 'page--flush': route.meta['flush'] === true }">
+        <RouterView />
+      </main>
+    </div>
+
+    <Toast />
+  </div>
+</template>

@@ -1,0 +1,49 @@
+# DSH（DeepSeek Harness）—— CLI 兜底通道。
+#
+# `dsh --profile headless "<prompt>"` 跑一次任务并退出（dsh 自己的 help 明确写了
+# "answer one task, print the result, and exit"），所以与 ZCode 同属
+# 「一次 prompt 一个进程」的 CLI 通道。
+#
+# 实测（0.1.1-rc.2，2026-10）：
+#   - `dsh --version` → 0.1.1-rc.2
+#   - 未配置 DEEPSEEK_API_KEY 时：stderr 打 MISSING_CREDENTIAL，**stdout 为空、退出码 0**。
+#     这种「退出码 0 但没有任何输出」的情形由产品层按空回复处理（P0-04 边界），
+#     不当成崩溃 —— 崩溃判定只看非 0 退出码。
+#
+# DSH 的输出格式没有公开 schema，因此只声明能稳定拿到的类型。
+schemaVersion: 1
+id: dsh
+displayName: DSH
+protocol: cli-stdio
+
+launch:
+  command: dsh
+  args: ["--profile", "headless"]
+
+detect:
+  command: dsh
+  versionArgs: ["--version"]
+  # 输出形如 `0.1.1-rc.2`
+  versionPattern: '(?<version>\d+\.\d+\.\d+)'
+  timeoutMs: 3000
+
+capabilities:
+  plan: unknown
+  permissionRequest: unknown
+  resume: unknown
+  images: unknown
+  streaming: unknown
+  contextWindow: null
+
+# 纯文本输出：只有正文 + 结束 + 错误。拿不到用量就不断言（P0-12 不估算）。
+eventCapabilities: [message_delta, done, error]
+
+permission:
+  channel: none
+  defaultTimeoutPolicy: reject
+
+resumeStrategy: process-lifetime
+executionLocations: [local, worktree]
+
+modes:
+  headless: true

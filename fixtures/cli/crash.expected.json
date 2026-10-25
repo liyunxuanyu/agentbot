@@ -1,0 +1,5 @@
+[
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "部分输出" } },
+  { "type": "error", "payload": { "code": "runtime_crashed", "message": "运行时进程退出了（exit 1）", "detail": "$STDERR_TAIL", "fatal": true } }
+]

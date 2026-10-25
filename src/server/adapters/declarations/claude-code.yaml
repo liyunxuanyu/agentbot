@@ -1,0 +1,56 @@
+# [CC]（Claude Code）—— 经 `claude-code-acp` 桥接后走 ACP 通道。
+#
+# 为什么不是 claude-sdk：SDK 是进程内库（resumeStrategy:native），会让我们与
+# 某一种运行时版本强绑定；ACP 桥接让映射表复用、新增成本为零（架构 §3.9）。
+#
+# 前置条件：`npm i -g @zed-industries/claude-code-acp`（提供 claude-code-acp 命令）。
+# 本机未安装时探测结果如实为 missing；用 AGENTBOT_BIN_CLAUDE_CODE 可指定路径。
+#
+# 用量提示：headless 模式单位 token 配额约为交互模式 3×（ref-research §三），
+# 用量页靠 multiplierHint 标注。
+schemaVersion: 1
+id: claude-code
+displayName: Claude Code
+protocol: acp
+
+launch:
+  command: claude-code-acp
+  args: []
+
+detect:
+  # 探测用 claude 本体：ACP 桥接包自己没有 --version，但它的可用性依赖 claude 已装
+  command: claude
+  versionArgs: ["--version"]
+  # 输出形如 `2.1.302 ([CC])`
+  versionPattern: '(?<version>\d+\.\d+\.\d+)'
+  timeoutMs: 3000
+
+capabilities:
+  plan: true
+  permissionRequest: true
+  resume: true
+  images: unknown
+  streaming: true
+  contextWindow: null
+
+eventCapabilities:
+  - message_delta
+  - thought
+  - tool_call
+  - tool_result
+  - plan
+  - permission_request
+  - usage
+  - done
+  - error
+
+permission:
+  channel: acp-reverse
+  defaultTimeoutPolicy: reject
+
+resumeStrategy: acp
+executionLocations: [local, worktree]
+
+modes:
+  headless: true
+  multiplierHint: 3

@@ -1,0 +1,67 @@
+[
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "start",
+      "text": ""
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "delta",
+      "text": "正文一"
+    }
+  },
+  {
+    "type": "meta",
+    "payload": {
+      "kind": "unknown_protocol",
+      "data": {
+        "kind": "brand_new_update_type_from_acp_v3"
+      }
+    }
+  },
+  {
+    "type": "meta",
+    "payload": {
+      "kind": "unknown_protocol",
+      "data": {
+        "reason": "session/update 缺少 update"
+      }
+    }
+  },
+  {
+    "type": "tool_result",
+    "payload": {
+      "callId": "missing_call",
+      "status": "ok",
+      "output": "孤儿结果"
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "delta",
+      "text": "正文二"
+    }
+  },
+  {
+    "type": "message_delta",
+    "payload": {
+      "messageId": "$MESSAGE_ID",
+      "phase": "end",
+      "text": ""
+    }
+  },
+  {
+    "type": "done",
+    "payload": {
+      "stopReason": "end",
+      "durationMs": 0
+    }
+  }
+]

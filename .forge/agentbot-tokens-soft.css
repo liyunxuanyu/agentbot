@@ -1,0 +1,174 @@
+/* AgentBot · soft tokens
+ * 默认浅色。<html data-theme="light|dark">。组件只引用变量，不写字面色值。
+ * 正文无衬线；等宽仅用于代码 / 路径 / token 数。对应文档 agentbot-03-ui-soft.md
+ */
+:root {
+  /* ── 表面 4 级 ── */
+  --color-bg: #EDF1F5;              /* 冷调白，比纯白暗，卡片才浮得起来 */
+  --color-surface: #FFFFFF;         /* 卡片、Bot 气泡、弹层 */
+  --color-surface-sunken: #E4EAF0;  /* 折叠块、代码块、输入静息、表头 */
+  --color-surface-hover: #F6F8FA;   /* 白底悬停，只改 2% 亮度 */
+
+  /* ── 前景 4 级（注释为 on surface / on bg 实测对比度） ── */
+  --color-fg-1: #1E2A33;            /* 14.6 / 12.9  正文、标题 */
+  --color-fg-2: #40505C;            /* 8.3 / 7.3    次级正文 */
+  --color-fg-3: #586873;            /* 5.8 / 5.1    时间、用量、元信息 */
+  --color-fg-4: #8B98A3;            /* 2.95 / 2.60  仅禁用态 */
+  --color-fg-on-sunken: #586873;    /* 4.76 on sunken */
+
+  /* ── 主色雾蓝：压白字须 ≥4.5，故用 #4E6E8C 而非 #5B7C99(4.39) ── */
+  --color-primary: #4E6E8C;         /* 5.34 on white */
+  --color-primary-hover: #43607B;   /* 6.57 */
+  --color-primary-active: #39536B;  /* 8.00 */
+  --color-primary-weak: #E7EEF4;
+  --color-primary-ink: #3A5670;     /* 6.53 on weak */
+  --color-primary-decor: #5B7C99;   /* 仅装饰色块与图标，不承载文字 */
+  --color-on-primary: #FFFFFF;
+
+  /* ── 暖沙：用户气泡。暖=你，冷=它 ── */
+  --color-sand: #EDE4D5;            /* fg-1 压其上 11.6 */
+  --color-sand-weak: #F7F1E7;
+  --color-sand-strong: #D8C7A9;     /* 3px 竖条、进度轨道 */
+  --color-sand-ink: #74562F;        /* 6.00 on sand-weak */
+
+  /* ── 语义色：base 用于图形，-ink 用于文字，-weak 用于底 ── */
+  --color-success: #3F7A5A;  --color-success-ink: #376B4F;  --color-success-weak: #E8F1EC;
+  --color-warning: #A8763C;  --color-warning-ink: #7A5327;  --color-warning-weak: #F8F0E4;
+  --color-danger:  #A8453F;  --color-danger-ink:  #963B36;  --color-danger-weak:  #FBEDEC;
+  --color-info:    #4E6E8C;  --color-info-weak:  #E7EEF4;
+  /* warning base 3.95 on white —— 仅图形，作文本时换 warning-ink(6.0) */
+
+  /* ── Bot 六态：色 + 图标 + 文字三元组，不单靠色 ── */
+  --color-state-idle: #7A8690;      /* 3.7   空心环，无动效 */
+  --color-state-thinking: #4E6E8C;  /* 5.3   三点，1400ms 循环 */
+  --color-state-working: #2F7A80;   /* 5.0   弧旋转，1600ms linear */
+  --color-state-waiting: #A8763C;   /* 3.95  沙漏，2000ms 呼吸 */
+  --color-state-blocked: #A8453F;   /* 5.9   感叹号，静止 */
+  --color-state-done: #3F7A5A;      /* 5.1   对勾，320ms pop 后静止 */
+
+  /* ── 边框：只给次级按钮与表格行分隔，不用于划分区域 ── */
+  --color-border-subtle: #E6ECF1;
+  --color-border-control: #DDE4EA;
+  --color-border-strong: #B9C6D1;
+  --color-focus-ring: rgba(78, 110, 140, .28);
+  --color-scrim: rgba(30, 42, 51, .24);
+
+  /* ── 字体 ── */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Mono", Consolas,
+    "Liberation Mono", monospace;
+
+  /* ── 字号 8 级 + 行高 ── */
+  --text-display: 32px; --lh-display: 1.25;
+  --text-h1: 24px;      --lh-h1: 1.30;
+  --text-h2: 19px;      --lh-h2: 1.40;
+  --text-h3: 16px;      --lh-h3: 1.45;
+  --text-body: 15px;    --lh-body: 1.65;
+  --text-body-sm: 14px; --lh-body-sm: 1.55;
+  --text-caption: 13px; --lh-caption: 1.45;
+  --text-micro: 12px;   --lh-micro: 1.35;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;   /* 不用 700：中文 15px 下会糊 */
+  --tracking-tight: -0.01em;
+
+  /* ── 间距 12 档，基准 4px ── */
+  --space-1: 2px;   --space-2: 4px;   --space-3: 6px;
+  --space-4: 8px;   --space-5: 12px;  --space-6: 16px;
+  --space-7: 20px;  --space-8: 24px;  --space-9: 32px;
+  --space-10: 40px; --space-11: 48px; --space-12: 64px;
+
+  /* ── 圆角 7 级 ── */
+  --radius-xs: 6px;    /* 徽标、状态胶囊、代码方牌、Session 条 */
+  --radius-sm: 10px;   /* 按钮 */
+  --radius-md: 12px;   /* 列表行、导航项、折叠块、Turn 头 */
+  --radius-lg: 16px;   /* 卡片、气泡、权限卡 */
+  --radius-xl: 20px;   /* 内嵌块、右面板 */
+  --radius-2xl: 24px;  /* 输入胶囊、弹层、抽屉 */
+  --radius-pill: 999px;
+  --radius-card: var(--radius-lg);
+  --radius-bubble: var(--radius-lg);
+  --radius-input: var(--radius-2xl);
+
+  /* ── 阴影 3 级：低透明度，色取 fg-1 而非纯黑 ── */
+  --shadow-card: 0 1px 3px rgba(30, 42, 51, .04), 0 1px 2px rgba(30, 42, 51, .03);
+  --shadow-raised: 0 4px 12px rgba(30, 42, 51, .06), 0 1px 3px rgba(30, 42, 51, .04);
+  --shadow-overlay: 0 12px 32px rgba(30, 42, 51, .10), 0 2px 8px rgba(30, 42, 51, .05);
+
+  /* ── 动效 ── */
+  --dur-fast: 120ms;    /* 按压、悬停染色 */
+  --dur-base: 200ms;    /* 状态变化、折叠、吸顶 */
+  --dur-slow: 240ms;    /* 区块进入、空态 */
+  --dur-slower: 320ms;  /* 完成 pop */
+  --dur-enter: 260ms;   /* 弹层进 */
+  --dur-exit: 180ms;    /* 弹层出 */
+  --ease-out: cubic-bezier(.2, .8, .3, 1);   /* 主缓动 */
+  --ease-in: cubic-bezier(.4, 0, 1, 1);
+  --ease-pop: cubic-bezier(.34, 1.4, .64, 1);
+  --ease-standard: cubic-bezier(.2, 0, 0, 1);
+
+  /* ── 布局 ── */
+  --nav-width: 240px;
+  --nav-width-compact: 64px;
+  --panel-width: 320px;
+  --bubble-max: min(68ch, 640px);
+  --turn-gap: var(--space-10);   /* Turn 之间 40 */
+  --event-gap: var(--space-5);   /* Turn 内事件之间 12 */
+
+  --z-sticky: 10;
+  --z-scrim: 40;
+  --z-overlay: 50;
+  --z-toast: 60;
+}
+
+/* 暗色为附加项：结构镜像，未做完整对比度验收（见文档 §10.5） */
+[data-theme="dark"] {
+  --color-bg: #151B20;  --color-surface: #1E262D;
+  --color-surface-sunken: #11171C;  --color-surface-hover: #232C34;
+  --color-fg-1: #E8EEF3;  --color-fg-2: #B9C6D0;
+  --color-fg-3: #8FA0AD;  --color-fg-4: #63737F;
+  --color-fg-on-sunken: #8FA0AD;
+  --color-primary: #8FB0CB;  --color-primary-hover: #A3C0D7;
+  --color-primary-active: #B5CEDF;  --color-primary-weak: #25333F;
+  --color-primary-ink: #B7D0E3;  --color-primary-decor: #6E8FAB;
+  --color-on-primary: #10171C;
+  --color-sand: #3A3227;  --color-sand-weak: #2A2620;
+  --color-sand-strong: #574936;  --color-sand-ink: #D9C4A2;
+  --color-success: #6FAE8A; --color-success-ink: #8CC5A4; --color-success-weak: #1E2E26;
+  --color-warning: #D3A05F; --color-warning-ink: #E2B87F; --color-warning-weak: #2E271C;
+  --color-danger:  #D08680; --color-danger-ink:  #E4A19B; --color-danger-weak:  #33211F;
+  --color-info:    #8FB0CB; --color-info-weak:  #25333F;
+  --color-state-idle: #8FA0AD;  --color-state-thinking: #8FB0CB;
+  --color-state-working: #6FB3B8;  --color-state-waiting: #D3A05F;
+  --color-state-blocked: #D08680;  --color-state-done: #6FAE8A;
+  --color-border-subtle: #28323A;  --color-border-control: #33404A;
+  --color-border-strong: #44535E;  --color-focus-ring: rgba(143, 176, 203, .34);
+  --color-scrim: rgba(6, 10, 13, .56);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, .28), 0 1px 2px rgba(0, 0, 0, .20);
+  --shadow-raised: 0 4px 12px rgba(0, 0, 0, .34), 0 1px 3px rgba(0, 0, 0, .24);
+  --shadow-overlay: 0 12px 32px rgba(0, 0, 0, .48), 0 2px 8px rgba(0, 0, 0, .30);
+}
+
+/* 焦点：统一环，不用 outline */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+
+/* 降级：关位移与循环动画，保留颜色与焦点（它们是信息） */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0.01ms; --dur-base: 0.01ms; --dur-slow: 0.01ms;
+    --dur-slower: 0.01ms; --dur-enter: 0.01ms; --dur-exit: 0.01ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .stream-caret { animation: none !important; opacity: 1 !important; }
+  .state-dots, .state-arc, .state-hourglass { animation: none !important; }
+}

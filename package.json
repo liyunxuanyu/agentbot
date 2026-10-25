@@ -1,0 +1,45 @@
+{
+  "name": "agentbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local web workbench that orchestrates bots across pluggable agent runtimes",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch src/server/main.ts",
+    "dev:web": "vite",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build",
+    "build:server": "tsup",
+    "start": "node dist/server.js",
+    "start:local": "node scripts/start-local.mjs",
+    "typecheck": "vue-tsc --noEmit",
+    "typecheck:tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint:boundaries": "node scripts/check-boundaries.mjs"
+  },
+  "dependencies": {
+    "@tanstack/vue-virtual": "^3.10.8",
+    "better-sqlite3": "^11.5.0",
+    "fastify": "^5.1.0",
+    "pinia": "^2.2.6",
+    "vue": "^3.5.12",
+    "vue-router": "^4.4.5",
+    "yaml": "^2.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.9.0",
+    "@vitejs/plugin-vue": "^5.1.4",
+    "concurrently": "^9.1.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.5",
+    "vue-tsc": "^2.1.10"
+  }
+}

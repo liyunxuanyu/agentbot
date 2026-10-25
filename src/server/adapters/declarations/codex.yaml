@@ -1,0 +1,70 @@
+# Codex CLI —— 原生通道（codex app-server，JSON-RPC over stdio）。
+#
+# 驱动在 `channels/native/`（M9）。协议事实来自本机 codex-cli 0.163.0：
+#   `codex app-server generate-json-schema` 产物 + 真实 app-server 会话录制。
+# 0.163.0 的通知名是斜杠式（item/started、turn/completed、thread/tokenUsage/updated），
+# 架构 §3.6 表里的 item.started / exec_approval_request 是同一批通知的早期名字，
+# 驱动两种都认（见 channels/native/mapping.ts）。
+schemaVersion: 1
+id: codex
+displayName: Codex CLI
+protocol: codex-app-server
+
+launch:
+  command: codex
+  args: ["app-server"]
+
+detect:
+  command: codex
+  versionArgs: ["--version"]
+  # 输出形如 `codex-cli 0.163.0`
+  versionPattern: '(?<version>\d+\.\d+\.\d+)'
+  timeoutMs: 3000
+
+# 未设 minVersion：app-server 协议版本要求未见官方下限，不凭空发明一个数
+capabilities:
+  # turn/plan/updated 确实存在，但本通道未把 plan 纳入事件掩码（§3.6 未列），
+  # 所以不声称支持「计划」——unknown 是「没声明」，不是「不支持」。
+  plan: unknown
+  permissionRequest: true      # item/*/requestApproval、execCommandApproval、applyPatchApproval
+  resume: true                 # thread/resume 已在 0.163.0 实测可用（按 threadId 加载 rollout）
+  images: unknown              # UserInput 有 localImage 分支，但产品层未开放图片输入
+  streaming: true              # item/*/delta 增量通知
+  contextWindow: null          # thread/tokenUsage/updated 会带 modelContextWindow，
+                               # 但探测阶段拿不到（要跑完一轮），不猜
+
+# 只列**已确证**能从 app-server 拿到的类型（§3.6 + 0.163.0 协议 schema）：
+#   reasoning item / reasoning textDelta        → thought
+#   commandExecution / fileChange / mcpToolCall → tool_call + tool_result
+#   agentMessage item / agentMessage delta      → message_delta
+#   thread/tokenUsage/updated                   → usage
+#   turn/completed                              → done
+#   error 通知 / turn.status=failed              → error
+#   item/*/requestApproval 等审批反向请求         → permission_request
+# 不声明 plan：§3.6 映射表没有它；未声明的类型在 ingest 处直接丢弃（P0-05）。
+eventCapabilities:
+  - message_delta
+  - thought
+  - tool_call
+  - tool_result
+  - permission_request
+  - usage
+  - done
+  - error
+
+permission:
+  channel: jsonrpc-approval
+  defaultTimeoutPolicy: reject
+
+resumeStrategy: native
+executionLocations: [local, worktree]
+
+modes:
+  headless: true
+
+# 通道私有参数（核心不解读，驱动原样用于 thread/start）：
+#   sandbox        —— 沙箱级别。workspace-write 让 Bot 能在自己的仓库/worktree 里干活。
+#   approvalPolicy —— on-request：越界动作变成审批请求，交核心边界 + 用户裁决。
+protocolOptions:
+  sandbox: workspace-write
+  approvalPolicy: on-request

@@ -1,0 +1,48 @@
+[
+  { "type": "thought", "payload": { "phase": "start", "text": "" } },
+  { "type": "thought", "payload": { "phase": "delta", "text": "先看 src 目录结构。" } },
+  { "type": "thought", "payload": { "phase": "end", "text": "" } },
+  {
+    "type": "tool_call",
+    "payload": {
+      "callId": "call_1",
+      "name": "运行命令",
+      "kind": "execute",
+      "input": { "command": "ls src", "cwd": "D:\\work\\demo" },
+      "status": "running"
+    }
+  },
+  {
+    "type": "tool_result",
+    "payload": {
+      "callId": "call_1",
+      "status": "ok",
+      "output": "adapters\ncore\nhttp",
+      "exitCode": 0
+    }
+  },
+  {
+    "type": "tool_call",
+    "payload": {
+      "callId": "call_mcp_1",
+      "name": "filesystem/read_file",
+      "kind": "mcp",
+      "input": { "path": "src/shared/events.ts" },
+      "status": "running"
+    }
+  },
+  {
+    "type": "tool_result",
+    "payload": {
+      "callId": "call_mcp_1",
+      "status": "ok",
+      "output": "export const EVENT_TYPES = [...]"
+    }
+  },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "start", "text": "" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "目录已经看完，" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "delta", "text": "我把映射表补上了。" } },
+  { "type": "message_delta", "payload": { "messageId": "$MESSAGE_ID", "phase": "end", "text": "" } },
+  { "type": "usage", "payload": { "inputTokens": 1234, "outputTokens": 56, "reported": true } },
+  { "type": "done", "payload": { "stopReason": "end", "durationMs": 0 } }
+]

@@ -1,0 +1,29 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 本地运行状态
+# 正常状态都在 ~/.agentbot（db / token / worktrees），不在仓库内；
+# 这里兜底，防止有人把 AGENTBOT_HOME 指到项目里时误提交 token 或数据库。
+*.db
+*.db-shm
+*.db-wal
+token
+*.log
+
+# 截图证据：147 张、约 13MB，可由原型与实测重新生成
+.forge/**/shots/
+
+# 工具临时产物（工作流草稿、其它 agent 工具的记忆、临时验证脚本）
+.zcode/
+.workbuddy/
+*.tmp.mjs
+
+# 与本项目无关的生成图片
+generated-images/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
