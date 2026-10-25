@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { ApiError, api } from "../net/client";
 import { useBotsStore } from "../stores/bots";
+import { useProvidersStore } from "../stores/providers";
 import { useRuntimesStore } from "../stores/runtimes";
 import { useUiStore } from "../stores/ui";
 import type { BotState, ExecutionLocation } from "../net/types";
@@ -27,6 +28,7 @@ import AppModal from "../components/common/AppModal.vue";
  */
 const bots = useBotsStore();
 const runtimesStore = useRuntimesStore();
+const providersStore = useProvidersStore();
 const ui = useUiStore();
 const router = useRouter();
 const { bots: list, status, errorText, workingCount, pendingCount, readyRuntimeCount, runtimes } =
@@ -86,6 +88,7 @@ const newBotName = ref("");
 const newBotNameErr = ref("");
 const newBotPersona = ref("负责把技术结论改写成非技术同事能读的段落，不改动代码。");
 const newBotRuntime = ref("");
+const newBotProvider = ref("");
 const newBotLocation = ref<ExecutionLocation>("local");
 const newBotRepo = ref("");
 const newBotRepoErr = ref("");
@@ -103,6 +106,10 @@ const readyRuntimes = computed(() =>
  * 字段错误兜底（不猜一个「强制 worktree」吓用户）。
  */
 const newBotMustWorktree = computed(() => runtimesStore.find(newBotRuntime.value)?.requiresWorktree === true);
+/** 内置引擎需要选模型供应商（不选则用默认供应商）。 */
+const newBotIsBuiltin = computed(
+  () => runtimesStore.find(newBotRuntime.value)?.protocol === "builtin",
+);
 const newBotEffectiveLocation = computed<ExecutionLocation>(() =>
   newBotMustWorktree.value ? "worktree" : newBotLocation.value,
 );
@@ -114,8 +121,10 @@ function openNewBot(): void {
   newBotRepoErr.value = "";
   newBotLocation.value = "local";
   newBotRuntime.value = readyRuntimes.value[0]?.id ?? "";
+  newBotProvider.value = providersStore.defaultId ?? "";
   newBotOpen.value = true;
   if (runtimesStore.runtimes.length === 0) void runtimesStore.load();
+  if (providersStore.providers.length === 0) void providersStore.load();
 }
 
 /**
@@ -152,6 +161,7 @@ async function createBot(): Promise<void> {
       name,
       persona: newBotPersona.value.trim(),
       ...(newBotRuntime.value ? { runtimeId: newBotRuntime.value } : {}),
+      ...(newBotIsBuiltin.value && newBotProvider.value ? { providerId: newBotProvider.value } : {}),
       executionLocation: location,
       ...(location === "worktree" ? { repoPath } : {}),
     });
@@ -389,6 +399,21 @@ onMounted(() => {
         </select>
         <div v-if="readyRuntimes.length === 0" class="hint">
           未发现可用运行时。先到「设置 › 运行时」重新探测，或走一遍首次启动向导。
+        </div>
+      </div>
+      <div v-if="newBotIsBuiltin" class="field">
+        <label class="u-label" for="nb-provider">模型供应商</label>
+        <select id="nb-provider" v-model="newBotProvider" class="select">
+          <option value="">使用默认供应商</option>
+          <option v-for="p in providersStore.providers" :key="p.id" :value="p.id">
+            {{ p.name }} · {{ p.model }}
+          </option>
+        </select>
+        <div v-if="providersStore.providers.length === 0" class="hint" style="color: var(--color-warning-ink)">
+          还没有配置模型供应商。内置引擎需要至少一个供应商，先到「设置 › 模型供应商」添加。
+        </div>
+        <div v-else class="hint">
+          内置引擎直连模型 API；工具调用会逐个走权限卡片。当前默认：{{ providersStore.defaultProvider?.name ?? "—" }}
         </div>
       </div>
       <div class="field">

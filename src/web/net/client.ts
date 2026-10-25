@@ -226,9 +226,16 @@ import type {
   ExecutionLocation,
   MemoryMutateResponse,
   MemoryResponse,
+  McpServerDto,
+  McpServerInput,
+  McpServersResponse,
   MetaDto,
   PermissionsResponse,
   ProbeRuntimeResponse,
+  ProviderDto,
+  ProviderInput,
+  ProvidersResponse,
+  ProviderTestResponse,
   PurgeResponse,
   RuntimesResponse,
   ScheduleDto,
@@ -236,6 +243,7 @@ import type {
   SendMessageRequest,
   SendMessageResponse,
   SessionEventsPageDto,
+  SkillsResponse,
   SummarizeResponse,
   TokenResetResponse,
   TokenStatusResponse,
@@ -315,6 +323,64 @@ export const api = {
 
   runtimes: (signal?: AbortSignal) => request<RuntimesResponse>("/api/runtimes", { signal }),
 
+  // -------------------------------------------------------------------------
+  // 内置引擎：模型供应商 / MCP / 技能
+  // -------------------------------------------------------------------------
+
+  providers: (signal?: AbortSignal) =>
+    request<ProvidersResponse>("/api/providers", { signal }),
+
+  createProvider: (body: ProviderInput & { apiKey: string }) =>
+    request<{ provider: ProviderDto }>("/api/providers", { method: "POST", body }),
+
+  updateProvider: (id: string, body: Partial<ProviderInput>) =>
+    request<{ provider: ProviderDto }>(`/api/providers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body,
+    }),
+
+  deleteProvider: (id: string) =>
+    request<void>(`/api/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  setDefaultProvider: (id: string) =>
+    request<{ ok: boolean; defaultId: string }>(
+      `/api/providers/${encodeURIComponent(id)}/default`,
+      { method: "POST" },
+    ),
+
+  testProvider: (id: string) =>
+    request<ProviderTestResponse>(`/api/providers/${encodeURIComponent(id)}/test`, {
+      method: "POST",
+      timeoutMs: 25_000,
+    }),
+
+  mcpServers: (signal?: AbortSignal) =>
+    request<McpServersResponse>("/api/mcp", { signal }),
+
+  createMcpServer: (body: McpServerInput) =>
+    request<{ server: McpServerDto | null }>("/api/mcp", { method: "POST", body, timeoutMs: 30_000 }),
+
+  updateMcpServer: (id: string, body: Partial<McpServerInput>) =>
+    request<{ server: McpServerDto | null }>(`/api/mcp/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body,
+      timeoutMs: 30_000,
+    }),
+
+  deleteMcpServer: (id: string) =>
+    request<void>(`/api/mcp/${encodeURIComponent(id)}`, { method: "DELETE", timeoutMs: 30_000 }),
+
+  reconnectMcpServer: (id: string) =>
+    request<{ ok: boolean; server: McpServerDto | null }>(
+      `/api/mcp/${encodeURIComponent(id)}/reconnect`,
+      { method: "POST", timeoutMs: 30_000 },
+    ),
+
+  skills: (signal?: AbortSignal) => request<SkillsResponse>("/api/skills", { signal }),
+
+  rescanSkills: () =>
+    request<SkillsResponse>("/api/skills/rescan", { method: "POST", timeoutMs: 30_000 }),
+
   /**
    * 手动添加自定义运行时（P0-01）。
    *
@@ -339,6 +405,7 @@ export const api = {
     name: string;
     persona?: string;
     runtimeId?: string;
+    providerId?: string;
     executionLocation?: ExecutionLocation;
     repoPath?: string;
   }) => request<BotCreateResponse>("/api/bots", { method: "POST", body }),
@@ -357,6 +424,7 @@ export const api = {
       allowNetwork?: boolean;
       autoApproveWrite?: boolean;
       runtimeId?: string;
+      providerId?: string | null;
       executionLocation?: ExecutionLocation;
       repoPath?: string;
       /** 人格（≤4000 字符）；保存后下一条消息即生效（P0-03）。 */

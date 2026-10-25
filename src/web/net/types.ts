@@ -77,6 +77,87 @@ export interface MetaDto {
 }
 
 // ---------------------------------------------------------------------------
+// 内置引擎：模型供应商 / MCP / 技能
+// ---------------------------------------------------------------------------
+
+export type ProviderProtocol = "openai-chat" | "anthropic-messages";
+
+export interface ProviderDto {
+  id: string;
+  name: string;
+  protocol: ProviderProtocol;
+  baseUrl: string;
+  model: string;
+  contextWindow: number | null;
+  supportsTools: boolean;
+  supportsStreaming: boolean;
+  /** 掩码，如 `sk-****abcd`；明文永不下发。 */
+  apiKeyMasked: string;
+  isDefault: boolean;
+}
+
+export interface ProvidersResponse {
+  providers: ProviderDto[];
+  defaultId: string | null;
+}
+
+export interface ProviderInput {
+  name?: string;
+  protocol: ProviderProtocol;
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+  contextWindow?: number | null;
+  supportsTools?: boolean;
+  supportsStreaming?: boolean;
+}
+
+export interface ProviderTestResponse {
+  ok: boolean;
+  latencyMs: number;
+  model: string;
+  error?: string;
+}
+
+export type McpConnectionStatus = "connecting" | "connected" | "unavailable" | "disabled";
+
+export interface McpServerDto {
+  id: string;
+  command: string;
+  args: string[];
+  enabled: boolean;
+  status: McpConnectionStatus;
+  error: string | null;
+  toolCount: number;
+  tools: { name: string; description: string }[];
+}
+
+export interface McpServersResponse {
+  servers: McpServerDto[];
+  running: boolean;
+}
+
+export interface McpServerInput {
+  id?: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: boolean;
+}
+
+export interface SkillDto {
+  name: string;
+  description: string;
+  dirName: string;
+  path: string;
+}
+
+export interface SkillsResponse {
+  skills: SkillDto[];
+  dir: string;
+}
+
+// ---------------------------------------------------------------------------
 // Bot
 // ---------------------------------------------------------------------------
 
@@ -95,6 +176,8 @@ export interface BotDto {
   colorIndex: number;
   /** 绑定的运行时；null 表示未绑定（发送会被阻止）。 */
   runtime: RuntimeSummary | null;
+  /** 内置引擎绑定的模型供应商 id；其它运行时为 null。 */
+  providerId: string | null;
   executionLocation: ExecutionLocation;
   /** 实际生效的路径：worktree 时是 worktreePath，local 时是 repoPath。 */
   effectivePath: string | null;

@@ -13,6 +13,7 @@ import type {
 } from "../net/types";
 import { useBotsStore } from "../stores/bots";
 import { useChannelsStore } from "../stores/channels";
+import { useProvidersStore } from "../stores/providers";
 import { useRuntimesStore } from "../stores/runtimes";
 import { useUiStore } from "../stores/ui";
 import { botVars } from "../lib/botVars";
@@ -55,6 +56,7 @@ const router = useRouter();
 const bots = useBotsStore();
 const channels = useChannelsStore();
 const runtimes = useRuntimesStore();
+const providers = useProvidersStore();
 const ui = useUiStore();
 
 type TabKey = "overview" | "memory" | "boundary" | "sessions";
@@ -464,9 +466,14 @@ function confirmAutoApprove(): void {
 // ---- 改绑运行时（P0-02 / F5）----
 const rebindOpen = ref(false);
 const rebindTarget = ref("");
+const rebindProvider = ref("");
 const rebindError = ref("");
 
 const rebindCandidates = computed(() => runtimes.runtimes);
+const rebindIsBuiltin = computed(
+  () => runtimes.find(rebindTarget.value)?.protocol === "builtin",
+);
+const currentProvider = computed(() => providers.find(bot.value?.providerId));
 
 const rebindDiff = computed(() => {
   const from = runtime.value;
@@ -490,23 +497,30 @@ const rebindDiff = computed(() => {
 
 function openRebind(): void {
   rebindTarget.value = runtime.value?.id ?? "";
+  rebindProvider.value = bot.value?.providerId ?? providers.defaultId ?? "";
   rebindError.value = "";
   rebindOpen.value = true;
+  if (providers.providers.length === 0) void providers.load();
 }
 
 async function confirmRebind(): Promise<void> {
-  if (!rebindTarget.value || rebindTarget.value === runtime.value?.id) {
+  const sameRuntime = !rebindTarget.value || rebindTarget.value === runtime.value?.id;
+  const sameProvider = !rebindIsBuiltin.value || rebindProvider.value === (bot.value?.providerId ?? "");
+  if (sameRuntime && sameProvider) {
     rebindOpen.value = false;
     return;
   }
   rebindError.value = "";
   try {
-    const res = await api.patchBot(props.id, { runtimeId: rebindTarget.value });
+    const res = await api.patchBot(props.id, {
+      ...(sameRuntime ? {} : { runtimeId: rebindTarget.value }),
+      ...(rebindIsBuiltin.value ? { providerId: rebindProvider.value || null } : {}),
+    });
     rebindOpen.value = false;
     boundary.value = res.boundary;
     await loadBot();
     void bots.load();
-    ui.toast("已改绑 · 人格与记忆保留，新 Session 开始");
+    ui.toast(sameRuntime ? "模型供应商已更新" : "已改绑 · 人格与记忆保留，新 Session 开始");
   } catch (err) {
     if (err instanceof ApiError && err.code === "risk_confirmation_required") {
       // 改绑后当前执行位置是 local 且新运行时不提供权限请求：走风险确认
@@ -724,6 +738,7 @@ onMounted(async () => {
   ui.setCrumb([{ text: "Bot", to: "/bots" }]);
   if (bots.bots.length === 0) void bots.load();
   if (runtimes.runtimes.length === 0) void runtimes.load();
+  if (providers.providers.length === 0) void providers.load();
   await loadBot();
   if (bot.value) ui.setCrumb([{ text: "Bot", to: "/bots" }, { text: bot.value.name }]);
   void loadMemory();
@@ -762,6 +777,9 @@ void grants;
               {{ runtime.displayName }}<template v-if="runtime.protocol"> · {{ runtime.protocol }}</template>
             </span>
             <span v-else class="rt-chip">未绑定运行时</span>
+            <span v-if="runtime?.protocol === 'builtin'" class="rt-chip">
+              供应商 · {{ currentProvider?.name ?? "默认" }}
+            </span>
             <BotStateChip v-if="bot" :state="bot.state" decay />
             <span v-if="bot" class="u-mono" style="color: var(--color-text-muted)">
               {{ bot.executionLocation }} {{ bot.effectivePath ?? "—" }}
@@ -1277,6 +1295,19 @@ void grants;
         </select>
         <div class="hint">
           不可用项已置灰；原因优先用后端探测详情（如「需要 ≥ 0.20.0，当前 0.1.0」）。
+        </div>
+      </div>
+
+      <div v-if="rebindIsBuiltin" class="field">
+        <label class="u-label" for="rebind-provider">模型供应商</label>
+        <select id="rebind-provider" v-model="rebindProvider" class="select">
+          <option value="">使用默认供应商</option>
+          <option v-for="p in providers.providers" :key="p.id" :value="p.id">
+            {{ p.name }} · {{ p.model }}
+          </option>
+        </select>
+        <div v-if="providers.providers.length === 0" class="hint" style="color: var(--color-warning-ink)">
+          还没有配置模型供应商。先到「设置 › 模型供应商」添加。
         </div>
       </div>
 

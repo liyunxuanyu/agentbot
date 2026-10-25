@@ -3,14 +3,20 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "v
 import { useRouter } from "vue-router";
 import { ApiError, api, isMissingEndpoint } from "../net/client";
 import type {
+  McpServerDto,
   PermissionDto,
+  ProviderDto,
+  ProviderProtocol,
   RuntimeDetailDto,
   RuntimeProtocol,
   TokenStatusResponse,
 } from "../net/types";
 import { useBotsStore } from "../stores/bots";
 import { useChannelsStore } from "../stores/channels";
+import { useMcpStore } from "../stores/mcp";
+import { useProvidersStore } from "../stores/providers";
 import { useRuntimesStore } from "../stores/runtimes";
+import { useSkillsStore } from "../stores/skills";
 import { useUiStore } from "../stores/ui";
 import { dayTimeText, num } from "../lib/format";
 import AppIcon from "../components/common/AppIcon.vue";
@@ -34,10 +40,16 @@ const ui = useUiStore();
 const bots = useBotsStore();
 const channels = useChannelsStore();
 const runtimes = useRuntimesStore();
+const providers = useProvidersStore();
+const mcp = useMcpStore();
+const skills = useSkillsStore();
 
-type TabKey = "runtimes" | "security" | "data" | "audit";
+type TabKey = "runtimes" | "providers" | "mcp" | "skills" | "security" | "data" | "audit";
 const TABS: { key: TabKey; label: string }[] = [
   { key: "runtimes", label: "运行时" },
+  { key: "providers", label: "模型供应商" },
+  { key: "mcp", label: "MCP" },
+  { key: "skills", label: "技能" },
   { key: "security", label: "安全与 token" },
   { key: "data", label: "数据与保留" },
   { key: "audit", label: "权限审计" },
@@ -478,11 +490,293 @@ function botColorOf(botId: string): number {
 }
 
 // ---------------------------------------------------------------------------
+// 模型供应商（内置引擎）
+// ---------------------------------------------------------------------------
+const providerOpen = ref(false);
+const editingProviderId = ref<string | null>(null);
+const providerErr = ref("");
+const providerSaving = ref(false);
+const providerBusy = ref<string | null>(null);
+const providerForm = reactive({
+  name: "",
+  protocol: "openai-chat" as ProviderProtocol,
+  baseUrl: "",
+  apiKey: "",
+  model: "",
+  contextWindow: "",
+  supportsTools: true,
+  supportsStreaming: true,
+});
+
+function openAddProvider(): void {
+  editingProviderId.value = null;
+  providerErr.value = "";
+  providerForm.name = "";
+  providerForm.protocol = "openai-chat";
+  providerForm.baseUrl = "";
+  providerForm.apiKey = "";
+  providerForm.model = "";
+  providerForm.contextWindow = "";
+  providerForm.supportsTools = true;
+  providerForm.supportsStreaming = true;
+  providerOpen.value = true;
+}
+
+function openEditProvider(p: ProviderDto): void {
+  editingProviderId.value = p.id;
+  providerErr.value = "";
+  providerForm.name = p.name;
+  providerForm.protocol = p.protocol;
+  providerForm.baseUrl = p.baseUrl;
+  providerForm.apiKey = "";
+  providerForm.model = p.model;
+  providerForm.contextWindow = p.contextWindow === null ? "" : String(p.contextWindow);
+  providerForm.supportsTools = p.supportsTools;
+  providerForm.supportsStreaming = p.supportsStreaming;
+  providerOpen.value = true;
+}
+
+async function saveProvider(): Promise<void> {
+  if (providerSaving.value) return;
+  providerErr.value = "";
+  if (providerForm.baseUrl.trim().length === 0 || providerForm.model.trim().length === 0) {
+    providerErr.value = "baseUrl 与 model 都不能为空。";
+    return;
+  }
+  if (!editingProviderId.value && providerForm.apiKey.trim().length === 0) {
+    providerErr.value = "新增供应商必须填 apiKey。";
+    return;
+  }
+  const contextRaw = providerForm.contextWindow.trim();
+  const contextWindow = contextRaw.length === 0 ? null : Number.parseInt(contextRaw, 10);
+  if (contextWindow !== null && (!Number.isFinite(contextWindow) || contextWindow <= 0)) {
+    providerErr.value = "上下文窗口必须是正整数或留空。";
+    return;
+  }
+  providerSaving.value = true;
+  try {
+    const common = {
+      name: providerForm.name.trim() || undefined,
+      protocol: providerForm.protocol,
+      baseUrl: providerForm.baseUrl.trim(),
+      model: providerForm.model.trim(),
+      contextWindow,
+      supportsTools: providerForm.supportsTools,
+      supportsStreaming: providerForm.supportsStreaming,
+    };
+    if (editingProviderId.value) {
+      const patch: typeof common & { apiKey?: string } = { ...common };
+      if (providerForm.apiKey.trim().length > 0) patch.apiKey = providerForm.apiKey.trim();
+      await providers.update(editingProviderId.value, patch);
+      ui.toast("供应商已更新");
+    } else {
+      await providers.create({ ...common, apiKey: providerForm.apiKey.trim() });
+      ui.toast("供应商已添加 · 内置引擎已可用");
+    }
+    providerOpen.value = false;
+    // 内置引擎的可用性随后端刷新；重读运行时让列表同步
+    void runtimes.load();
+  } catch (err) {
+    providerErr.value =
+      err instanceof ApiError
+        ? (err.fieldErrors()[0]?.message ?? err.messageText() ?? err.message)
+        : err instanceof Error
+          ? err.message
+          : "保存失败";
+  } finally {
+    providerSaving.value = false;
+  }
+}
+
+async function testProvider(p: ProviderDto): Promise<void> {
+  providerBusy.value = p.id;
+  try {
+    const res = await api.testProvider(p.id);
+    ui.toast(
+      res.ok
+        ? `${p.name} 可用 · ${res.latencyMs}ms · ${res.model}`
+        : `${p.name} 不可用：${res.error ?? "未知错误"}`,
+    );
+  } catch (err) {
+    ui.toast(err instanceof Error ? `测试失败：${err.message}` : "测试失败");
+  } finally {
+    providerBusy.value = null;
+  }
+}
+
+async function setDefaultProvider(p: ProviderDto): Promise<void> {
+  try {
+    await providers.setDefault(p.id);
+    ui.toast(`默认供应商：${p.name}`);
+  } catch (err) {
+    ui.toast(err instanceof Error ? err.message : "设置默认供应商失败");
+  }
+}
+
+async function removeProvider(p: ProviderDto): Promise<void> {
+  if (!window.confirm(`删除供应商「${p.name}」？绑定它的 Bot 会回退到默认供应商。`)) return;
+  try {
+    await providers.remove(p.id);
+    ui.toast(`已删除 ${p.name}`);
+    void runtimes.load();
+  } catch (err) {
+    ui.toast(err instanceof Error ? err.message : "删除失败");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MCP
+// ---------------------------------------------------------------------------
+const mcpOpen = ref(false);
+const editingMcpId = ref<string | null>(null);
+const mcpErr = ref("");
+const mcpSaving = ref(false);
+const mcpForm = reactive({ id: "", command: "", argsText: "", enabled: true });
+
+function openAddMcp(): void {
+  editingMcpId.value = null;
+  mcpErr.value = "";
+  mcpForm.id = "";
+  mcpForm.command = "";
+  mcpForm.argsText = "";
+  mcpForm.enabled = true;
+  mcpOpen.value = true;
+}
+
+function openEditMcp(s: McpServerDto): void {
+  editingMcpId.value = s.id;
+  mcpErr.value = "";
+  mcpForm.id = s.id;
+  mcpForm.command = s.command;
+  mcpForm.argsText = s.args.join("\n");
+  mcpForm.enabled = s.enabled;
+  mcpOpen.value = true;
+}
+
+function mcpArgs(): string[] {
+  return mcpForm.argsText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+async function saveMcp(): Promise<void> {
+  if (mcpSaving.value) return;
+  mcpErr.value = "";
+  if (mcpForm.command.trim().length === 0) {
+    mcpErr.value = "command 不能为空。";
+    return;
+  }
+  if (!editingMcpId.value && mcpForm.id.trim().length === 0) {
+    mcpErr.value = "id 不能为空（用于工具名前缀）。";
+    return;
+  }
+  mcpSaving.value = true;
+  try {
+    if (editingMcpId.value) {
+      await mcp.update(editingMcpId.value, {
+        command: mcpForm.command.trim(),
+        args: mcpArgs(),
+        enabled: mcpForm.enabled,
+      });
+      ui.toast("MCP server 已更新");
+    } else {
+      const created = await mcp.create({
+        id: mcpForm.id.trim(),
+        command: mcpForm.command.trim(),
+        args: mcpArgs(),
+        enabled: mcpForm.enabled,
+      });
+      ui.toast(
+        created?.status === "connected"
+          ? `已连接 ${created.id} · ${created.toolCount} 个工具`
+          : `已保存 ${mcpForm.id.trim()}，当前未连接`,
+      );
+    }
+    mcpOpen.value = false;
+  } catch (err) {
+    mcpErr.value =
+      err instanceof ApiError
+        ? (err.fieldErrors()[0]?.message ?? err.messageText() ?? err.message)
+        : err instanceof Error
+          ? err.message
+          : "保存失败";
+  } finally {
+    mcpSaving.value = false;
+  }
+}
+
+async function toggleMcp(s: McpServerDto): Promise<void> {
+  try {
+    await mcp.update(s.id, { enabled: !s.enabled });
+    ui.toast(`${s.id} 已${s.enabled ? "停用" : "启用"}`);
+  } catch (err) {
+    ui.toast(err instanceof Error ? err.message : "操作失败");
+  }
+}
+
+async function reconnectMcp(s: McpServerDto): Promise<void> {
+  try {
+    const row = await mcp.reconnect(s.id);
+    ui.toast(
+      row?.status === "connected" ? `${s.id} 已连接 · ${row.toolCount} 个工具` : `${s.id} 仍不可用`,
+    );
+  } catch (err) {
+    ui.toast(err instanceof Error ? err.message : "重连失败");
+  }
+}
+
+async function removeMcp(s: McpServerDto): Promise<void> {
+  if (!window.confirm(`删除 MCP server「${s.id}」？`)) return;
+  try {
+    await mcp.remove(s.id);
+    ui.toast(`已删除 ${s.id}`);
+  } catch (err) {
+    ui.toast(err instanceof Error ? err.message : "删除失败");
+  }
+}
+
+/** MCP 连接状态 → 六态 chip 的色调。 */
+function mcpState(s: McpServerDto): "done" | "waiting" | "blocked" {
+  if (s.status === "connected") return "done";
+  if (s.status === "connecting") return "waiting";
+  return "blocked";
+}
+
+function mcpStatusWord(s: McpServerDto): string {
+  switch (s.status) {
+    case "connected":
+      return "已连接";
+    case "connecting":
+      return "连接中";
+    case "disabled":
+      return "已停用";
+    default:
+      return "不可用";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 技能
+// ---------------------------------------------------------------------------
+async function rescanSkills(): Promise<void> {
+  try {
+    const count = await skills.rescan();
+    ui.toast(count === 0 ? `没有找到技能（${skills.dir}）` : `已重扫：${count} 个技能`);
+  } catch (err) {
+    ui.toast(err instanceof Error ? err.message : "重扫失败");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 生命周期
 // ---------------------------------------------------------------------------
 onMounted(async () => {
   ui.setCrumb([{ text: "设置" }]);
   if (runtimes.runtimes.length === 0) void runtimes.load();
+  void providers.load();
+  void mcp.load();
+  void skills.load();
   void loadToken();
   void loadAudit();
 });
@@ -603,6 +897,204 @@ onBeforeUnmount(() => {
               不可用原因优先显示后端 <code class="u-mono">probeDetail</code>（如「需要 ≥ 0.20.0，当前 0.1.0」）。
               能力「未知」表示运行时没有声明，不代表不支持。不提供权限请求的运行时（
               <code class="u-mono">permission: none</code>）会被强制跑在 worktree 里。
+            </p>
+          </template>
+        </template>
+
+        <!-- ================= 模型供应商 ================= -->
+        <template v-else-if="tab === 'providers'">
+          <div class="filters" style="min-height: auto">
+            <span class="u-label">已配置</span>
+            <span class="u-mono" style="color: var(--color-text-secondary)">
+              {{ providers.providers.length }} 个 · 默认 {{ providers.defaultProvider?.name ?? "—" }}
+            </span>
+            <span class="spacer" />
+            <button class="btn btn--sm btn--secondary" :disabled="providers.status === 'loading'" @click="providers.load()">
+              刷新
+            </button>
+            <button class="btn btn--sm btn--primary" @click="openAddProvider">添加供应商</button>
+          </div>
+
+          <div v-if="providers.status === 'loading' || providers.status === 'idle'" style="display: grid; gap: 10px">
+            <div v-for="i in 3" :key="i" class="sk" style="height: 76px" />
+          </div>
+
+          <div v-else-if="providers.status === 'error'" class="banner">
+            <span class="state-dot" :style="{ '--s': 'var(--state-blocked)' }" />
+            <span>读取模型供应商失败：{{ providers.errorText }}</span>
+            <span class="spacer" />
+            <button class="btn btn--sm" @click="providers.load()">重试</button>
+          </div>
+
+          <EmptyState
+            v-else-if="providers.status === 'empty'"
+            title="还没有配置模型供应商"
+            description="内置引擎直连模型 API，需要至少一个供应商（OpenAI Chat Completions 或 Anthropic Messages 协议）。配好之后内置引擎在运行时列表里变为可用。"
+          >
+            <template #icon><AppIcon name="gear" :size="24" /></template>
+            <template #actions>
+              <button class="btn btn--primary" @click="openAddProvider">添加供应商</button>
+            </template>
+          </EmptyState>
+
+          <template v-else>
+            <div v-for="p in providers.providers" :key="p.id" class="card" style="padding: 14px 16px; margin-bottom: 10px">
+              <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap">
+                <div style="flex: 1; min-width: 220px">
+                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                    <span style="font-weight: var(--weight-semibold)">{{ p.name }}</span>
+                    <span v-if="p.isDefault" class="chip is-on" style="cursor: default">默认</span>
+                    <span class="chip" style="cursor: default">{{ p.protocol }}</span>
+                  </div>
+                  <div class="u-mono u-muted" style="font-size: var(--font-size-caption); margin-top: 4px">
+                    {{ p.model }} · {{ p.contextWindow ? `${num(p.contextWindow)} token` : "窗口未知" }}
+                  </div>
+                  <div class="u-mono" style="font-size: var(--font-size-micro); color: var(--color-text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                    {{ p.baseUrl }} · {{ p.apiKeyMasked }}
+                  </div>
+                </div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap">
+                  <button class="btn btn--sm btn--secondary" :disabled="providerBusy === p.id" @click="testProvider(p)">
+                    {{ providerBusy === p.id ? "测试中…" : "测试" }}
+                  </button>
+                  <button v-if="!p.isDefault" class="btn btn--sm btn--ghost" @click="setDefaultProvider(p)">设为默认</button>
+                  <button class="btn btn--sm btn--ghost" @click="openEditProvider(p)">编辑</button>
+                  <button class="btn btn--sm btn--danger" @click="removeProvider(p)">删除</button>
+                </div>
+              </div>
+            </div>
+            <p class="hint">
+              apiKey 只保存在本机 <code class="u-mono">~/.agentbot/providers.json</code>（权限 0600），
+              接口只回掩码。「测试」会发一次最小请求，不消耗工具调用。绑定供应商在 Bot 表单里选。
+            </p>
+          </template>
+        </template>
+
+        <!-- ================= MCP ================= -->
+        <template v-else-if="tab === 'mcp'">
+          <div class="filters" style="min-height: auto">
+            <span class="u-label">已配置</span>
+            <span class="u-mono" style="color: var(--color-text-secondary)">
+              {{ mcp.servers.length }} 个 · 已连接 {{ mcp.connectedCount }} · {{ mcp.toolCount }} 个工具
+            </span>
+            <span class="spacer" />
+            <button class="btn btn--sm btn--secondary" :disabled="mcp.status === 'loading'" @click="mcp.load()">刷新</button>
+            <button class="btn btn--sm btn--primary" @click="openAddMcp">添加 server</button>
+          </div>
+
+          <div v-if="!mcp.running" class="banner" style="margin-bottom: 12px">
+            <span class="state-dot" :style="{ '--s': 'var(--state-waiting)' }" />
+            <span>后端没有启动 MCP 管理器（可能是旧进程），保存后需重启服务才会连接。</span>
+          </div>
+
+          <div v-if="mcp.status === 'loading' || mcp.status === 'idle'" style="display: grid; gap: 10px">
+            <div v-for="i in 3" :key="i" class="sk" style="height: 72px" />
+          </div>
+
+          <div v-else-if="mcp.status === 'error'" class="banner">
+            <span class="state-dot" :style="{ '--s': 'var(--state-blocked)' }" />
+            <span>读取 MCP 配置失败：{{ mcp.errorText }}</span>
+            <span class="spacer" />
+            <button class="btn btn--sm" @click="mcp.load()">重试</button>
+          </div>
+
+          <EmptyState
+            v-else-if="mcp.status === 'empty'"
+            title="还没有 MCP server"
+            description="配置一个 stdio MCP server 后，它的工具会以 mcp__<server>__<tool> 的名字出现在内置引擎里；每次调用都会走权限卡片。"
+          >
+            <template #icon><AppIcon name="gear" :size="24" /></template>
+            <template #actions>
+              <button class="btn btn--primary" @click="openAddMcp">添加 server</button>
+            </template>
+          </EmptyState>
+
+          <template v-else>
+            <div v-for="s in mcp.servers" :key="s.id" class="card" style="padding: 14px 16px; margin-bottom: 10px">
+              <div style="display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap">
+                <div style="flex: 1; min-width: 220px">
+                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                    <span style="font-weight: var(--weight-semibold)">{{ s.id }}</span>
+                    <BotStateChip :state="mcpState(s)" :label="mcpStatusWord(s)" />
+                    <span class="chip" style="cursor: default">{{ s.toolCount }} 个工具</span>
+                    <span v-if="!s.enabled" class="chip" style="cursor: default">已停用</span>
+                  </div>
+                  <div class="u-mono" style="font-size: var(--font-size-micro); color: var(--color-text-muted); margin-top: 4px; word-break: break-all">
+                    {{ s.command }} {{ s.args.join(" ") }}
+                  </div>
+                  <div v-if="s.error" class="field-err" style="margin-top: 6px">{{ s.error }}</div>
+                  <div v-if="s.tools.length > 0" class="hint" style="margin-top: 6px">
+                    {{ s.tools.slice(0, 6).map((t) => t.name).join("、") }}{{ s.tools.length > 6 ? ` 等 ${s.tools.length} 个` : "" }}
+                  </div>
+                </div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap">
+                  <button
+                    v-if="s.enabled"
+                    class="btn btn--sm btn--secondary"
+                    :disabled="mcp.busyId === s.id"
+                    @click="reconnectMcp(s)"
+                  >{{ mcp.busyId === s.id ? "重连中…" : "重连" }}</button>
+                  <button class="btn btn--sm btn--ghost" @click="toggleMcp(s)">{{ s.enabled ? "停用" : "启用" }}</button>
+                  <button class="btn btn--sm btn--ghost" @click="openEditMcp(s)">编辑</button>
+                  <button class="btn btn--sm btn--danger" @click="removeMcp(s)">删除</button>
+                </div>
+              </div>
+            </div>
+            <p class="hint">
+              配置保存在 <code class="u-mono">~/.agentbot/mcp.json</code>。MCP 工具默认权限为「执行」，
+              每次调用都会弹权限卡片；拒绝后模型会换做法，不会自动重试。
+            </p>
+          </template>
+        </template>
+
+        <!-- ================= 技能 ================= -->
+        <template v-else-if="tab === 'skills'">
+          <div class="filters" style="min-height: auto">
+            <span class="u-label">技能目录</span>
+            <span class="u-mono" style="color: var(--color-text-secondary); word-break: break-all">
+              {{ skills.dir || "~/.agentbot/skills" }}
+            </span>
+            <span class="spacer" />
+            <button class="btn btn--sm btn--secondary" :disabled="skills.status === 'loading'" @click="rescanSkills">
+              重扫
+            </button>
+          </div>
+
+          <div v-if="skills.status === 'loading' || skills.status === 'idle'" style="display: grid; gap: 10px">
+            <div v-for="i in 3" :key="i" class="sk" style="height: 64px" />
+          </div>
+
+          <div v-else-if="skills.status === 'error'" class="banner">
+            <span class="state-dot" :style="{ '--s': 'var(--state-blocked)' }" />
+            <span>读取技能失败：{{ skills.errorText }}</span>
+            <span class="spacer" />
+            <button class="btn btn--sm" @click="skills.load()">重试</button>
+          </div>
+
+          <EmptyState
+            v-else-if="skills.status === 'empty'"
+            title="还没有技能"
+            description="在技能目录下建一个 <name>/SKILL.md（frontmatter 至少写 name 与 description），然后点「重扫」。技能索引会进系统提示，模型需要细节时用 read_skill 读取全文。"
+          >
+            <template #icon><AppIcon name="gear" :size="24" /></template>
+            <template #actions>
+              <button class="btn btn--secondary" @click="rescanSkills">重新扫描</button>
+            </template>
+          </EmptyState>
+
+          <template v-else>
+            <div v-for="s in skills.skills" :key="s.dirName" class="card" style="padding: 14px 16px; margin-bottom: 10px">
+              <div style="font-weight: var(--weight-semibold)">{{ s.name }}</div>
+              <div style="font-size: var(--font-size-caption); color: var(--color-text-secondary); margin-top: 4px">
+                {{ s.description || "（无描述）" }}
+              </div>
+              <div class="u-mono" style="font-size: var(--font-size-micro); color: var(--color-text-muted); margin-top: 6px; word-break: break-all">
+                {{ s.path }}
+              </div>
+            </div>
+            <p class="hint">
+              技能索引总长度上限 800 字符；超出部分不注入，但模型仍可用 read_skill 按名称读取。
+              改动 SKILL.md 后点「重扫」即可生效（下一次新建会话注入）。
             </p>
           </template>
         </template>
@@ -943,6 +1435,110 @@ token  {{ tokenStatus.preview }}</pre>
         <span class="spacer" />
         <button class="btn btn--primary" :disabled="adding" @click="submitAdd">
           {{ adding ? "添加并探测中…" : "添加" }}
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- 添加 / 编辑模型供应商 -->
+    <AppModal v-model:open="providerOpen" :title="editingProviderId ? '编辑模型供应商' : '添加模型供应商'">
+      <div class="field">
+        <label class="u-label" for="pv-name">名称</label>
+        <input id="pv-name" v-model="providerForm.name" class="input" placeholder="例如：DeepSeek 网关" />
+      </div>
+      <div class="field">
+        <label class="u-label" for="pv-protocol">协议</label>
+        <select id="pv-protocol" v-model="providerForm.protocol" class="select">
+          <option value="openai-chat">OpenAI Chat Completions（含兼容网关）</option>
+          <option value="anthropic-messages">Anthropic Messages</option>
+        </select>
+        <div class="hint">协议决定请求体与流式事件格式；选错会在「测试」时给出供应商原始错误。</div>
+      </div>
+      <div class="field">
+        <label class="u-label" for="pv-base">Base URL</label>
+        <input id="pv-base" v-model="providerForm.baseUrl" class="input u-mono" placeholder="https://api.example.com/v1" autocomplete="off" />
+        <div class="hint">不含 <code class="u-mono">/chat/completions</code> 或 <code class="u-mono">/v1/messages</code>；带不带 <code class="u-mono">/v1</code> 都行。</div>
+      </div>
+      <div class="field">
+        <label class="u-label" for="pv-key">API Key</label>
+        <input
+          id="pv-key"
+          v-model="providerForm.apiKey"
+          class="input u-mono"
+          type="password"
+          autocomplete="new-password"
+          :placeholder="editingProviderId ? '留空表示不修改' : 'sk-…'"
+        />
+        <div class="hint">只写入本机 providers.json（0600），接口只回掩码。</div>
+      </div>
+      <div class="field">
+        <label class="u-label" for="pv-model">模型</label>
+        <input id="pv-model" v-model="providerForm.model" class="input u-mono" placeholder="例如：deepseek-chat" />
+      </div>
+      <div class="field">
+        <label class="u-label" for="pv-window">上下文窗口（token）</label>
+        <input id="pv-window" v-model="providerForm.contextWindow" class="input u-mono" placeholder="留空表示未知" inputmode="numeric" />
+      </div>
+      <div class="field">
+        <label class="radio">
+          <input v-model="providerForm.supportsTools" type="checkbox" />
+          支持工具调用
+        </label>
+        <label class="radio" style="margin-left: 16px">
+          <input v-model="providerForm.supportsStreaming" type="checkbox" />
+          支持流式输出
+        </label>
+      </div>
+      <div v-if="providerErr" class="field-err" role="alert">{{ providerErr }}</div>
+      <template #footer>
+        <button class="btn btn--secondary" :disabled="providerSaving" @click="providerOpen = false">取消</button>
+        <span class="spacer" />
+        <button class="btn btn--primary" :disabled="providerSaving" @click="saveProvider">
+          {{ providerSaving ? "保存中…" : "保存" }}
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- 添加 / 编辑 MCP server -->
+    <AppModal v-model:open="mcpOpen" :title="editingMcpId ? '编辑 MCP server' : '添加 MCP server'">
+      <div class="field">
+        <label class="u-label" for="mcp-id">ID</label>
+        <input
+          id="mcp-id"
+          v-model="mcpForm.id"
+          class="input u-mono"
+          placeholder="例如：filesystem"
+          :disabled="!!editingMcpId"
+          autocomplete="off"
+        />
+        <div class="hint">工具名会拼成 <code class="u-mono">mcp__&lt;id&gt;__&lt;tool&gt;</code>；创建后不可改。</div>
+      </div>
+      <div class="field">
+        <label class="u-label" for="mcp-command">启动命令</label>
+        <input id="mcp-command" v-model="mcpForm.command" class="input u-mono" placeholder="例如：npx" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label class="u-label" for="mcp-args">参数</label>
+        <textarea
+          id="mcp-args"
+          v-model="mcpForm.argsText"
+          class="textarea u-mono"
+          rows="3"
+          placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;D:/workspace"
+        />
+        <div class="hint">每行一个参数；含空格的参数整行保留为一个 argv 元素。</div>
+      </div>
+      <div class="field">
+        <label class="radio">
+          <input v-model="mcpForm.enabled" type="checkbox" />
+          启用并连接
+        </label>
+      </div>
+      <div v-if="mcpErr" class="field-err" role="alert">{{ mcpErr }}</div>
+      <template #footer>
+        <button class="btn btn--secondary" :disabled="mcpSaving" @click="mcpOpen = false">取消</button>
+        <span class="spacer" />
+        <button class="btn btn--primary" :disabled="mcpSaving" @click="saveMcp">
+          {{ mcpSaving ? "保存中…" : "保存" }}
         </button>
       </template>
     </AppModal>
