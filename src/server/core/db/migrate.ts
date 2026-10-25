@@ -11,7 +11,7 @@ import type { DB } from "./db.js";
  * `CREATE TABLE IF NOT EXISTS`，首次执行与重复执行都安全）。
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface MigrationResult {
   /** 迁移前版本。 */
@@ -75,6 +75,17 @@ const STEPS: MigrationStep[] = [
     name: "v1 初始 schema（12 张主表 + permission_grants）",
     run: (db) => {
       db.exec(loadSchemaSql());
+    },
+  },
+  {
+    version: 2,
+    name: "v2 内置引擎：bots.provider_id",
+    run: (db) => {
+      // 全新库的 schema.sql 已包含该列；只有 v1 老库需要 ALTER。
+      const columns = db.prepare("PRAGMA table_info(bots)").all() as { name: string }[];
+      if (!columns.some((c) => c.name === "provider_id")) {
+        db.exec("ALTER TABLE bots ADD COLUMN provider_id TEXT");
+      }
     },
   },
 ];

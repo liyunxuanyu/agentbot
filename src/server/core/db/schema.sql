@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS bots (
   persona             TEXT NOT NULL DEFAULT '',
   avatar              TEXT,
   default_runtime_id  TEXT REFERENCES runtime_definitions(id) ON DELETE SET NULL,
+  -- 内置引擎绑定的模型供应商（providers.json 里的 id）；其它运行时为 NULL
+  provider_id         TEXT,
   execution_location  TEXT NOT NULL DEFAULT 'local' CHECK (execution_location IN ('local','worktree')),
   repo_path           TEXT,
   worktree_path       TEXT,

@@ -366,6 +366,13 @@ export function registerRuntimeRoutes(app: FastifyInstance, ctx: ServerContext):
       }
 
       const source = row.source === "custom" ? "custom" : "builtin";
+      // 内置引擎没有可执行文件，探测只会把它误判成 missing；
+      // 它的可用性由「是否配置了供应商」决定，交给装配层刷新。
+      if (declaration.protocol === "builtin") {
+        ctx.onProvidersChanged?.();
+        const current = listRuntimes(ctx.db).find((r) => r.id === runtimeId) ?? null;
+        return { runtime: current ? toRuntimeDto(current) : null };
+      }
       let runtime: RuntimeRecord | null;
       try {
         runtime = await probeAndPersist(ctx, declaration, source);

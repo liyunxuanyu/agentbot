@@ -67,6 +67,18 @@ const EVENT_MASK_BY_PROTOCOL: Record<ProtocolKind, EventType[]> = {
   // 私有 HTTP / SDK 通道尚无驱动：按「正文 + 工具 + 用量」保守声明
   "opencode-http": ["message_delta", "tool_call", "tool_result", "usage", "done", "error"],
   "claude-sdk": ["message_delta", "tool_call", "tool_result", "usage", "done", "error"],
+  // 内置引擎：九类全支持（工具、计划、权限都由我们自己的 loop 产出）
+  builtin: [
+    "message_delta",
+    "thought",
+    "tool_call",
+    "tool_result",
+    "plan",
+    "permission_request",
+    "usage",
+    "done",
+    "error",
+  ],
 };
 
 const PERMISSION_CHANNEL_BY_PROTOCOL: Record<ProtocolKind, PermissionChannel> = {
@@ -75,6 +87,7 @@ const PERMISSION_CHANNEL_BY_PROTOCOL: Record<ProtocolKind, PermissionChannel> = 
   "opencode-http": "none",
   "claude-sdk": "none",
   "cli-stdio": "none",
+  builtin: "internal",
 };
 
 const RESUME_STRATEGY_BY_PROTOCOL: Record<ProtocolKind, ResumeStrategy> = {
@@ -84,6 +97,8 @@ const RESUME_STRATEGY_BY_PROTOCOL: Record<ProtocolKind, ResumeStrategy> = {
   "claude-sdk": "native",
   // 一次 prompt 一个进程，上下文不跨进程保留
   "cli-stdio": "process-lifetime",
+  // 历史在我们自己的内存/数据库里，重启后走产品层重建
+  builtin: "native",
 };
 
 /** 探测默认值：与内置声明保持一致，用户不填也能工作。 */

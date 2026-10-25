@@ -8,13 +8,14 @@ export type ProtocolKind =
   | "codex-app-server"
   | "opencode-http"
   | "claude-sdk"
-  | "cli-stdio";
+  | "cli-stdio"
+  | "builtin";
 
 export type ExecutionLocation = "local" | "worktree";
 
 export type TimeoutPolicy = "reject" | "hold" | "preauth";
 
-export type PermissionChannel = "acp-reverse" | "jsonrpc-approval" | "none";
+export type PermissionChannel = "acp-reverse" | "jsonrpc-approval" | "none" | "internal";
 
 export type ResumeStrategy = "acp" | "native" | "process-lifetime" | "none";
 
@@ -91,6 +92,10 @@ export interface SpawnContext {
   cwd: string;
   /** 每次 spawn 唯一，用于日志与进程追踪。 */
   sessionId: string;
+  /** 会话归属的 Bot；内置引擎据此选供应商（其它通道不需要）。 */
+  botId?: string;
+  /** Bot 绑定的模型供应商 id；null/缺省时用默认供应商。 */
+  providerId?: string | null;
   env?: Record<string, string>;
 }
 

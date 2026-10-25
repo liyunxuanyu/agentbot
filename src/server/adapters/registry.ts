@@ -19,7 +19,7 @@ const declarationSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string().min(1),
   displayName: z.string().min(1),
-  protocol: z.enum(["acp", "codex-app-server", "opencode-http", "claude-sdk", "cli-stdio"]),
+  protocol: z.enum(["acp", "codex-app-server", "opencode-http", "claude-sdk", "cli-stdio", "builtin"]),
   launch: z.object({
     command: z.string().min(1),
     args: z.array(z.string()),
@@ -43,7 +43,7 @@ const declarationSchema = z.object({
   }),
   eventCapabilities: z.array(z.enum(EVENT_TYPES)),
   permission: z.object({
-    channel: z.enum(["acp-reverse", "jsonrpc-approval", "none"]),
+    channel: z.enum(["acp-reverse", "jsonrpc-approval", "none", "internal"]),
     defaultTimeoutPolicy: z.enum(["reject", "hold"]),
   }),
   resumeStrategy: z.enum(["acp", "native", "process-lifetime", "none"]),

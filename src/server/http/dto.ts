@@ -96,6 +96,8 @@ export interface BotDto {
   avatar: string | null;
   colorIndex: number;
   runtime: RuntimeDto | null;
+  /** 内置引擎绑定的模型供应商 id；其它运行时为 null。 */
+  providerId: string | null;
   executionLocation: "local" | "worktree";
   effectivePath: string | null;
   worktreeState: "ready" | "missing" | "failed" | null;
@@ -113,6 +115,7 @@ interface BotRow {
   persona: string;
   avatar: string | null;
   default_runtime_id: string | null;
+  provider_id: string | null;
   execution_location: string;
   repo_path: string | null;
   worktree_path: string | null;
@@ -156,7 +159,7 @@ function deriveBotState(sessionStatus: string | null, pendingPermissions: number
 export function listBots(db: DB, runtimes: Map<string, RuntimeDto>): BotDto[] {
   const bots = db
     .prepare(
-      `SELECT id, name, persona, avatar, default_runtime_id, execution_location,
+      `SELECT id, name, persona, avatar, default_runtime_id, provider_id, execution_location,
               repo_path, worktree_path, worktree_state, status, created_at
          FROM bots
         WHERE status = 'active'
@@ -212,6 +215,7 @@ export function listBots(db: DB, runtimes: Map<string, RuntimeDto>): BotDto[] {
       // 身份色序号 1–8：按创建顺序轮转，保证同一 Bot 颜色稳定
       colorIndex: (index % 8) + 1,
       runtime,
+      providerId: row.provider_id ?? null,
       executionLocation: row.execution_location === "worktree" ? "worktree" : "local",
       effectivePath: effectivePath ?? null,
       worktreeState:

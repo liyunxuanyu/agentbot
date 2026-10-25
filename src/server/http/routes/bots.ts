@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ServerContext } from "../server.js";
 import { listBots, toRuntimeDto } from "../dto.js";
 import { listRuntimes } from "../../adapters/probe.js";
+import { getProvider } from "../../adapters/providers/store.js";
 import { normalizeAllowedDirs, readBoundary } from "../../core/permissions/boundary.js";
 import { listGrants } from "../../core/permissions/grants.js";
 import {
@@ -48,6 +49,8 @@ interface CreateBotBody {
   persona?: unknown;
   avatar?: unknown;
   runtimeId?: unknown;
+  /** 内置引擎：绑定的模型供应商 id（缺省用默认供应商）。 */
+  providerId?: unknown;
   executionLocation?: unknown;
   repoPath?: unknown;
 }
@@ -62,6 +65,8 @@ interface PatchBoundaryBody {
   repoPath?: unknown;
   /** 运行时改绑（P0-02）。 */
   runtimeId?: unknown;
+  /** 内置引擎：模型供应商绑定（null / 空串 = 用默认供应商）。 */
+  providerId?: unknown;
   /**
    * 人格（P0-03「编辑人格后下一条消息即生效」）。
    *
@@ -81,6 +86,7 @@ interface FieldError {
     | "name"
     | "persona"
     | "runtimeId"
+    | "providerId"
     | "allowDirs"
     | "allowShell"
     | "allowNetwork"
@@ -232,6 +238,17 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
       }
     }
 
+    let providerId: string | null = null;
+    if (body.providerId !== undefined && body.providerId !== null && body.providerId !== "") {
+      if (typeof body.providerId !== "string") {
+        fields.push({ field: "providerId", code: "invalid_value", message: "供应商 id 无效" });
+      } else if (!getProvider(body.providerId)) {
+        fields.push({ field: "providerId", code: "not_found", message: "模型供应商不存在" });
+      } else {
+        providerId = body.providerId;
+      }
+    }
+
     let requestedLocation: "local" | "worktree" = "local";
     if (body.executionLocation !== undefined) {
       if (body.executionLocation !== "local" && body.executionLocation !== "worktree") {
@@ -284,10 +301,10 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
     ctx.db
       .prepare(
         `INSERT INTO bots
-           (id, name, persona, avatar, default_runtime_id, execution_location, repo_path,
+           (id, name, persona, avatar, default_runtime_id, provider_id, execution_location, repo_path,
             status, allow_dirs, allow_shell, allow_network, auto_approve_write,
             created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '[]', 0, 0, 0, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', '[]', 0, 0, 0, ?, ?)`,
       )
       .run(
         id,
@@ -295,6 +312,7 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         persona,
         avatar,
         runtimeId,
+        providerId,
         executionLocation,
         executionLocation === "worktree" ? repoPath : null,
         now,
@@ -406,6 +424,22 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         }
       }
 
+      // ---- 模型供应商（内置引擎）----
+      let providerTouched = false;
+      let providerId: string | null = null;
+      if (body.providerId !== undefined) {
+        providerTouched = true;
+        if (body.providerId === null || body.providerId === "") {
+          providerId = null;
+        } else if (typeof body.providerId !== "string") {
+          fields.push({ field: "providerId", code: "invalid_value", message: "供应商 id 无效" });
+        } else if (!getProvider(body.providerId)) {
+          fields.push({ field: "providerId", code: "not_found", message: "模型供应商不存在" });
+        } else {
+          providerId = body.providerId;
+        }
+      }
+
       // ---- 执行位置（P0-13）----
       //
       // 校验顺序：先看字段类型，再看「选 worktree 时仓库路径必须是 git 仓库」。
@@ -488,7 +522,7 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
       const now = Date.now();
       const write = ctx.db.transaction(() => {
         const sets: string[] = ["updated_at = ?"];
-        const params: (string | number)[] = [now];
+        const params: (string | number | null)[] = [now];
         if (allowDirs !== null) {
           sets.push("allow_dirs = ?");
           params.push(JSON.stringify(allowDirs));
@@ -528,6 +562,10 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         if (persona !== null) {
           sets.push("persona = ?");
           params.push(persona);
+        }
+        if (providerTouched) {
+          sets.push("provider_id = ?");
+          params.push(providerId);
         }
         params.push(bot.id);
         ctx.db.prepare(`UPDATE bots SET ${sets.join(", ")} WHERE id = ?`).run(...params);

@@ -12,7 +12,11 @@ import { createAssignmentRunner } from "./core/assignment/runner.js";
 import { ensureWorktreeForBot } from "./core/assignment/worktree.js";
 import { createUsageRecorder } from "./core/usage/recorder.js";
 import { createSummarizer } from "./core/memory/summarizer.js";
-import { createDriverFor } from "./adapters/factory.js";
+import { createDriverFor, configureBuiltinDriver } from "./adapters/factory.js";
+import { createBuiltinDriver } from "./adapters/channels/builtin/driver.js";
+import { McpManager } from "./adapters/mcp/manager.js";
+import { listProviders } from "./adapters/providers/store.js";
+import { BUILTIN_RUNTIME_ID, builtinDeclaration } from "./adapters/builtin-runtime.js";
 import { effectiveDetectCommand, resolveCommand } from "./adapters/launch.js";
 import {
   listRuntimes,
@@ -88,10 +92,16 @@ async function main(): Promise<void> {
     if (!declarationById.has(declaration.id)) declarationById.set(declaration.id, declaration);
   }
 
-  const inputs: ProbeInput[] = [...declarationById.values()].map((declaration) => ({
-    declaration,
-    driver: createDriverFor(declaration),
-  }));
+  // 内置引擎不是 PATH 里的可执行文件：单独注册，不参与 probeAll。
+  const builtinDecl = builtinDeclaration();
+  declarationById.set(BUILTIN_RUNTIME_ID, builtinDecl);
+
+  const inputs: ProbeInput[] = [...declarationById.values()]
+    .filter((declaration) => declaration.protocol !== "builtin")
+    .map((declaration) => ({
+      declaration,
+      driver: createDriverFor(declaration),
+    }));
   const probes = await probeAll(inputs);
 
   // 探测结果写缓存：渲染只读缓存，不在渲染时探测（架构 §3.8）
@@ -103,6 +113,33 @@ async function main(): Promise<void> {
       source: builtinIds.has(id) ? "builtin" : "custom",
     });
   }
+
+  // 内置引擎：可用性取决于「是否至少配置了一个供应商」，不跑 PATH 探测。
+  function builtinOutcome() {
+    const count = listProviders().length;
+    const ready = count > 0;
+    return {
+      capabilities: builtinDecl.capabilities,
+      source: "declared" as const,
+      version: "0.1.0",
+      healthStatus: ready ? ("healthy" as const) : ("unhealthy" as const),
+      availability: ready ? ("ready" as const) : ("unhealthy" as const),
+      meetsMinVersion: true,
+      executable: null,
+      ...(ready
+        ? {}
+        : { detail: "未配置模型供应商：请到设置 → 模型供应商添加一个" }),
+    };
+  }
+  function refreshBuiltinRuntime(): void {
+    persistProbe(db, builtinDecl, builtinOutcome(), null, { source: "builtin" });
+  }
+  refreshBuiltinRuntime();
+
+  // MCP：随服务进程连接；单个失败只标状态，不阻断启动。
+  const mcp = new McpManager();
+  await mcp.start();
+  configureBuiltinDriver(createBuiltinDriver({ mcp }));
 
   const runtimes: RuntimeSummary[] = listRuntimes(db).map(toRuntimeDto).map((r) => ({
     id: r.id,
@@ -150,6 +187,10 @@ async function main(): Promise<void> {
       }
     }
     if (!decl) return null;
+
+    // 内置引擎没有供应商就无法工作：即使缓存里的健康状态还是旧的 ready，
+    // 这里也按实际配置再判一次（用户可能手改了 providers.json）。
+    if (decl.protocol === "builtin" && listProviders().length === 0) return null;
 
     // P0-02：不可用的运行时不允许发送（前端也应已禁用，这里是服务端兜底）
     if (row.health_status !== "ready") return null;
@@ -312,6 +353,9 @@ async function main(): Promise<void> {
     groupDecisionTimeoutMs: config.limits.groupDecisionMs,
     // P0-01：单运行时重探要按 id 找回声明（内置 YAML + 自定义）
     declarations: declarationById,
+    mcp,
+    // 供应商增删改后刷新内置引擎的可用性（设置页保存后立刻生效）
+    onProvidersChanged: refreshBuiltinRuntime,
   });
 
   await app.listen({ host: config.http.host, port: config.http.port });
@@ -339,7 +383,11 @@ async function main(): Promise<void> {
         clearInterval(permSweepTimer);
         permissions.dispose();
         // 子进程必须先杀：否则 node 会等它们退出，服务看似卡住
-        void Promise.all([orchestrator.dispose(), supervisor.dispose()]).finally(() => {
+        void Promise.all([
+          orchestrator.dispose(),
+          supervisor.dispose(),
+          mcp.dispose(),
+        ]).finally(() => {
           closeDb();
           process.exit(0);
         });

@@ -2,6 +2,7 @@ import type { AdapterDeclaration, ChannelDriver } from "./contract.js";
 import { createAcpDriver } from "./channels/acp/driver.js";
 import { createCliDriver } from "./channels/cli/driver.js";
 import { createNativeDriver } from "./channels/native/driver.js";
+import { createBuiltinDriver } from "./channels/builtin/driver.js";
 
 /**
  * 协议 → 通道驱动。
@@ -17,6 +18,15 @@ import { createNativeDriver } from "./channels/native/driver.js";
 const acpDriver = createAcpDriver();
 const cliDriver = createCliDriver();
 const nativeDriver = createNativeDriver();
+/**
+ * 内置引擎驱动由装配层配置（它需要 MCP 管理器与供应商存储）。
+ * 未配置时给一个空驱动，避免 `createDriverFor` 在启动早期返回 undefined。
+ */
+let builtinDriver: ChannelDriver = createBuiltinDriver();
+
+export function configureBuiltinDriver(driver: ChannelDriver): void {
+  builtinDriver = driver;
+}
 
 export function createDriverFor(decl: AdapterDeclaration): ChannelDriver {
   switch (decl.protocol) {
@@ -24,6 +34,8 @@ export function createDriverFor(decl: AdapterDeclaration): ChannelDriver {
       return acpDriver;
     case "cli-stdio":
       return cliDriver;
+    case "builtin":
+      return builtinDriver;
     case "codex-app-server":
       // M9 前是骨架：initialize 返回 unhealthy + detail，探测会如实置灰
       return nativeDriver;
@@ -41,4 +53,4 @@ export function createDriverFor(decl: AdapterDeclaration): ChannelDriver {
 }
 
 /** 测试用：注入假传输的 ACP / CLI 驱动。 */
-export { createAcpDriver, createCliDriver, createNativeDriver };
+export { createAcpDriver, createCliDriver, createNativeDriver, createBuiltinDriver };

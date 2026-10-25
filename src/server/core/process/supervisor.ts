@@ -207,6 +207,8 @@ interface SessionRow {
   runtime_id: string | null;
   runtime_session_id: string | null;
   resume_state: string;
+  /** 内置引擎用：Bot 绑定的模型供应商（其它通道忽略）。 */
+  provider_id?: string | null;
 }
 
 export function createSupervisor(deps: SupervisorDeps): Supervisor {
@@ -317,7 +319,11 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
   function sessionRow(sessionId: string): SessionRow | null {
     const row = deps.db
       .prepare(
-        "SELECT id, bot_id, runtime_id, runtime_session_id, resume_state FROM sessions WHERE id = ?",
+        `SELECT s.id, s.bot_id, s.runtime_id, s.runtime_session_id, s.resume_state,
+                b.provider_id
+           FROM sessions s
+           LEFT JOIN bots b ON b.id = s.bot_id
+          WHERE s.id = ?`,
       )
       .get(sessionId) as SessionRow | undefined;
     return row ?? null;
@@ -512,7 +518,12 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
 
     let handle: SessionHandle;
     try {
-      handle = await runtime.driver.start(runtime.declaration, { cwd, sessionId });
+      handle = await runtime.driver.start(runtime.declaration, {
+        cwd,
+        sessionId,
+        botId: row.bot_id,
+        providerId: row.provider_id ?? null,
+      });
     } catch (err) {
       setStatus(sessionId, "crashed");
       throw err;
