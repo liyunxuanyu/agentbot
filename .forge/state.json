@@ -3,7 +3,7 @@
   "slug": "agentbot",
   "created": "2026-10-23",
   "mode": "change",
-  "autonomy": "auto",
+  "autonomy": "gated",
   "tier": "T4",
   "tierScore": 9,
   "tierBasis": {
@@ -12,103 +12,76 @@
     "breakdown": {
       "screens_gt5": {
         "score": 2,
-        "basis": "agentbot-02-ux.md §2.1 页面树定义 10 页；agentbot-prototype-v2/index.html 的 render() 已实现 10 条路由（setup/bots/bot/chats/chat/assignments/assignment/schedules/usage/settings）"
+        "basis": "src/web/pages 10 个页面（Setup/Bots/BotDetail/Chats/Chat/Assignments/AssignmentDetail/Schedules/Usage/Settings）；agentbot-02-ux.md §2.1 页面树 10 页"
       },
       "persistence": {
         "score": 1,
-        "basis": "src/server/core/db/schema.sql 214 行、12 张表；会话/消息/事件/权限/记忆/定时任务均落库"
+        "basis": "src/server/core/db/schema.sql 14 张表（含 schema_meta）；better-sqlite3 落库会话/消息/事件/权限/记忆/定时任务"
       },
       "backend": {
         "score": 2,
-        "basis": "agentbot-05-architecture.md §1 选 Fastify 5 单进程本地服务 + SSE；package.json 已含 fastify、better-sqlite3"
+        "basis": "Fastify 5 单进程 + SSE；src/server/http/routes 下 16 个路由文件"
       },
       "external_services": {
         "score": 1,
-        "basis": "架构 §3 定义 acp / codex-app-server / opencode-http / claude-sdk / cli-stdio 五种协议通道；src/server/adapters/contract.ts 已落 ProtocolKind 枚举"
+        "basis": "src/server/adapters/providers/{openai-chat,anthropic}.ts 对接模型 API；src/server/adapters/mcp/{client,manager}.ts 对接 MCP server"
       },
       "permissions": {
         "score": 2,
-        "basis": "架构 §6 + PRD P0-08/P0-09；src/shared/events.ts 含 permission_request，schema.sql 含权限相关表；board 03-decisions.md 定下 reject/hold/preauth 三档"
+        "basis": "src/server/core/permissions 5 文件；policy.ts 三档超时 reject/hold/preauth；PRD P0-08/P0-09"
       },
       "brand_visual": {
         "score": 1,
-        "basis": "agentbot-03-ui.md 为完整视觉规范（vivid 定稿），含令牌、对比度实测、8 个 Bot 身份色"
+        "basis": "agentbot-03-ui.md 定稿 vivid + agentbot-tokens.css；8 个 Bot 身份色"
       }
     },
     "changeBreakdown": {
       "files_gt5": {
         "score": 2,
-        "basis": "设计 §3 新增 core/agent/**、adapters/providers/**、adapters/mcp/**、adapters/channels/builtin/**、3 个 http 路由、前端设置与 Bot 表单；另需改 contract.ts / main.ts / migrate.ts / routes/index.ts / 前端 types+stores。远超 5 个文件。"
+        "basis": "预计 30+ 文件：迁移 v3、sessions/channels/bots 路由与 DTO、turn/supervisor/session-cwd、builtin driver/loop/tools、permissions 全链、ChatPage/Composer/stores、PRD/UX/架构/README"
       },
       "data_model_or_contract": {
         "score": 2,
-        "basis": "bots.provider_id（数据模型）、ProtocolKind 增 builtin、PermissionChannel 增 internal、新增 ProviderClient/ToolDefinition 接口、新增 /api/providers|mcp|skills 契约。"
+        "basis": "sessions.{workspace_path,provider_id,model,permission_mode}、channels.workspace_path、bots.role；新增会话设置端点；SpawnContext 增加会话级覆盖；PermissionAction 增 admin"
       },
       "migration": {
         "score": 3,
-        "basis": "迁移 v2：ALTER TABLE bots ADD COLUMN provider_id TEXT。可空列追加、不重写旧数据，但按 router 规则「迁移」计入破坏性并走不可逆确认。"
+        "basis": "迁移 v3：可空列 + 默认值；管理员 Bot 种子行；按 router 规则「迁移」计入破坏性并走不可逆确认"
       },
       "new_ui": {
         "score": 1,
-        "basis": "设置页新增「模型供应商 / MCP / 技能」分区（现有 SettingsPage 仅 runtimes/security/data/audit 四个 tab）；Bot 表单新增 provider 选择。"
+        "basis": "ChatPage 会话设置栏（工作区/模型/权限模式）、Bot 创建表单路径改为可选、管理员 Bot 标识与创建入口"
       }
     }
   },
-  "phase": "done",
-  "completed": [
-    "archaeology",
-    "change-spec",
-    "impact",
-    "build",
-    "review"
-  ],
+  "phase": "archaeology",
+  "completed": [],
   "gates": {
     "archaeology": {
-      "approved": true,
-      "approvedAt": "2026-10-26",
-      "auto": true,
-      "basis": "backend.md 212 行，10 节均带文件:行号证据；前端面由主流程直接读源码完成（前端考古子智能体两次异常中断）"
-    },
-    "change-spec": {
-      "approved": true,
-      "approvedAt": "2026-10-26",
-      "auto": true,
-      "basis": "agentbot-09-change-spec.md：15 条 P0、明确不做的 5 项、8 条关键决定"
-    },
-    "impact": {
-      "approved": true,
-      "approvedAt": "2026-10-26",
-      "auto": true,
-      "basis": "agentbot-06-impact.md：契约扩展向后兼容、迁移 v2 可空列、无进程生命周期与权限回传已核对"
-    },
-    "build": {
-      "approved": true,
-      "approvedAt": "2026-10-26",
-      "auto": true,
-      "basis": "N1-N6 全部落地；tsc/vue-tsc/boundaries 通过；365/372 测试通过，7 个失败与基线完全一致；smoke:builtin 通过"
-    },
-    "review": {
-      "approved": true,
-      "approvedAt": "2026-10-26",
-      "auto": true,
-      "basis": "agentbot-07-review-builtin-engine.md：15 条 P0 全部有证据；主流程自检，非独立 critic"
+      "approved": false,
+      "askedAt": "2026-10-26"
     }
   },
   "board": {
     "enabled": true,
-    "reason": "T4 且 change 涉及 provider/loop/tools/MCP/skills/前端多模块",
-    "topic": "builtin-engine",
+    "reason": "T4 且本轮涉及会话数据模型、权限语义、内置引擎、管理员 Bot、前端会话设置栏多模块",
+    "topic": "session-controls",
     "open": [],
     "resolved": [],
     "previous": {
-      "topic": "product-positioning",
-      "resolved": [
-        "01-pm-question.md",
-        "02-ux-designer-question.md",
-        "03-decisions.md",
-        "04-architect-question.md",
-        "05-pm-answer.md"
-      ]
+      "topic": "builtin-engine",
+      "resolved": [],
+      "note": "state 曾记录 builtin-engine 议题，但 .forge/board/ 下无对应目录；不补造产物。",
+      "earlier": {
+        "topic": "product-positioning",
+        "resolved": [
+          "01-pm-question.md",
+          "02-ux-designer-question.md",
+          "03-decisions.md",
+          "04-architect-question.md",
+          "05-pm-answer.md"
+        ]
+      }
     }
   },
   "prototypeNotes": "v2 原型（.forge/agentbot-prototype-v2/index.html，4691 行单文件）已达可交付状态。本轮修复轨迹：① 按 agentbot-03-ui.md 逐条实测比对，找出 11 处不符（暗色仅覆盖 76/166 令牌、.av--28 未定义致 /usage 头像塌成 15px、Turn 头不吸顶、权限卡不吸附、缺活动行组件、chips 非 secondary、Session 分隔条 0 渲染、连续消息 0 实例等）；② ui-designer 修复 11 项 + 补 3 处细节（折叠块展开态白底+card、未知事件虚线块、频道行 56px）；③ critic 独立验收判不通过（1 阻断 + 11 重要 + 12 次要）；④ ui-designer 全部修完：阻断项停止按钮改为终态（引入 run.gen 代号 + trackInterval/trackTimeout/stopRun，私聊与群聊 5s 内文本不再增长、光标移除、头部不回退）；F1 重名内联拦截 + 首条消息 token 用量；F6 三种触发方式真切换 + <5min 内联拒绝；非流式运行时不再出现假光标；记忆注入量三处同数（1,560/6,000）；F3 任务状态脱离 DOM 独立推进；1024-1280 导航悬停展开、右面板抽屉可达；.is-dim 因 animation-fill-mode:both 锁死 opacity 的 bug 已修。复测：暗色 14 页 0 处 <4.5:1（888/894 文本节点）、亮暗均 0 处非禁用文字 <4.5:1、五宽度（1440/1280/1024/768/375）x 14 路由 0 横向滚动、F1-F6 六流程通过、0 JS 错误 0 404。已知遗留（规范层，非实现缺陷）：primary/ghost/danger 禁用态对比度 2.78-2.92:1（规范 §7.1 既定取值，WCAG 对 disabled 豁免）；暗色 --color-text-faint 取 #8A99A7 而非 tokens.css 的 #6E7D8A（有意提可读性，3.84->5.56）。",
@@ -142,51 +115,23 @@
   },
   "rollback": {
     "at": "2026-10-26",
-    "fromPhase": "builtin-engine",
+    "type": "cycle-reset",
+    "fromPhase": "done",
     "toPhase": "archaeology",
-    "fromMode": "greenfield",
-    "toMode": "change",
-    "reason": "state.mode=greenfield 与实际不符：src 下 118 个源文件、完整可运行实现；phase='builtin-engine' 不是 greenfield 合法阶段；completed 的八个 greenfield 阶段不属于 change 合法序列。项目已进入第二轮功能开发（内置引擎 N1–N6），按 change 模式从 archaeology 起算。",
+    "reason": "上一轮 change 循环（builtin-engine）已完成；phase='done' 不是 change 合法阶段。用户提出 5 条新需求，开启新循环：completed/gates 清空，上一轮记录移入 history。",
     "previousCompleted": [
-      "brief",
-      "prd",
-      "ux",
-      "ui",
-      "prototype",
-      "architecture",
+      "archaeology",
+      "change-spec",
+      "impact",
       "build",
       "review"
     ],
     "previousGatesApprovedAt": {
-      "brief": "2026-10-23",
-      "prd": "2026-10-23",
-      "ux": "2026-10-23",
-      "ui": "2026-10-24",
-      "prototype": "2026-10-24",
-      "architecture": "2026-10-24",
-      "build": "2026-10-25",
-      "review": "2026-10-25"
-    },
-    "previousTier": {
-      "tier": "T4",
-      "tierScore": 9
-    },
-    "evidence": {
-      "sourceFiles": 118,
-      "missingModules": [
-        "src/server/core/agent/",
-        "src/server/adapters/providers/",
-        "src/server/adapters/mcp/",
-        "src/server/adapters/channels/builtin/",
-        "src/server/http/routes/providers.ts|mcp.ts|skills.ts"
-      ],
-      "contractGaps": [
-        "ProtocolKind 无 'builtin'（src/server/adapters/contract.ts:6-11）",
-        "PermissionChannel 无 'internal'（contract.ts:17）",
-        "bots 表无 provider_id（src/server/core/db/schema.sql:29-47）",
-        "SCHEMA_VERSION=1，仅 v1 迁移（src/server/core/db/migrate.ts:13）"
-      ],
-      "docsClaim": "README.md:19 已写「配模型供应商」，但 src 内 grep provider/供应商 为 0 命中。"
+      "archaeology": "2026-10-26",
+      "change-spec": "2026-10-26",
+      "impact": "2026-10-26",
+      "build": "2026-10-26",
+      "review": "2026-10-26"
     }
   },
   "openQuestions": [
@@ -239,11 +184,11 @@
     {
       "id": "Q7-provider-id-migration",
       "question": "内置引擎需要把 Bot 绑定到模型供应商。采用迁移 v2 新增可空列 bots.provider_id，还是把 providerId 编进 runtime_bindings.runtime_id（零迁移但语义脏）？",
-      "status": "pending-approval",
-      "decision": "迁移 v2：ALTER TABLE bots ADD COLUMN provider_id TEXT（可空，不重写旧数据，旧 Bot 行为不变）。",
+      "status": "resolved",
+      "decision": "迁移 v2 已实现并验收：ALTER TABLE bots ADD COLUMN provider_id TEXT（可空，PRAGMA 判重，事务内 step+版本）。证据：src/server/core/db/migrate.ts:82、agentbot-07-review-builtin-engine.md。",
       "basis": "设计 §9/§15.1；migrate.ts 已支持按版本增量。可空列追加向后兼容，但属于数据迁移，必须走不可逆确认。",
       "affects": "数据模型、迁移、Bot DTO、前端 Bot 表单",
-      "requiresApproval": true
+      "resolvedAt": "2026-10-26"
     },
     {
       "id": "Q8-api-key-storage",
@@ -307,9 +252,56 @@
       "status": "deferred",
       "decision": "首版不做；已记录在 agentbot-07-review-builtin-engine.md 的未验证项。",
       "affects": "二期范围"
+    },
+    {
+      "id": "Q15-workspace-scope",
+      "question": "工作区放在哪一层：渠道/会话级共享、每个 Bot 会话独立、还是 Bot 默认 + 会话覆盖？群聊里多个 Bot 是否必须共用同一个工作区？",
+      "status": "pending-approval",
+      "options": [
+        "A（推荐）：channels.workspace_path 作为会话/群聊工作区，所有参与者共用；bots.repo_path 降级为默认值，可空",
+        "B：sessions.workspace_path 每个 Bot 会话独立，群聊里各 Bot 可不同",
+        "C：Bot 默认 + 单次发送覆盖，群聊共用主持人 Bot 的工作区"
+      ],
+      "recommendation": "A：群聊协作必须改同一份文件；渠道级工作区与用户说的「进入会话/群聊时指定」一致。worktree 模式在会话开始时要求 git 仓库根，Bot 创建时只存可空默认值。",
+      "affects": "数据模型、session-cwd 解析顺序、resolver.sessionCwdOf 的相对路径基准、群聊派发、ChatPage 设置栏",
+      "requiresApproval": true
+    },
+    {
+      "id": "Q16-admin-bot-form",
+      "question": "管理员 Bot 是「普通 Bot + admin 角色」，还是「内置系统 Bot」，还是两者都有？首次启动是否自动种一个？没有配置 provider 时怎么处理？",
+      "status": "pending-approval",
+      "options": [
+        "A（推荐）：普通 Bot + bots.role='admin'，可多个；首次启动且已有 provider 时种一个，没有 provider 则在 Setup 向导里引导创建",
+        "B：内置系统 Bot，不属于 bots 表，不可删除/改名",
+        "C：系统内置管理员 + 可把普通 Bot 提升为管理员"
+      ],
+      "recommendation": "A：复用现有 Bot/会话/权限体系；多管理员天然支持；种子条件可控。管理员 Bot 的 create_bot 工具需要走权限确认（新增 admin 动作）。",
+      "affects": "bots 表、main.ts 启动序、create_bot 工具、SetupPage、BotsPage、权限审计",
+      "requiresApproval": true
+    },
+    {
+      "id": "Q17-permission-modes",
+      "question": "四档权限模式（完全访问/计划/自动/变更前确认）的精确语义，以及和现有 reject/hold/preauth 三档超时的关系？模式是会话级还是渠道级？群聊里是否所有 Bot 共用一个模式？",
+      "status": "pending-approval",
+      "recommendation": "模式决定「是否弹卡/是否受边界约束」，三档超时只决定「弹卡后等多久」：confirm→reject/hold（现状）、auto→边界内写操作 preauth、plan→只读工具白名单、full→不弹卡且绕过边界但仍写审计。模式放渠道级（群聊共用），DM 等价于会话级。",
+      "affects": "policy.ts/resolver.ts/loop/tools、sessions/channels 迁移、ChatPage、PRD P0-08/09",
+      "requiresApproval": true
+    },
+    {
+      "id": "Q18-model-switch",
+      "question": "会话内切模型是只切 provider 条目（provider 已含 model），还是允许同 provider 下换任意 model 字符串？中途切换时历史如何处理（跨协议 OpenAI↔Anthropic 的工具调用格式不兼容）？群聊里按 Bot 还是按渠道切？",
+      "status": "pending-approval",
+      "options": [
+        "A（推荐）：provider 条目 + 可选 model 覆盖；仅内置引擎；同协议内中途切换保留历史，跨协议切换提示「建议新开会话」",
+        "B：只允许切 provider 条目，model 固定",
+        "C：只允许新建会话时选，不支持中途切换"
+      ],
+      "recommendation": "A：满足「provider / model」；跨协议不静默转换，避免历史工具调用错乱。群聊里按 Bot 会话切（每个参与者各自的 provider/model）。",
+      "affects": "sessions.provider_id/model、builtin driver、supervisor、providers store、ChatPage",
+      "requiresApproval": true
     }
   ],
-  "reviewNotes": "15 条 P0：11 条完全通过，4 条带本机环境限制（P0-09 越界实时拒绝仅单测、P0-12 累计值 warning 未验、P0-15 窗口裁剪未触发、P0-07 30min 超时未等待）。首轮发现 6 阻断（CLI 不注入人格记忆、CLI 每轮误判 crashed、刷新事件全丢、2200+ 事件未虚拟滚动、手动添加运行时缺失、删除 Bot 缺失）全部修复。安全修复：CLI 运行时强制 worktree（用户裁定）。文档对齐：P0-06 超时 20s、P0-07 并发 1。报告：.forge/agentbot-07-review.md",
+  "reviewNotes": "15 条 P0：11 条完全通过，4 条带本机环境限制（P0-09 越界实时拒绝仅单测、P0-12 累计值 warning 未验、P0-15 窗口裁剪未触发、P0-07 30min 超时未等待）。首轮发现 6 阻断（CLI 不注入人格记忆、CLI 每轮误判 crashed、刷新事件全丢、2200+ 事件未虚拟滚动、手动添加运行时缺失、删除 Bot 缺失）全部修复。安全修复：CLI 运行时强制 worktree（用户裁定）。文档对齐：P0-06 超时 20s、P0-07 并发 1。报告：.forge/agentbot-07-review.md 本轮（2026-10-26）新需求 5 条：Bot 创建去路径化、会话/群聊工作区、会话内模型切换、管理员 Bot、会话内四档权限模式；已进入 archaeology，待 Q15-Q18 回答后写 change-spec。",
   "features": {
     "builtin-engine": {
       "startedAt": "2026-10-25",
@@ -341,6 +333,26 @@
         "验收基线：既有 7 个 Windows 环境失败不属本轮回归，口径为「不新增失败」",
         "真实 provider：未用真实 key，本地假网关覆盖协议与全链路",
         "MCP：仅 stdio；启动时并行连接，单 server 最多 20s"
+      ]
+    },
+    "session-controls": {
+      "startedAt": "2026-10-26",
+      "status": "planning",
+      "requirements": [
+        "创建 Bot 时不要求项目地址",
+        "进入会话/群聊时可指定工作区（也可默认不指定）",
+        "单个 Bot 会话内可切换 provider / model",
+        "全局默认管理员 Bot（可多个），能引导创建其它 Bot",
+        "会话内四档权限模式切换：完全访问 / 计划模式 / 自动模式 / 变更前确认"
+      ],
+      "design": null,
+      "modules": [
+        "M1 会话工作区",
+        "M2 会话内模型切换",
+        "M3 四档权限模式",
+        "M4 管理员 Bot",
+        "M5 前端会话设置栏",
+        "M6 文档对齐"
       ]
     }
   },
@@ -376,6 +388,110 @@
         "previousPhase": "build",
         "note": "phase 仍为 build（阶段 4 原型已在 completed 内，下一步是阶段 6 实现）"
       }
+    },
+    {
+      "cycle": "change-builtin-engine",
+      "mode": "change",
+      "completed": [
+        "archaeology",
+        "change-spec",
+        "impact",
+        "build",
+        "review"
+      ],
+      "gates": {
+        "archaeology": {
+          "approved": true,
+          "approvedAt": "2026-10-26",
+          "auto": true,
+          "basis": "backend.md 212 行，10 节均带文件:行号证据；前端面由主流程直接读源码完成（前端考古子智能体两次异常中断）"
+        },
+        "change-spec": {
+          "approved": true,
+          "approvedAt": "2026-10-26",
+          "auto": true,
+          "basis": "agentbot-09-change-spec.md：15 条 P0、明确不做的 5 项、8 条关键决定"
+        },
+        "impact": {
+          "approved": true,
+          "approvedAt": "2026-10-26",
+          "auto": true,
+          "basis": "agentbot-06-impact.md：契约扩展向后兼容、迁移 v2 可空列、无进程生命周期与权限回传已核对"
+        },
+        "build": {
+          "approved": true,
+          "approvedAt": "2026-10-26",
+          "auto": true,
+          "basis": "N1-N6 全部落地；tsc/vue-tsc/boundaries 通过；365/372 测试通过，7 个失败与基线完全一致；smoke:builtin 通过"
+        },
+        "review": {
+          "approved": true,
+          "approvedAt": "2026-10-26",
+          "auto": true,
+          "basis": "agentbot-07-review-builtin-engine.md：15 条 P0 全部有证据；主流程自检，非独立 critic"
+        }
+      },
+      "artifacts": ".forge/agentbot-08-existing/backend.md / 09-change-spec.md / 06-impact.md / 07-review-builtin-engine.md / 10-change-log.md",
+      "note": "内置引擎 N1-N6 已交付：365/372 测试通过（7 个基线环境失败）、smoke:builtin 通过、build:web/build:server/boundaries 通过。",
+      "rollback": {
+        "at": "2026-10-26",
+        "fromPhase": "builtin-engine",
+        "toPhase": "archaeology",
+        "fromMode": "greenfield",
+        "toMode": "change",
+        "reason": "state.mode=greenfield 与实际不符：src 下 118 个源文件、完整可运行实现；phase='builtin-engine' 不是 greenfield 合法阶段；completed 的八个 greenfield 阶段不属于 change 合法序列。项目已进入第二轮功能开发（内置引擎 N1–N6），按 change 模式从 archaeology 起算。",
+        "previousCompleted": [
+          "brief",
+          "prd",
+          "ux",
+          "ui",
+          "prototype",
+          "architecture",
+          "build",
+          "review"
+        ],
+        "previousGatesApprovedAt": {
+          "brief": "2026-10-23",
+          "prd": "2026-10-23",
+          "ux": "2026-10-23",
+          "ui": "2026-10-24",
+          "prototype": "2026-10-24",
+          "architecture": "2026-10-24",
+          "build": "2026-10-25",
+          "review": "2026-10-25"
+        },
+        "previousTier": {
+          "tier": "T4",
+          "tierScore": 9
+        },
+        "evidence": {
+          "sourceFiles": 118,
+          "missingModules": [
+            "src/server/core/agent/",
+            "src/server/adapters/providers/",
+            "src/server/adapters/mcp/",
+            "src/server/adapters/channels/builtin/",
+            "src/server/http/routes/providers.ts|mcp.ts|skills.ts"
+          ],
+          "contractGaps": [
+            "ProtocolKind 无 'builtin'（src/server/adapters/contract.ts:6-11）",
+            "PermissionChannel 无 'internal'（contract.ts:17）",
+            "bots 表无 provider_id（src/server/core/db/schema.sql:29-47）",
+            "SCHEMA_VERSION=1，仅 v1 迁移（src/server/core/db/migrate.ts:13）"
+          ],
+          "docsClaim": "README.md:19 已写「配模型供应商」，但 src 内 grep provider/供应商 为 0 命中。"
+        }
+      }
     }
-  ]
+  ],
+  "workingTree": {
+    "uncommitted": [
+      "src/server/core/assignment/worktree.ts（新增 validateWorkingDir）",
+      "src/server/http/routes/bots.ts（local 也校验并落 repo_path）",
+      "src/web/pages/BotsPage.vue（路径字段常显）",
+      "src/web/pages/BotDetailPage.vue（路径字段常显）"
+    ],
+    "decision": "保留并改造，不回退",
+    "basis": "validateWorkingDir 是会话级工作区需要的校验原语；但 bots.repo_path 只能降级为默认值，创建表单不应强制/常显。build 前先提交为独立基线 commit，避免与迁移改动混在一起。"
+  }
 }

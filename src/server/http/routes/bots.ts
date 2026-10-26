@@ -10,6 +10,7 @@ import {
   ensureWorktreeForBot,
   readExecutionConfig,
   validateRepoPath,
+  validateWorkingDir,
 } from "../../core/assignment/worktree.js";
 import {
   RISK_CONFIRMATION_REQUIRED,
@@ -290,6 +291,19 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
           repoPath = validation.repoRoot ?? repoPath;
         }
       }
+    } else if (repoPath.length > 0) {
+      // local 也允许指定工作目录（内置引擎这类有权限通道的运行时用得上）。
+      // 只要求「是个能用的目录」，不要求 git —— 需要隔离与 diff 就用 worktree。
+      const validation = validateWorkingDir(repoPath);
+      if (!validation.ok) {
+        fields.push({
+          field: "repoPath",
+          code: validation.code ?? "invalid",
+          message: validation.message ?? "工作目录不可用",
+        });
+      } else {
+        repoPath = validation.dir ?? repoPath;
+      }
     }
 
     if (fields.length > 0) return json(reply, 400, { error: "invalid_bot", fields });
@@ -314,7 +328,7 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         runtimeId,
         providerId,
         executionLocation,
-        executionLocation === "worktree" ? repoPath : null,
+        repoPath.length > 0 ? repoPath : null,
         now,
         now,
       );
@@ -511,6 +525,18 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
             // 用 git 报告的 toplevel 落库：用户填子目录时也能拿到真正的仓库根
             repoPath = validation.repoRoot ?? repoPath;
           }
+        }
+      } else if (repoPath !== null && repoPath.length > 0) {
+        // local：允许指定任意可用目录（内置引擎这类有权限通道的运行时用得上）。
+        const validation = validateWorkingDir(repoPath);
+        if (!validation.ok) {
+          fields.push({
+            field: "repoPath",
+            code: validation.code ?? "invalid",
+            message: validation.message ?? "工作目录不可用",
+          });
+        } else {
+          repoPath = validation.dir ?? repoPath;
         }
       }
 

@@ -165,7 +165,7 @@ async function createBot(): Promise<void> {
       ...(newBotRuntime.value ? { runtimeId: newBotRuntime.value } : {}),
       ...(newBotIsBuiltin.value && newBotProvider.value ? { providerId: newBotProvider.value } : {}),
       executionLocation: location,
-      ...(location === "worktree" ? { repoPath } : {}),
+      ...(repoPath.length > 0 ? { repoPath } : {}),
     });
     newBotOpen.value = false;
     await bots.load();
@@ -447,8 +447,10 @@ onMounted(() => {
           该运行时不提供权限请求，产品层无法拦截文件写入，因此强制跑在 worktree 里。
         </div>
       </div>
-      <div v-if="newBotEffectiveLocation === 'worktree'" class="field">
-        <label class="u-label" for="nb-repo">仓库根路径</label>
+      <div class="field">
+        <label class="u-label" for="nb-repo">
+          {{ newBotEffectiveLocation === "worktree" ? "仓库根路径" : "工作目录" }}
+        </label>
         <input
           id="nb-repo"
           v-model="newBotRepo"
@@ -458,7 +460,13 @@ onMounted(() => {
           @input="newBotRepoErr = ''"
         />
         <div v-if="newBotRepoErr" class="field-err" role="alert">{{ newBotRepoErr }}</div>
-        <div v-else class="hint">必须是 git 仓库根目录，保存时会校验。</div>
+        <div v-else class="hint">
+          {{
+            newBotEffectiveLocation === "worktree"
+              ? "必须是 git 仓库根目录，保存时会校验。Bot 会在独立 worktree 里改代码。"
+              : "绝对路径，必须是已存在的目录；留空则用服务进程当前目录。内置引擎可在此直接读写（写操作仍会先问你）。"
+          }}
+        </div>
       </div>
       <template #footer>
         <button class="btn btn--secondary" @click="newBotOpen = false">取消</button>

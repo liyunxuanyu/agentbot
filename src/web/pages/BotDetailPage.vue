@@ -1147,8 +1147,10 @@ void grants;
               git worktree · 隔离副本
             </label>
           </div>
-          <div v-if="boundaryForm.location === 'worktree'" class="field" style="margin-top: 12px">
-            <label class="u-label" for="bd-repo">仓库根路径</label>
+          <div class="field" style="margin-top: 12px">
+            <label class="u-label" for="bd-repo">
+              {{ boundaryForm.location === "worktree" ? "仓库根路径" : "工作目录" }}
+            </label>
             <input
               id="bd-repo"
               v-model="boundaryForm.repoPath"
@@ -1156,7 +1158,13 @@ void grants;
               :placeholder="bot?.effectivePath ?? '例如：D:/workspace/project'"
             />
             <div v-if="boundaryErrors.repo" class="field-err">{{ boundaryErrors.repo }}</div>
-            <div v-else class="hint">留空表示沿用当前仓库根路径。</div>
+            <div v-else class="hint">
+              {{
+                boundaryForm.location === "worktree"
+                  ? "留空表示沿用当前仓库根路径（必须是 git 仓库根）。"
+                  : "留空表示沿用当前工作目录。绝对路径、必须是已存在的目录，不需要是 git 仓库。"
+              }}
+            </div>
           </div>
           <div v-if="runtime?.requiresWorktree" class="hint" style="color: var(--color-warning-ink); margin-top: 10px">
             {{ runtime.displayName }} 不提供权限请求，无法拦截文件写入。改成 local 需要二次确认。

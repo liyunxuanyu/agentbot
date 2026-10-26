@@ -456,3 +456,40 @@ export function listChangedFiles(cwd: string, run: GitRunner = defaultGitRunner)
   }
   return { git: true, files };
 }
+
+/**
+ * 校验「工作目录」——**不要求是 git 仓库**。
+ *
+ * 为什么需要它：`local` 执行位置的 cwd 来自 `bots.repo_path`，而 worktree 的校验
+ * 要求「git 仓库根」。内置引擎这类**有权限通道**的运行时允许 local，用户想让它
+ * 在自己项目的任意目录里干活，那个目录完全可能不是 git 仓库（比如刚建的脚手架）。
+ *
+ * 与 `validateRepoPath` 的分工：这个只管「是个能用的目录」，不管版本控制；
+ * 需要隔离与 diff 的场景仍走 worktree。
+ */
+export function validateWorkingDir(input: string): {
+  ok: boolean;
+  dir?: string;
+  code?: "not_absolute" | "not_found" | "not_directory";
+  message?: string;
+} {
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return { ok: false, code: "not_found", message: "工作目录不能为空" };
+  if (!isAbsolute(trimmed)) return { ok: false, code: "not_absolute", message: "请填绝对路径" };
+  if (!existsSync(trimmed)) return { ok: false, code: "not_found", message: "目录不存在" };
+  let stat;
+  try {
+    stat = statSync(trimmed);
+  } catch {
+    return { ok: false, code: "not_found", message: "目录无法访问" };
+  }
+  if (!stat.isDirectory()) return { ok: false, code: "not_directory", message: "不是目录" };
+  // 归一化到真实路径：符号链接与大小写差异会让「同一目录」看起来不同
+  let real = trimmed;
+  try {
+    real = realpathSync(trimmed);
+  } catch {
+    /* 保留原值 */
+  }
+  return { ok: true, dir: real };
+}
