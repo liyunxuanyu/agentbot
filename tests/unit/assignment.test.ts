@@ -3,6 +3,29 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+/**
+ * 「临时目录不是 git 仓库」这个前提，在某些机器上不成立 —— 本机就是：
+ * `%TEMP%` 位于 `C:/Users/<用户>` 之下，而用户主目录本身被 git init 过，
+ * 于是 `git status` 从临时目录往上找到了祖先仓库，`listChangedFiles` 会如实
+ * 报告那个仓库的改动，而不是「不是 git 仓库」。
+ *
+ * 不能靠 `GIT_CEILING_DIRECTORIES` 修：同一个文件里「目录落在别的仓库里」那条
+ * 测试正是**依赖**祖先仓库才能构造 `not_repo_root`，设了天花板它会退化成
+ * `not_git_repo`。所以这里如实判定前提，前提不成立就跳过，不假装通过。
+ */
+const TEMP_INSIDE_REPO = (() => {
+  try {
+    execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: tmpdir(),
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 import { openDb, type DB } from "../../src/server/core/db/db.js";
 import { createEventBus } from "../../src/server/core/events/bus.js";
 import { createSessionLock } from "../../src/server/core/orchestrator/session-lock.js";
@@ -623,7 +646,7 @@ describe("Assignment 执行与报告", () => {
     f.close();
   });
 
-  it("报告里「改动文件」不是 git 仓库时如实写无法统计（不编 0）", async () => {
+  it.skipIf(TEMP_INSIDE_REPO)("报告里「改动文件」不是 git 仓库时如实写无法统计（不编 0）", async () => {
     const f = setup({ mode: "done" });
     const created = f.runner.create({
       channelId: f.channelId,

@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { join, relative } from "node:path";
+import { toPosix } from "../paths.js";
 import { AGENT_LIMITS } from "../../limits.js";
 import type { ToolDefinition, ToolResult } from "../registry.js";
 import { resolveInside } from "../paths.js";
@@ -50,7 +51,7 @@ function walk(root: string, current: string, out: Match[], regex: RegExp, limit:
       const line = lines[i] ?? "";
       if (regex.test(line)) {
         out.push({
-          file: relative(root, full) || entry.name,
+          file: toPosix(relative(root, full)) || entry.name,
           line: i + 1,
           text: line.length > 300 ? `${line.slice(0, 297)}…` : line,
         });

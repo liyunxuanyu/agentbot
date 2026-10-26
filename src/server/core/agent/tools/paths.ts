@@ -16,6 +16,18 @@ export type ResolveInsideResult =
   | { ok: true; abs: string; relative: string }
   | { ok: false; error: string };
 
+/**
+ * 把 OS 路径分隔符统一成 `/`，用于**回给模型**的路径。
+ *
+ * 为什么必须做：`path.relative()` 在 Windows 上返回 `src\a.ts`，模型拿到这个路径后
+ * 会原样塞进下一次 `read_file`/`edit_file` 调用；混用两种分隔符会让它自己拼错路径，
+ * 也让同一份输出在 Windows / POSIX 上不一致（契约测试就是被这个绊住的）。
+ * 只影响展示与模型可见的文本，`abs` 仍用系统原生形式做实际 IO。
+ */
+export function toPosix(p: string): string {
+  return sep === "/" ? p : p.split(sep).join("/");
+}
+
 function isInside(parent: string, child: string): boolean {
   if (child === parent) return true;
   const prefix = parent.endsWith(sep) ? parent : `${parent}${sep}`;
@@ -46,8 +58,7 @@ function nearestExisting(path: string): { real: string; rest: string[] } | null 
   }
 }
 
-export function resolveInside(cwd: string, input: string): ResolveInsideResult {
-  if (typeof input !== "string" || input.trim().length === 0) {
+export function resolveInside(cwd: string, input: string): ResolveInsideResult {  if (typeof input !== "string" || input.trim().length === 0) {
     return { ok: false, error: "路径不能为空" };
   }
   if (input.includes("\0")) return { ok: false, error: "路径包含非法字符" };
@@ -70,7 +81,7 @@ export function resolveInside(cwd: string, input: string): ResolveInsideResult {
     if (!isInside(realCwd, realTarget)) {
       return { ok: false, error: `路径越出工作目录（符号链接指向外部）：${input}` };
     }
-    return { ok: true, abs: realTarget, relative: relative(realCwd, realTarget) || "." };
+    return { ok: true, abs: realTarget, relative: toPosix(relative(realCwd, realTarget)) || "." };
   }
 
   // 不存在：检查最近祖先 + 剩余段没有 `..`
@@ -85,7 +96,7 @@ export function resolveInside(cwd: string, input: string): ResolveInsideResult {
   return {
     ok: true,
     abs: resolve(ancestor.real, ...ancestor.rest),
-    relative: relative(realCwd, resolve(ancestor.real, ...ancestor.rest)) || ".",
+    relative: toPosix(relative(realCwd, resolve(ancestor.real, ...ancestor.rest))) || ".",
   };
 }
 
