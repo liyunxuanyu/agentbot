@@ -1292,6 +1292,13 @@ async function sendText(text: string, mentionBotIds: string[] = []): Promise<boo
       ...(mentionBotIds.length > 0 ? { mentionBotIds } : {}),
     });
     // 乐观渲染：先把自己的消息插进流（服务端 SSE 会再推一次同 id 的帧，按 id 去重）
+    //
+    // ts 用**请求发出前**的 `sendStartedAt`，不能用 `Date.now()`。
+    // 后者取的是 POST 返回之后的时刻，而这一轮 Turn 的 `startedAt` 来自服务端
+    // 首个事件（在用户消息落库之后、响应回到浏览器之前）。于是
+    //   turn.ts(服务端事件) < user.ts(客户端收到响应)  →  回复排到用户消息前面，
+    // 而且轮次栅栏会把相邻两轮并成一条。刷新后 user.ts 换成数据库里的
+    // `created_at`（早于事件），顺序才正常 —— 这就是「只有刷新才对」的成因。
     sessions.appendMessage({
       id: res.messageId,
       sessionId: res.sessionId,
@@ -1303,7 +1310,7 @@ async function sendText(text: string, mentionBotIds: string[] = []): Promise<boo
       status: "done",
       tokensIn: null,
       tokensOut: null,
-      createdAt: Date.now(),
+      createdAt: sendStartedAt,
     });
     events.replaceMessages(sessions.messages);
 
