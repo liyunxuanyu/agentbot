@@ -256,7 +256,7 @@
     {
       "id": "Q15-workspace-scope",
       "question": "工作区放在哪一层：渠道/会话级共享、每个 Bot 会话独立、还是 Bot 默认 + 会话覆盖？群聊里多个 Bot 是否必须共用同一个工作区？",
-      "status": "pending-approval",
+      "status": "decided",
       "options": [
         "A（推荐）：channels.workspace_path 作为会话/群聊工作区，所有参与者共用；bots.repo_path 降级为默认值，可空",
         "B：sessions.workspace_path 每个 Bot 会话独立，群聊里各 Bot 可不同",
@@ -264,12 +264,15 @@
       ],
       "recommendation": "A：群聊协作必须改同一份文件；渠道级工作区与用户说的「进入会话/群聊时指定」一致。worktree 模式在会话开始时要求 git 仓库根，Bot 创建时只存可空默认值。",
       "affects": "数据模型、session-cwd 解析顺序、resolver.sessionCwdOf 的相对路径基准、群聊派发、ChatPage 设置栏",
-      "requiresApproval": true
+      "requiresApproval": true,
+      "decision": "工作区在会话/群聊级（channels.workspace_path），群聊内多 Bot 共用；bots.repo_path 降级为可空「默认工作区」。同一 Bot 在不同会话/群聊的记忆相互隔离。另需上下文压缩（可感知、可手动触发）与缓存命中率统计。",
+      "basis": "用户原话：选择1，并且，每个独立的会话，或者独立的群聊，即便有相同的bot，各自的记忆那些也要隔离开，还需要做一下上下文压缩，还有缓存命中率那些",
+      "decidedAt": "2026-10-26"
     },
     {
       "id": "Q16-admin-bot-form",
       "question": "管理员 Bot 是「普通 Bot + admin 角色」，还是「内置系统 Bot」，还是两者都有？首次启动是否自动种一个？没有配置 provider 时怎么处理？",
-      "status": "pending-approval",
+      "status": "decided",
       "options": [
         "A（推荐）：普通 Bot + bots.role='admin'，可多个；首次启动且已有 provider 时种一个，没有 provider 则在 Setup 向导里引导创建",
         "B：内置系统 Bot，不属于 bots 表，不可删除/改名",
@@ -277,20 +280,26 @@
       ],
       "recommendation": "A：复用现有 Bot/会话/权限体系；多管理员天然支持；种子条件可控。管理员 Bot 的 create_bot 工具需要走权限确认（新增 admin 动作）。",
       "affects": "bots 表、main.ts 启动序、create_bot 工具、SetupPage、BotsPage、权限审计",
-      "requiresApproval": true
+      "requiresApproval": true,
+      "decision": "管理员 = 普通 Bot + role=admin，可多个，可删可改名；首次启动若已配模型且无管理员则种一个。",
+      "basis": "用户选择「普通 Bot + admin 标记（推荐）」；原话「全局默认一个管理员bot…管理员可以不用是一个」",
+      "decidedAt": "2026-10-26"
     },
     {
       "id": "Q17-permission-modes",
       "question": "四档权限模式（完全访问/计划/自动/变更前确认）的精确语义，以及和现有 reject/hold/preauth 三档超时的关系？模式是会话级还是渠道级？群聊里是否所有 Bot 共用一个模式？",
-      "status": "pending-approval",
+      "status": "decided",
       "recommendation": "模式决定「是否弹卡/是否受边界约束」，三档超时只决定「弹卡后等多久」：confirm→reject/hold（现状）、auto→边界内写操作 preauth、plan→只读工具白名单、full→不弹卡且绕过边界但仍写审计。模式放渠道级（群聊共用），DM 等价于会话级。",
       "affects": "policy.ts/resolver.ts/loop/tools、sessions/channels 迁移、ChatPage、PRD P0-08/09",
-      "requiresApproval": true
+      "requiresApproval": true,
+      "decision": "四档权限模式：confirm（默认）/ auto（边界内写自动批 + 审计）/ plan（只读）/ full（绕过边界但写审计）；会话内可随时切换。",
+      "basis": "用户选择「按此基线（推荐）」",
+      "decidedAt": "2026-10-26"
     },
     {
       "id": "Q18-model-switch",
       "question": "会话内切模型是只切 provider 条目（provider 已含 model），还是允许同 provider 下换任意 model 字符串？中途切换时历史如何处理（跨协议 OpenAI↔Anthropic 的工具调用格式不兼容）？群聊里按 Bot 还是按渠道切？",
-      "status": "pending-approval",
+      "status": "decided",
       "options": [
         "A（推荐）：provider 条目 + 可选 model 覆盖；仅内置引擎；同协议内中途切换保留历史，跨协议切换提示「建议新开会话」",
         "B：只允许切 provider 条目，model 固定",
@@ -298,7 +307,18 @@
       ],
       "recommendation": "A：满足「provider / model」；跨协议不静默转换，避免历史工具调用错乱。群聊里按 Bot 会话切（每个参与者各自的 provider/model）。",
       "affects": "sessions.provider_id/model、builtin driver、supervisor、providers store、ChatPage",
-      "requiresApproval": true
+      "requiresApproval": true,
+      "decision": "会话内可切供应商 + 模型；仅内置引擎；跨协议时提示建议新开会话。",
+      "basis": "用户选择「供应商 + 模型都可切（推荐）」",
+      "decidedAt": "2026-10-26"
+    },
+    {
+      "id": "Q19-gap-defaults",
+      "question": "用户原话未覆盖的 10 个口径缺口（记忆回填、模式继承、生成中切换、管理员边界、压缩触发、缓存口径、群聊并发写、工作区校验、模型覆盖持久化、群聊工作区归属）如何定？",
+      "status": "decided-by-default",
+      "decision": "按 .forge/agentbot-11-requirements-align.md 第 6 节的建议口径；实现中若发现与现状冲突，先改文档再改代码。",
+      "basis": "这些是实现必需但用户未表态的细节；已给出保守默认（不改变老数据行为、不静默降级、不可逆项单列确认）。",
+      "affects": "M1/M2/M3/M5 与迁移 v3"
     }
   ],
   "reviewNotes": "15 条 P0：11 条完全通过，4 条带本机环境限制（P0-09 越界实时拒绝仅单测、P0-12 累计值 warning 未验、P0-15 窗口裁剪未触发、P0-07 30min 超时未等待）。首轮发现 6 阻断（CLI 不注入人格记忆、CLI 每轮误判 crashed、刷新事件全丢、2200+ 事件未虚拟滚动、手动添加运行时缺失、删除 Bot 缺失）全部修复。安全修复：CLI 运行时强制 worktree（用户裁定）。文档对齐：P0-06 超时 20s、P0-07 并发 1。报告：.forge/agentbot-07-review.md 本轮（2026-10-26）新需求 5 条：Bot 创建去路径化、会话/群聊工作区、会话内模型切换、管理员 Bot、会话内四档权限模式；已进入 archaeology，待 Q15-Q18 回答后写 change-spec。",
@@ -493,5 +513,31 @@
     ],
     "decision": "保留并改造，不回退",
     "basis": "validateWorkingDir 是会话级工作区需要的校验原语；但 bots.repo_path 只能降级为默认值，创建表单不应强制/常显。build 前先提交为独立基线 commit，避免与迁移改动混在一起。"
+  },
+  "changeRound": {
+    "id": "session-control-admin-bot",
+    "alignDoc": ".forge/agentbot-11-requirements-align.md",
+    "spec": ".forge/agentbot-12-change-spec.md",
+    "impact": ".forge/agentbot-13-impact.md",
+    "modules": [
+      "M1 工作区与记忆隔离",
+      "M2 会话内模型与权限模式",
+      "M3 管理员 Bot",
+      "M5 前端会话设置栏"
+    ],
+    "irreversible": [
+      "迁移 v3",
+      "管理员种子",
+      "记忆作用域回填"
+    ],
+    "startedAt": "2026-10-26",
+    "scope": "builtin 运行时；CLI/ACP/native 本轮不动",
+    "ui": [
+      "会话工作区设置",
+      "模型选择器（供应商+模型）",
+      "权限模式胶囊（计划/变更前确认/自动/完全访问，Shift+Tab 循环）",
+      "Bot 创建路径可选",
+      "管理员标识"
+    ]
   }
 }

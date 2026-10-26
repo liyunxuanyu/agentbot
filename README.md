@@ -20,6 +20,7 @@ npm run build && npm run start:local     # 控制台会打印带 token 的访问
 
 **先读这两处再动代码**：
 
+- [`.forge/agentbot-14-handoff.md`](.forge/agentbot-14-handoff.md) —— **当前这一轮**的交接：待办清单、迁移 v3 SQL、模块文件归属、验收门槛。口径源头是 [`.forge/agentbot-11-requirements-align.md`](.forge/agentbot-11-requirements-align.md)。
 - [`docs/memory/agentbot-project-state.md`](docs/memory/agentbot-project-state.md) —— 项目全貌 + 7 处真机踩过的坑（虚拟列表 transform 毁 sticky、CLI 人格注入、exit 0 误判 crashed、messages 同毫秒排序、pending Turn、最新轮不自动折叠…）。重复踩一遍要几个小时。
 - [`.forge/`](.forge/) —— 产品文档全在这里：`agentbot-00-brief` / `01-prd` / `02-ux` / `03-ui` / `tokens.css` / `05-architecture` / `06-builtin-engine`（内置引擎设计）/ `07-review`（验收报告），以及 `agentbot-prototype-v2/index.html`（视觉权威原型）。
 
