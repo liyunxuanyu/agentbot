@@ -35,9 +35,15 @@ CREATE TABLE IF NOT EXISTS bots (
   -- 内置引擎绑定的模型供应商（providers.json 里的 id）；其它运行时为 NULL
   provider_id         TEXT,
   execution_location  TEXT NOT NULL DEFAULT 'local' CHECK (execution_location IN ('local','worktree')),
+  -- 默认工作区（可空）：会话/群聊未指定时回退到这里；内置引擎直接用作 cwd
   repo_path           TEXT,
   worktree_path       TEXT,
   worktree_state      TEXT,                  -- ready | missing | failed
+  -- 管理员 Bot 多一个 create_bot 工具；不自动获得 full 权限
+  role                TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin')),
+  -- Bot 默认权限模式；会话显式设置优先于它
+  permission_mode     TEXT NOT NULL DEFAULT 'confirm'
+    CHECK (permission_mode IN ('confirm','auto','plan','full')),
   status              TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
   -- 权限边界
   allow_dirs          TEXT NOT NULL DEFAULT '[]',   -- JSON string[]
@@ -65,6 +71,8 @@ CREATE TABLE IF NOT EXISTS channels (
   name               TEXT NOT NULL,
   participant_bot_ids TEXT NOT NULL DEFAULT '[]',  -- JSON string[]
   host_bot_id        TEXT,
+  -- 群聊/私聊的工作区：群聊全员共用；DM 即该会话工作区
+  workspace_path     TEXT,
   created_at         INTEGER NOT NULL
 );
 
@@ -78,6 +86,12 @@ CREATE TABLE IF NOT EXISTS sessions (
   status             TEXT NOT NULL DEFAULT 'created',
   process_pid        INTEGER,
   process_started_at INTEGER,
+  -- 会话级覆盖：优先于 Bot 的默认工作区与模型（每次 prompt 重新读取）
+  workspace_path     TEXT,
+  provider_id        TEXT,
+  model              TEXT,
+  permission_mode    TEXT NOT NULL DEFAULT 'confirm'
+    CHECK (permission_mode IN ('confirm','auto','plan','full')),
   seq_counter        INTEGER NOT NULL DEFAULT 0,
   started_at         INTEGER NOT NULL,
   ended_at           INTEGER
@@ -143,12 +157,18 @@ CREATE TABLE IF NOT EXISTS memory_entries (
   content           TEXT NOT NULL,
   source_session_id TEXT,
   kind              TEXT NOT NULL DEFAULT 'manual' CHECK (kind IN ('manual','summary')),
+  -- 作用域：bot = 该 Bot 全局（历史数据回填值）；session = 仅来源会话；
+  -- channel = 该群聊/渠道内共享（群聊里每个 Bot 的会话都能读到）
+  scope             TEXT NOT NULL DEFAULT 'bot' CHECK (scope IN ('bot','channel','session')),
+  channel_id        TEXT,
   injected          INTEGER NOT NULL DEFAULT 1,
   version           INTEGER NOT NULL DEFAULT 1,
   updated_at        INTEGER NOT NULL,
   created_at        INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memory_bot ON memory_entries(bot_id, injected, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_scope
+  ON memory_entries(scope, channel_id, injected, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS schedules (
   id               TEXT PRIMARY KEY,
@@ -209,6 +229,12 @@ CREATE TABLE IF NOT EXISTS usage_records (
   mode          TEXT NOT NULL DEFAULT 'interactive',   -- interactive | headless
   input_tokens  INTEGER NOT NULL DEFAULT 0,
   output_tokens INTEGER NOT NULL DEFAULT 0,
+  -- 缓存读/写 token：OpenAI prompt_tokens_details.cached_tokens /
+  -- Anthropic cache_read_input_tokens / cache_creation_input_tokens
+  cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
+  -- 本轮实际使用的模型（会话内可切，聚合时按模型区分）
+  model         TEXT,
   reported      INTEGER NOT NULL DEFAULT 1,
   created_at    INTEGER NOT NULL
 );

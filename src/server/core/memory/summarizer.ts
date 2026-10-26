@@ -129,15 +129,29 @@ function sessionMessages(db: DB, sessionId: string): SummaryMessage[] {
     .all(sessionId) as SummaryMessage[];
 }
 
-function botOfSession(db: DB, sessionId: string): { botId: string; name: string } | null {
+function botOfSession(
+  db: DB,
+  sessionId: string,
+): { botId: string; name: string; channelId: string | null; channelType: string | null } | null {
   const row = db
     .prepare(
-      `SELECT b.id AS bot_id, b.name AS name
-         FROM sessions s JOIN bots b ON b.id = s.bot_id
+      `SELECT b.id AS bot_id, b.name AS name, s.channel_id AS channel_id, c.type AS channel_type
+         FROM sessions s
+         JOIN bots b ON b.id = s.bot_id
+         LEFT JOIN channels c ON c.id = s.channel_id
         WHERE s.id = ?`,
     )
-    .get(sessionId) as { bot_id: string; name: string } | undefined;
-  return row ? { botId: row.bot_id, name: row.name } : null;
+    .get(sessionId) as
+    | { bot_id: string; name: string; channel_id: string | null; channel_type: string | null }
+    | undefined;
+  return row
+    ? {
+        botId: row.bot_id,
+        name: row.name,
+        channelId: row.channel_id,
+        channelType: row.channel_type,
+      }
+    : null;
 }
 
 export function createSummarizer(deps: SummarizerDeps): Summarizer {
@@ -197,6 +211,11 @@ export function createSummarizer(deps: SummarizerDeps): Summarizer {
     const clipped = clip(text, SUMMARY_CHAR_LIMIT);
     const id = `mem_${randomUUID()}`;
 
+    // 作用域（R3）：群聊里摘要进 channel 作用域（同群每个 Bot 都能读），
+    // 私聊进 session 作用域（同一 Bot 的其它会话读不到）。
+    const groupChannel = owner.channelType === "group" ? owner.channelId : null;
+    const scope: "channel" | "session" = groupChannel ? "channel" : "session";
+
     const write = deps.db.transaction(() => {
       memoryRepo.create(deps.db, {
         id,
@@ -204,6 +223,8 @@ export function createSummarizer(deps: SummarizerDeps): Summarizer {
         content: clipped,
         kind: "summary",
         sourceSessionId: sessionId,
+        scope,
+        channelId: groupChannel,
         injected: true,
       });
       memoryRepo.clearPending(deps.db, sessionId);

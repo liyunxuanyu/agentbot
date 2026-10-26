@@ -87,9 +87,22 @@ function assembleMemory(
   db: DB,
   botId: string,
   budget: number,
+  scope: { sessionId?: string | null; channelId?: string | null } = {},
 ): { text: string; truncatedCount: number } {
-  const result = assembleMemoryText(db, botId, { charBudget: budget });
+  const result = assembleMemoryText(db, botId, {
+    charBudget: budget,
+    sessionId: scope.sessionId ?? null,
+    channelId: scope.channelId ?? null,
+  });
   return { text: result.text, truncatedCount: result.truncatedCount };
+}
+
+/** 会话所属渠道（记忆作用域要用）；会话不存在时返回 null。 */
+function channelOfSession(db: DB, sessionId: string): string | null {
+  const row = db.prepare("SELECT channel_id FROM sessions WHERE id = ?").get(sessionId) as
+    | { channel_id: string | null }
+    | undefined;
+  return row?.channel_id ?? null;
 }
 
 /**
@@ -104,10 +117,16 @@ function assembleMemory(
 export function buildBootstrapContext(input: {
   db: DB;
   botId: string;
+  /** 当前会话：session / channel 作用域的记忆靠它命中（R3）。 */
+  sessionId?: string | null;
   memoryCharBudget?: number;
 }): RebuildResult {
   const memoryBudget = input.memoryCharBudget ?? config.limits.memoryCharBudget;
-  const memoryResult = assembleMemory(input.db, input.botId, memoryBudget);
+  const channelId = input.sessionId ? channelOfSession(input.db, input.sessionId) : null;
+  const memoryResult = assembleMemory(input.db, input.botId, memoryBudget, {
+    sessionId: input.sessionId ?? null,
+    channelId,
+  });
   const prompt = memoryResult.text;
   return {
     systemPrompt: prompt,
@@ -130,7 +149,10 @@ export function buildRebuildContext(input: RebuildInput): RebuildResult {
   const budgetRatio = input.budgetRatio ?? 0.7;
   const memoryBudget = input.memoryCharBudget ?? config.limits.memoryCharBudget;
 
-  const memoryResult = assembleMemory(input.db, input.botId, memoryBudget);
+  const memoryResult = assembleMemory(input.db, input.botId, memoryBudget, {
+    sessionId: input.sessionId,
+    channelId: channelOfSession(input.db, input.sessionId),
+  });
   const memory = memoryResult.text;
 
   // 排序键用 `rowid` 而不是 `id`：`id` 是随机 UUID，同毫秒写入的 user/assistant

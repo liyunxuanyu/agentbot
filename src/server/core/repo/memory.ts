@@ -18,6 +18,15 @@ import type { DB } from "../db/db.js";
 
 export type MemoryKind = "manual" | "summary";
 
+/**
+ * 记忆作用域（R3 / G1）。
+ *
+ *   bot     = 该 Bot 的全局记忆：任何会话都注入（历史数据回填值）
+ *   channel = 群聊内共享：同一渠道里每个 Bot 的会话都能读到
+ *   session = 仅来源会话：同一 Bot 在别的会话读不到（新摘要的默认作用域）
+ */
+export type MemoryScope = "bot" | "channel" | "session";
+
 /** 待摘要标记的 id 前缀。 */
 export const PENDING_PREFIX = "mem_pending_";
 
@@ -34,6 +43,8 @@ export interface MemoryEntryRow {
   botId: string;
   content: string;
   sourceSessionId: string | null;
+  scope: MemoryScope;
+  channelId: string | null;
   kind: MemoryKind;
   injected: boolean;
   version: number;
@@ -46,11 +57,17 @@ interface RawRow {
   bot_id: string;
   content: string;
   source_session_id: string | null;
+  scope: string;
+  channel_id: string | null;
   kind: string;
   injected: number;
   version: number;
   updated_at: number;
   created_at: number;
+}
+
+function toScope(raw: string): MemoryScope {
+  return raw === "session" ? "session" : raw === "channel" ? "channel" : "bot";
 }
 
 function toRow(raw: RawRow): MemoryEntryRow {
@@ -59,6 +76,8 @@ function toRow(raw: RawRow): MemoryEntryRow {
     botId: raw.bot_id,
     content: raw.content,
     sourceSessionId: raw.source_session_id,
+    scope: toScope(raw.scope),
+    channelId: raw.channel_id,
     kind: raw.kind === "summary" ? "summary" : "manual",
     injected: raw.injected === 1,
     version: raw.version,
@@ -79,18 +98,44 @@ export function listByBot(db: DB, botId: string): MemoryEntryRow[] {
   return rows.map(toRow);
 }
 
+/** 注入范围：调用方给出当前会话/渠道，按作用域过滤（R3）。 */
+export interface InjectionScope {
+  /** 当前会话 id；不传表示只注入 bot 全局记忆。 */
+  sessionId?: string | null;
+  /** 当前渠道 id；群聊内共享记忆靠它命中。 */
+  channelId?: string | null;
+}
+
 /**
  * 注入候选：`injected=1` 且不是待摘要标记，按 updated_at 倒序。
- * 倒序是截断顺序的依据（预算不够时丢最旧的，PRD P0-10）。
+ *
+ * 作用域规则（G1）：
+ *   - `bot`     → 永远注入；
+ *   - `channel` → 仅当 `channel_id` 与当前渠道相同；
+ *   - `session` → 仅当 `source_session_id` 与当前会话相同。
+ *
+ * 不传 `scope` 时只注入 `bot` 全局记忆 —— 这是历史行为（迁移后老数据全是 bot），
+ * 也保证「拿不到会话上下文时宁少注入、不串记忆」。
  */
-export function listInjected(db: DB, botId: string): MemoryEntryRow[] {
+export function listInjected(
+  db: DB,
+  botId: string,
+  scope: InjectionScope = {},
+): MemoryEntryRow[] {
+  const sessionId = scope.sessionId ?? null;
+  const channelId = scope.channelId ?? null;
   const rows = db
     .prepare(
       `SELECT * FROM memory_entries
         WHERE bot_id = ? AND injected = 1 AND id NOT LIKE ?
+          AND (
+            scope = 'bot'
+            OR (scope = 'channel' AND channel_id IS NOT NULL AND channel_id = ?)
+            OR (scope = 'session' AND source_session_id IS NOT NULL AND source_session_id = ?)
+          )
         ORDER BY updated_at DESC, created_at DESC`,
     )
-    .all(botId, `${PENDING_PREFIX}%`) as RawRow[];
+    .all(botId, `${PENDING_PREFIX}%`, channelId, sessionId) as RawRow[];
   return rows.map(toRow);
 }
 
@@ -105,6 +150,9 @@ export interface CreateMemoryInput {
   content: string;
   kind?: MemoryKind;
   sourceSessionId?: string | null;
+  /** 作用域；缺省 `bot`（手写全局记忆）。自动摘要由调用方显式指定。 */
+  scope?: MemoryScope;
+  channelId?: string | null;
   injected?: boolean;
   version?: number;
   updatedAt?: number;
@@ -115,13 +163,16 @@ export function create(db: DB, input: CreateMemoryInput): MemoryEntryRow {
   const now = Date.now();
   db.prepare(
     `INSERT INTO memory_entries
-       (id, bot_id, content, source_session_id, kind, injected, version, updated_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, bot_id, content, source_session_id, scope, channel_id, kind, injected, version,
+        updated_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.id,
     input.botId,
     input.content,
     input.sourceSessionId ?? null,
+    input.scope ?? "bot",
+    input.channelId ?? null,
     input.kind ?? "manual",
     input.injected === false ? 0 : 1,
     input.version ?? 1,

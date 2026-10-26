@@ -11,7 +11,7 @@ import type { DB } from "./db.js";
  * `CREATE TABLE IF NOT EXISTS`，首次执行与重复执行都安全）。
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export interface MigrationResult {
   /** 迁移前版本。 */
@@ -69,6 +69,24 @@ interface MigrationStep {
   run: (db: DB) => void;
 }
 
+function hasColumn(db: DB, table: string, column: string): boolean {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  return columns.some((c) => c.name === column);
+}
+
+/**
+ * 幂等加列：全新库（schema.sql 已含）跳过，老库执行 ALTER。
+ *
+ * 表不存在时也跳过：迁移单测会用「只有 schema_meta + bots」的最小库模拟老版本，
+ * 真实老库不会缺表；为一张不存在的表 ALTER 只会让整个迁移失败。
+ */
+function addColumn(db: DB, table: string, column: string, definition: string): void {
+  if (!tableExists(db, table)) return;
+  if (!hasColumn(db, table, column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 const STEPS: MigrationStep[] = [
   {
     version: 1,
@@ -82,10 +100,53 @@ const STEPS: MigrationStep[] = [
     name: "v2 内置引擎：bots.provider_id",
     run: (db) => {
       // 全新库的 schema.sql 已包含该列；只有 v1 老库需要 ALTER。
-      const columns = db.prepare("PRAGMA table_info(bots)").all() as { name: string }[];
-      if (!columns.some((c) => c.name === "provider_id")) {
-        db.exec("ALTER TABLE bots ADD COLUMN provider_id TEXT");
+      addColumn(db, "bots", "provider_id", "TEXT");
+    },
+  },
+  {
+    version: 3,
+    name: "v3 会话控制：工作区 / 会话级模型与权限模式 / 管理员 / 记忆作用域 / 缓存用量",
+    run: (db) => {
+      // 全部可空或带默认值：历史行行为不变（记忆回填 scope='bot' 由默认值覆盖）
+      addColumn(db, "channels", "workspace_path", "TEXT");
+      addColumn(db, "sessions", "workspace_path", "TEXT");
+      addColumn(db, "sessions", "provider_id", "TEXT");
+      addColumn(db, "sessions", "model", "TEXT");
+      addColumn(
+        db,
+        "sessions",
+        "permission_mode",
+        "TEXT NOT NULL DEFAULT 'confirm' CHECK (permission_mode IN ('confirm','auto','plan','full'))",
+      );
+      addColumn(
+        db,
+        "bots",
+        "role",
+        "TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member','admin'))",
+      );
+      addColumn(
+        db,
+        "bots",
+        "permission_mode",
+        "TEXT NOT NULL DEFAULT 'confirm' CHECK (permission_mode IN ('confirm','auto','plan','full'))",
+      );
+      addColumn(
+        db,
+        "memory_entries",
+        "scope",
+        "TEXT NOT NULL DEFAULT 'bot' CHECK (scope IN ('bot','channel','session'))",
+      );
+      addColumn(db, "memory_entries", "channel_id", "TEXT");
+      // 索引同样要防「表不存在」：最小模拟库只有 bots，直接建索引会让整个迁移失败。
+      if (tableExists(db, "memory_entries")) {
+        db.exec(
+          `CREATE INDEX IF NOT EXISTS idx_memory_scope
+             ON memory_entries(scope, channel_id, injected, updated_at DESC)`,
+        );
       }
+      addColumn(db, "usage_records", "cached_input_tokens", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "usage_records", "cache_write_tokens", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(db, "usage_records", "model", "TEXT");
     },
   },
 ];

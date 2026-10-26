@@ -70,13 +70,27 @@ export type ProviderDelta =
   | { kind: "text"; text: string }
   | { kind: "reasoning"; text: string }
   | { kind: "tool_call"; call: ToolCall }
-  | { kind: "usage"; inputTokens: number; outputTokens: number; reported: boolean }
+  | {
+      kind: "usage";
+      inputTokens: number;
+      outputTokens: number;
+      reported: boolean;
+      cachedInputTokens?: number;
+      cacheWriteTokens?: number;
+      model?: string;
+    }
   | { kind: "finish"; reason: ProviderFinish };
 
 export interface ProviderUsage {
   inputTokens: number;
   outputTokens: number;
   reported: boolean;
+  /** 缓存命中（读）token：OpenAI cached_tokens / Anthropic cache_read_input_tokens。 */
+  cachedInputTokens?: number;
+  /** 缓存写入 token：Anthropic cache_creation_input_tokens。 */
+  cacheWriteTokens?: number;
+  /** 本轮实际使用的模型。 */
+  model?: string;
 }
 
 export interface ProviderCompletion {

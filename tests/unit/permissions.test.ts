@@ -471,9 +471,17 @@ describe("裁决器 · 授权命中自动批准", () => {
     f.close();
   });
 
-  it("grant 的 action_key 对路径大小写与尾部分隔符不敏感（同一文件只记一次）", () => {
+  it.skipIf(!WIN)("Windows 上 grant 的 action_key 对路径大小写不敏感（同一文件只记一次）", () => {
+    // 大小写不敏感是 Windows 文件系统的语义；POSIX 上 Case.md 与 case.md
+    // 是两个不同文件，归一化绝不能把它们合并成同一个授权。
     const a = actionKeyOf("write", join(allowedDir, "Case.md"));
-    const b = actionKeyOf("write", join(allowedDir, "case.md") + (WIN ? "\\" : "/"));
+    const b = actionKeyOf("write", join(allowedDir, "case.md") + "\\");
+    expect(a).toBe(b);
+  });
+
+  it("grant 的 action_key 去掉尾部分隔符（同一路径只记一次）", () => {
+    const a = actionKeyOf("write", join(allowedDir, "same.md"));
+    const b = actionKeyOf("write", join(allowedDir, "same.md") + "/");
     expect(a).toBe(b);
   });
 

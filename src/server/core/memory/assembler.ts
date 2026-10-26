@@ -89,6 +89,10 @@ function packMemory(
 export interface AssembleMemoryOptions {
   /** 覆盖预算（测试与调用方微调用；默认取 config）。 */
   charBudget?: number;
+  /** 当前会话：session 作用域记忆靠它命中（R3）。 */
+  sessionId?: string | null;
+  /** 当前渠道：channel 作用域记忆靠它命中（群聊共享）。 */
+  channelId?: string | null;
 }
 
 /**
@@ -125,7 +129,11 @@ export function assemble(db: DB, botId: string, opts: AssembleMemoryOptions = {}
   }
 
   // ---- 记忆：按 updated_at 倒序填剩余预算 ----
-  const rows = listInjected(db, botId).map((r) => ({
+  // 只注入与当前会话/渠道匹配的作用域（R3）：bot 全局 + 本渠道共享 + 本会话。
+  const rows = listInjected(db, botId, {
+    sessionId: opts.sessionId ?? null,
+    channelId: opts.channelId ?? null,
+  }).map((r) => ({
     id: r.id,
     content: r.content,
     kind: r.kind,

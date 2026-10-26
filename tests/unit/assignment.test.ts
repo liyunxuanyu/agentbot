@@ -1,30 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-
-/**
- * 「临时目录不是 git 仓库」这个前提，在某些机器上不成立 —— 本机就是：
- * `%TEMP%` 位于 `C:/Users/<用户>` 之下，而用户主目录本身被 git init 过，
- * 于是 `git status` 从临时目录往上找到了祖先仓库，`listChangedFiles` 会如实
- * 报告那个仓库的改动，而不是「不是 git 仓库」。
- *
- * 不能靠 `GIT_CEILING_DIRECTORIES` 修：同一个文件里「目录落在别的仓库里」那条
- * 测试正是**依赖**祖先仓库才能构造 `not_repo_root`，设了天花板它会退化成
- * `not_git_repo`。所以这里如实判定前提，前提不成立就跳过，不假装通过。
- */
-const TEMP_INSIDE_REPO = (() => {
-  try {
-    execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd: tmpdir(),
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    return true;
-  } catch {
-    return false;
-  }
-})();
 
 import { openDb, type DB } from "../../src/server/core/db/db.js";
 import { createEventBus } from "../../src/server/core/events/bus.js";
@@ -646,20 +624,27 @@ describe("Assignment 执行与报告", () => {
     f.close();
   });
 
-  it.skipIf(TEMP_INSIDE_REPO)("报告里「改动文件」不是 git 仓库时如实写无法统计（不编 0）", async () => {
-    const f = setup({ mode: "done" });
-    const created = f.runner.create({
-      channelId: f.channelId,
-      title: "非 git 目录任务",
-      deliverable: "在非 git 目录里干活",
-      botId: f.botId,
-    });
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    await waitFor(() => statusOf(f.db, created.assignment.id) === "done");
-    const row = getAssignmentRow(f.db, created.assignment.id)!;
-    expect(row.report).toContain("无法统计");
-    f.close();
+  it("报告里「改动文件」不是 git 仓库时如实写无法统计（不编 0）", async () => {
+    // 显式给 Bot 一个非 git 工作目录：不依赖「临时目录恰好不在仓库里」这个
+    // 平台相关前提（Bot 没配路径时会回退到服务进程 cwd，而它通常就是仓库根）。
+    const plain = mkdtempSync(join(tmpdir(), "agentbot-plain-"));
+    try {
+      const f = setup({ mode: "done", repoPath: plain });
+      const created = f.runner.create({
+        channelId: f.channelId,
+        title: "非 git 目录任务",
+        deliverable: "在非 git 目录里干活",
+        botId: f.botId,
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      await waitFor(() => statusOf(f.db, created.assignment.id) === "done");
+      const row = getAssignmentRow(f.db, created.assignment.id)!;
+      expect(row.report).toContain("无法统计");
+      f.close();
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
   });
 });
 
@@ -746,13 +731,15 @@ describe("执行位置 worktree（P0-13）", () => {
 
   it("目录落在别的仓库里（不是根）→ not_repo_root，并给出真实根", () => {
     if (!HAS_GIT) return;
-    // 临时目录通常位于某个父级仓库内（实测：用户家目录本身是 git 仓库）
-    const nested = join(root, "nested-plain");
+    // 自己造一个外层仓库：不依赖「临时目录恰好位于某个祖先仓库里」这个平台前提
+    const outer = join(root, "outer-repo");
+    const nested = join(outer, "nested-plain");
     mkdirSync(nested, { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: outer });
     const result = validateRepoPath(nested);
     expect(result.ok).toBe(false);
     expect(result.code).toBe("not_repo_root");
-    expect(result.repoRoot).toBeTruthy();
+    expect(result.repoRoot).toBe(realpathSync(outer));
     expect(result.message).toContain("仓库根路径");
   });
 

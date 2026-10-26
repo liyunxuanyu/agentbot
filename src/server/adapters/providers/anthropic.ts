@@ -37,10 +37,20 @@ interface AnthropicBlock {
   content?: string;
 }
 
+interface AnthropicUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  /** 缓存命中（读）。 */
+  cache_read_input_tokens?: number;
+  /** 缓存写入。 */
+  cache_creation_input_tokens?: number;
+}
+
 interface AnthropicResponse {
   content?: AnthropicBlock[];
   stop_reason?: string | null;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: AnthropicUsage;
+  model?: string;
   error?: { message?: string };
 }
 
@@ -186,6 +196,9 @@ export function createAnthropicClient(cfg: ProviderConfig): ProviderClient {
             inputTokens: json.usage.input_tokens ?? 0,
             outputTokens: json.usage.output_tokens ?? 0,
             reported: true,
+            cachedInputTokens: json.usage.cache_read_input_tokens ?? 0,
+            cacheWriteTokens: json.usage.cache_creation_input_tokens ?? 0,
+            model: json.model ?? cfg.model,
           }
         : null;
     return {
@@ -219,6 +232,8 @@ export function createAnthropicClient(cfg: ProviderConfig): ProviderClient {
     let currentEvent: string | null = null;
     let inputTokens = 0;
     let outputTokens = 0;
+    let cachedInputTokens = 0;
+    let cacheWriteTokens = 0;
     let sawUsage = false;
     let finish: ProviderFinish = "stop";
 
@@ -241,9 +256,19 @@ export function createAnthropicClient(cfg: ProviderConfig): ProviderClient {
 
       switch (type) {
         case "message_start": {
-          const message = payload["message"] as { usage?: { input_tokens?: number } } | undefined;
+          const message = payload["message"] as
+            | { usage?: AnthropicUsage; model?: string }
+            | undefined;
           if (typeof message?.usage?.input_tokens === "number") {
             inputTokens = message.usage.input_tokens;
+            sawUsage = true;
+          }
+          if (typeof message?.usage?.cache_read_input_tokens === "number") {
+            cachedInputTokens = message.usage.cache_read_input_tokens;
+            sawUsage = true;
+          }
+          if (typeof message?.usage?.cache_creation_input_tokens === "number") {
+            cacheWriteTokens = message.usage.cache_creation_input_tokens;
             sawUsage = true;
           }
           break;
@@ -311,7 +336,15 @@ export function createAnthropicClient(cfg: ProviderConfig): ProviderClient {
     }
 
     if (sawUsage) {
-      yield { kind: "usage", inputTokens, outputTokens, reported: true };
+      yield {
+        kind: "usage",
+        inputTokens,
+        outputTokens,
+        reported: true,
+        cachedInputTokens,
+        cacheWriteTokens,
+        model: cfg.model,
+      };
     }
     for (const [, call] of tools) {
       if (call.name.length > 0) yield { kind: "tool_call", call: toolCallOf(call.id, call.name, call.json) };

@@ -32,7 +32,13 @@ const NODE = process.execPath;
 const HANG_CODE = "setInterval(()=>{},1000)";
 
 function spawnHang(): ChildProcess {
-  const child = spawn(NODE, ["-e", HANG_CODE], { stdio: "ignore", windowsHide: true });
+  // detached：POSIX 下自成进程组，kill(-pid) 才能带走整棵树（与真实通道驱动一致）。
+  // Windows 没有进程组，detached 无副作用，杀树仍走 taskkill /T。
+  const child = spawn(NODE, ["-e", HANG_CODE], {
+    stdio: "ignore",
+    windowsHide: true,
+    detached: process.platform !== "win32",
+  });
   return child;
 }
 
@@ -40,6 +46,21 @@ async function waitAlive(pid: number, timeoutMs = 3000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (isProcessAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+}
+
+/**
+ * 等进程真的消失（不是等它出现）。
+ *
+ * POSIX 上 SIGKILL 之后、libuv 收尸之前，进程是僵尸：`kill(pid, 0)` 仍然成功。
+ * 只轮询 `isProcessAlive` 而不让出事件循环，永远看不到它变 false。
+ */
+async function waitDead(pid: number, timeoutMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) return true;
     await new Promise((r) => setTimeout(r, 25));
   }
   return false;
@@ -70,6 +91,8 @@ describe("进程树杀 · 真实子进程", () => {
     const parent = spawn(NODE, ["-e", parentCode], {
       stdio: ["ignore", "pipe", "ignore"],
       windowsHide: true,
+      // 与生产驱动一致：POSIX 下自成进程组，整组杀掉才能带走孙子进程
+      detached: process.platform !== "win32",
     });
     const parentPid = parent.pid!;
 
@@ -842,7 +865,9 @@ describe("PidRegistry", () => {
 
     const killed = reg.killAllSync();
     expect(killed).toBe(1);
-    expect(isProcessAlive(pid)).toBe(false);
+    // killTreeSync 是同步的：POSIX 上 SIGKILL 之后还要等 libuv 收尸（否则 kill(pid,0)
+    // 看到的是僵尸进程）。等它真的消失，语义仍是「已被杀掉」。
+    expect(await waitDead(pid, 500)).toBe(true);
     expect(reg.entries()).toHaveLength(0);
   }, 15000);
 });

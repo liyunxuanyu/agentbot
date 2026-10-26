@@ -39,11 +39,19 @@ function botExists(ctx: ServerContext, botId: string): boolean {
 /**
  * 注入估算。
  *
+ * `sessionId` 给出时按该会话的作用域计算（bot 全局 + 本渠道 + 本会话）；
+ * 不传时只算 bot 全局记忆 —— 与注入路径同一条规则，避免两处口径漂移。
+ *
  * `personaChars` 从装配结果里反推：人格段总是第一个 section，
  * 有记忆段时止于「\n\n## 记忆」，否则到结尾。
  */
-function injectionOf(ctx: ServerContext, botId: string): MemoryInjectionDto {
-  const result = assemble(ctx.db, botId);
+function injectionOf(ctx: ServerContext, botId: string, sessionId?: string | null): MemoryInjectionDto {
+  const channelId = sessionId
+    ? ((ctx.db.prepare("SELECT channel_id FROM sessions WHERE id = ?").get(sessionId) as
+        | { channel_id: string | null }
+        | undefined)?.channel_id ?? null)
+    : null;
+  const result = assemble(ctx.db, botId, { sessionId: sessionId ?? null, channelId });
   const split = result.text.indexOf("\n\n## 记忆");
   const personaChars = result.text.startsWith("## 人格")
     ? split >= 0
@@ -65,6 +73,8 @@ interface CreateBody {
   kind?: unknown;
   injected?: unknown;
   sourceSessionId?: unknown;
+  scope?: unknown;
+  channelId?: unknown;
 }
 
 interface PatchBody {
@@ -77,7 +87,7 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
   // 这样老测试的 buildServer({...}) 不必新增必填字段。
   const summarizer: Summarizer = ctx.summarizer ?? createSummarizer({ db: ctx.db });
 
-  app.get<{ Params: { id: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { sessionId?: string } }>(
     "/api/bots/:id/memory",
     async (req, reply: FastifyReply) => {
       const botId = req.params.id;
@@ -89,7 +99,11 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
         .filter((e) => !memoryRepo.isPendingId(e.id))
         .map(toMemoryDto);
 
-      return { entries, injection: injectionOf(ctx, botId) };
+      // 注入估算按当前会话的作用域算；不传 sessionId 就只算 bot 全局记忆
+      return {
+        entries,
+        injection: injectionOf(ctx, botId, req.query.sessionId ?? null),
+      };
     },
   );
 
@@ -108,20 +122,58 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
       if (body.injected !== undefined && typeof body.injected !== "boolean") {
         return json(reply, 400, { error: "injected_invalid" });
       }
+      if (
+        body.scope !== undefined &&
+        body.scope !== "bot" &&
+        body.scope !== "channel" &&
+        body.scope !== "session"
+      ) {
+        return json(reply, 400, { error: "scope_invalid" });
+      }
+
+      const sourceSessionId =
+        typeof body.sourceSessionId === "string" && body.sourceSessionId.length > 0
+          ? body.sourceSessionId
+          : null;
+      // 缺省作用域：带来源会话 → session（隔离）；否则 bot（全局手写记忆）。
+      // 显式传 scope 时以请求为准（记忆页的作用域选择器）。
+      const scope: memoryRepo.MemoryScope =
+        body.scope === "bot" || body.scope === "channel" || body.scope === "session"
+          ? body.scope
+          : sourceSessionId
+            ? "session"
+            : "bot";
+      const explicitChannel =
+        typeof body.channelId === "string" && body.channelId.length > 0 ? body.channelId : null;
+      const channelId =
+        explicitChannel ??
+        (scope === "channel" && sourceSessionId
+          ? ((ctx.db.prepare("SELECT channel_id FROM sessions WHERE id = ?").get(sourceSessionId) as
+              | { channel_id: string | null }
+              | undefined)?.channel_id ?? null)
+          : null);
+      if (scope === "channel" && channelId === null) {
+        return json(reply, 400, {
+          error: "channel_required",
+          message: "channel 作用域的记忆必须能确定所属渠道",
+        });
+      }
 
       const entry = memoryRepo.create(ctx.db, {
         id: `mem_${randomUUID()}`,
         botId,
         content,
         kind: body.kind === "summary" ? "summary" : "manual",
-        sourceSessionId:
-          typeof body.sourceSessionId === "string" && body.sourceSessionId.length > 0
-            ? body.sourceSessionId
-            : null,
+        sourceSessionId,
+        scope,
+        channelId,
         injected: body.injected !== false,
       });
 
-      return { entry: toMemoryDto(entry), injection: injectionOf(ctx, botId) };
+      return {
+        entry: toMemoryDto(entry),
+        injection: injectionOf(ctx, botId, sourceSessionId),
+      };
     },
   );
 
@@ -159,7 +211,7 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
 
       return {
         entry: updated ? toMemoryDto(updated) : null,
-        injection: injectionOf(ctx, botId),
+        injection: injectionOf(ctx, botId, existing.sourceSessionId),
       };
     },
   );
@@ -179,7 +231,7 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
 
       // 只删记忆行：历史消息是独立表，删除不影响已发生的对话（PRD P0-10 边界）
       memoryRepo.remove(ctx.db, memId);
-      return { ok: true, injection: injectionOf(ctx, botId) };
+      return { ok: true, injection: injectionOf(ctx, botId, existing.sourceSessionId) };
     },
   );
 
@@ -218,7 +270,7 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
         skipped: outcome.skipped ?? false,
         reason: outcome.reason ?? null,
         chars: outcome.chars ?? null,
-        injection: injectionOf(ctx, botId),
+        injection: injectionOf(ctx, botId, sessionId),
       };
     },
   );

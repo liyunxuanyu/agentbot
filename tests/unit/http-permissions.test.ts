@@ -36,6 +36,13 @@ import { listenEphemeral } from "./http-listen.js";
 
 const NODE = process.execPath;
 const HANG = "setInterval(()=>{},1000)";
+/**
+ * 边界外目标：必须是一个在工作区之外、且在两种平台上都能被正确解析的绝对路径。
+ * 之前硬编码 `C:\Windows\...`，在 POSIX 上会被当成工作区内的相对文件名（含冒号与
+ * 反斜杠），于是裁决从 denied 变成 pending —— 测试前提不成立，不是实现的问题。
+ */
+const OUTSIDE_TARGET =
+  process.platform === "win32" ? "C:\\Windows\\System32\\drivers\\etc\\hosts" : "/etc/hosts";
 
 let workDir = "";
 
@@ -510,7 +517,7 @@ describe("HTTP · 权限卡片端到端", () => {
     ctx.driver.nextPermission = {
       requestId: "perm_http_out",
       action: "write",
-      target: "C:\\Windows\\System32\\drivers\\etc\\hosts",
+      target: OUTSIDE_TARGET,
     };
 
     await sendMessage(ctx, "写到系统目录");

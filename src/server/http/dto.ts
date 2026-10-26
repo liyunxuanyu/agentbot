@@ -98,7 +98,13 @@ export interface BotDto {
   runtime: RuntimeDto | null;
   /** 内置引擎绑定的模型供应商 id；其它运行时为 null。 */
   providerId: string | null;
+  /** 管理员 Bot：多一个 create_bot 工具（不自动获得 full 权限）。 */
+  role: "member" | "admin";
+  /** Bot 默认权限模式；会话显式设置优先于它。 */
+  permissionMode: "confirm" | "auto" | "plan" | "full";
   executionLocation: "local" | "worktree";
+  /** 默认工作区（`bots.repo_path`）；未设置时前端显示「未设置默认工作区」。 */
+  defaultWorkspace: string | null;
   effectivePath: string | null;
   worktreeState: "ready" | "missing" | "failed" | null;
   status: "active" | "archived";
@@ -116,6 +122,8 @@ interface BotRow {
   avatar: string | null;
   default_runtime_id: string | null;
   provider_id: string | null;
+  role: string;
+  permission_mode: string;
   execution_location: string;
   repo_path: string | null;
   worktree_path: string | null;
@@ -132,6 +140,10 @@ interface SessionRow {
   runtime_session_id: string | null;
   resume_state: string;
   status: string;
+  workspace_path: string | null;
+  provider_id: string | null;
+  model: string | null;
+  permission_mode: string;
   started_at: number;
   ended_at: number | null;
 }
@@ -159,7 +171,8 @@ function deriveBotState(sessionStatus: string | null, pendingPermissions: number
 export function listBots(db: DB, runtimes: Map<string, RuntimeDto>): BotDto[] {
   const bots = db
     .prepare(
-      `SELECT id, name, persona, avatar, default_runtime_id, provider_id, execution_location,
+      `SELECT id, name, persona, avatar, default_runtime_id, provider_id, role,
+              permission_mode, execution_location,
               repo_path, worktree_path, worktree_state, status, created_at
          FROM bots
         WHERE status = 'active'
@@ -216,7 +229,13 @@ export function listBots(db: DB, runtimes: Map<string, RuntimeDto>): BotDto[] {
       colorIndex: (index % 8) + 1,
       runtime,
       providerId: row.provider_id ?? null,
+      role: row.role === "admin" ? "admin" : "member",
+      permissionMode:
+        row.permission_mode === "auto" || row.permission_mode === "plan" || row.permission_mode === "full"
+          ? row.permission_mode
+          : "confirm",
       executionLocation: row.execution_location === "worktree" ? "worktree" : "local",
+      defaultWorkspace: row.repo_path ?? null,
       effectivePath: effectivePath ?? null,
       worktreeState:
         row.worktree_state === "ready" || row.worktree_state === "missing" || row.worktree_state === "failed"
@@ -238,6 +257,8 @@ export interface ChannelDto {
   name: string;
   participantBotIds: string[];
   hostBotId: string | null;
+  /** 群聊/会话工作区；null 表示走回退链（Bot 默认工作区 → 服务进程 cwd）。 */
+  workspacePath: string | null;
   lastMessagePreview: string | null;
   lastMessageAt: number | null;
   unread: number;
@@ -250,6 +271,7 @@ interface ChannelRow {
   name: string;
   participant_bot_ids: string;
   host_bot_id: string | null;
+  workspace_path: string | null;
   created_at: number;
 }
 
@@ -276,6 +298,7 @@ function toChannelDto(db: DB, row: ChannelRow): ChannelDto {
     name: row.name,
     participantBotIds: parseIds(row.participant_bot_ids),
     hostBotId: row.host_bot_id,
+    workspacePath: row.workspace_path ?? null,
     lastMessagePreview: last ? last.content.slice(0, 80) : null,
     lastMessageAt: last?.created_at ?? null,
     // 未读数没有独立表（M4 不做已读状态），如实为 0 而不是编一个数
@@ -305,6 +328,12 @@ export interface SessionDto {
   runtimeId: string | null;
   resumeState: "fresh" | "resumed" | "rebuilt";
   status: string;
+  /** 会话级工作区覆盖；null 表示走回退链。 */
+  workspacePath: string | null;
+  /** 会话级模型覆盖；null 表示用 Bot 的默认供应商 / 供应商默认模型。 */
+  providerId: string | null;
+  model: string | null;
+  permissionMode: "confirm" | "auto" | "plan" | "full";
   startedAt: number;
   endedAt: number | null;
   messageCount: number;
@@ -342,6 +371,13 @@ export function listSessionsByChannel(db: DB, channelId: string): SessionDto[] {
       resumeState:
         row.resume_state === "resumed" ? "resumed" : row.resume_state === "rebuilt" ? "rebuilt" : "fresh",
       status: row.status,
+      workspacePath: row.workspace_path ?? null,
+      providerId: row.provider_id ?? null,
+      model: row.model ?? null,
+      permissionMode:
+        row.permission_mode === "auto" || row.permission_mode === "plan" || row.permission_mode === "full"
+          ? row.permission_mode
+          : "confirm",
       startedAt: row.started_at,
       endedAt: row.ended_at,
       messageCount: agg?.n ?? 0,
@@ -552,6 +588,9 @@ export interface MemoryEntryDto {
   content: string;
   /** 来源会话；手写条目可为 null。 */
   sourceSessionId: string | null;
+  /** 作用域：bot = 该 Bot 全局；session = 仅来源会话；channel = 群聊内共享。 */
+  scope: "bot" | "channel" | "session";
+  channelId: string | null;
   source: "manual" | "auto";
   kind: "manual" | "summary";
   /** 是否参与下一轮注入。 */
@@ -566,6 +605,8 @@ interface MemoryRow {
   botId: string;
   content: string;
   sourceSessionId: string | null;
+  scope: string;
+  channelId: string | null;
   kind: string;
   injected: boolean;
   version: number;
@@ -580,6 +621,9 @@ export function toMemoryDto(row: MemoryRow): MemoryEntryDto {
     botId: row.botId,
     content: row.content,
     sourceSessionId: row.sourceSessionId,
+    scope:
+      row.scope === "session" ? "session" : row.scope === "channel" ? "channel" : "bot",
+    channelId: row.channelId,
     source: kind === "summary" ? "auto" : "manual",
     kind,
     injected: row.injected,
@@ -626,6 +670,15 @@ export interface UsageRowDto {
   requests: number;
   inputTokens: number | null;
   outputTokens: number | null;
+  /** 缓存命中（读）token；未上报为 null。 */
+  cachedInputTokens: number | null;
+  /** 缓存写入 token；OpenAI 无此口径，按 0 记录。 */
+  cacheWriteTokens: number | null;
+  /**
+   * 缓存命中率（0–100，1 位小数）：缓存读 / (输入 + 缓存读)。
+   * 未上报缓存口径时为 null（前端显示「未上报」而不是 0）。
+   */
+  cacheHitRate: number | null;
   unreportedRequests: number;
   /** 占总 token 的百分比（0–100，1 位小数）。 */
   share: number;
@@ -635,6 +688,10 @@ export interface UsageTotalsDto {
   requests: number;
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  /** 合计命中率；没有任何缓存上报时为 null。 */
+  cacheHitRate: number | null;
   unreportedRequests: number;
 }
 

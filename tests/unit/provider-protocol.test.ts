@@ -112,7 +112,14 @@ describe("OpenAI Chat Completions 客户端", () => {
         });
         expect(result.text).toBe("ok");
         expect(result.toolCalls[0]).toMatchObject({ id: "call_2", name: "grep", args: { pattern: "x" } });
-        expect(result.usage).toEqual({ inputTokens: 3, outputTokens: 2, reported: true });
+        expect(result.usage).toEqual({
+          inputTokens: 3,
+          outputTokens: 2,
+          reported: true,
+          // OpenAI 没有缓存上报时按 0 记（R8：0 就是没命中，不是「未上报」）
+          cachedInputTokens: 0,
+          model: "test-model",
+        });
         expect(result.finish).toBe("tool_calls");
       },
     );

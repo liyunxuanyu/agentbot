@@ -1,4 +1,10 @@
-import type { CanonicalEvent, EventType, MetaEventKind } from "../../shared/events.js";
+import type {
+  CanonicalEvent,
+  EventType,
+  MetaEventKind,
+  PermissionAction,
+  PermissionMode,
+} from "../../shared/events.js";
 
 /** 三态：探测失败不等于不支持。UI 用实线/实线灰/虚线三态区分。 */
 export type Tri = boolean | "unknown";
@@ -90,12 +96,20 @@ export interface ProbeResult {
 
 export interface SpawnContext {
   cwd: string;
+  /** 本次会话解析出的工作区（内置引擎的 cwd 就是它；其它通道仅用于展示）。 */
+  workspacePath?: string;
   /** 每次 spawn 唯一，用于日志与进程追踪。 */
   sessionId: string;
   /** 会话归属的 Bot；内置引擎据此选供应商（其它通道不需要）。 */
   botId?: string;
   /** Bot 绑定的模型供应商 id；null/缺省时用默认供应商。 */
   providerId?: string | null;
+  /** 会话级模型覆盖；null/缺省时用供应商默认模型。 */
+  model?: string | null;
+  /** 会话级权限模式（四档）；缺省 confirm。 */
+  permissionMode?: PermissionMode;
+  /** Bot 角色：管理员多一个 create_bot 工具。 */
+  botRole?: "member" | "admin";
   env?: Record<string, string>;
 }
 
@@ -108,7 +122,7 @@ export interface SessionHandle {
 export interface RuntimePermissionRequest {
   requestId: string;
   /** 通道层尽力归一，核心会再做一次绝对路径解析。 */
-  action: "write" | "read" | "exec" | "network";
+  action: PermissionAction;
   target: string;
   detail?: unknown;
 }
@@ -123,6 +137,34 @@ export type PermissionDecision =
   | { kind: "approve"; scope: "once" | "session" | "bot" }
   | { kind: "deny" };
 
+/** 手动压缩结果（内置引擎实现；其它通道不提供）。 */
+export interface CompactionResult {
+  ok: boolean;
+  /** 被压缩掉的原始消息条数。 */
+  removedMessages: number;
+  /** 摘要字符数。 */
+  summaryChars: number;
+  beforeTokens: number;
+  afterTokens: number;
+  /** auto | manual */
+  trigger: "auto" | "manual";
+  /** 未压缩的原因（ok=false 时）。 */
+  reason?: string;
+}
+
+/**
+ * 每次 prompt 下发的会话级控制项。
+ *
+ * 为什么每轮都传而不是固化在 newSession：模型与权限模式都可以在会话进行中切换，
+ * 只影响**后续轮次**。驱动每轮重新读取，不做缓存。
+ */
+export interface PromptControls {
+  providerId?: string | null;
+  model?: string | null;
+  permissionMode?: PermissionMode;
+  workspacePath?: string | null;
+}
+
 /**
  * 三个通道各实现一次。核心只调这些方法，永远不知道底下说的是哪种协议。
  */
@@ -134,9 +176,14 @@ export interface ChannelDriver {
   initialize(h: SessionHandle): Promise<ProbeResult>;
   newSession(h: SessionHandle, opts: { cwd: string; systemPrompt?: string }): Promise<{ runtimeSessionId: string }>;
   resumeSession(h: SessionHandle, runtimeSessionId: string): Promise<{ ok: boolean; reason?: string }>;
-  prompt(h: SessionHandle, input: { text: string }): Promise<void>;
+  prompt(h: SessionHandle, input: { text: string } & PromptControls): Promise<void>;
   cancel(h: SessionHandle): Promise<void>;
   respondPermission(h: SessionHandle, requestId: string, decision: PermissionDecision): Promise<void>;
+  /**
+   * 压缩上下文（内置引擎）。其它通道不实现 —— 返回 undefined 表示不支持。
+   * `force=false` 时只在超过阈值时压缩；手动端点传 true。
+   */
+  compact?(h: SessionHandle, opts: { force?: boolean }): Promise<CompactionResult | null>;
 
   onEvent(h: SessionHandle, cb: (e: CanonicalEvent) => void): void;
   onPermission(h: SessionHandle, cb: (req: RuntimePermissionRequest) => void): void;

@@ -19,6 +19,9 @@ export interface LoopUsageSample {
   inputTokens: number;
   outputTokens: number;
   reported: boolean;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  model?: string;
 }
 
 export interface AgentLoopCallbacks {
@@ -128,6 +131,13 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
               inputTokens: delta.inputTokens,
               outputTokens: delta.outputTokens,
               reported: delta.reported,
+              ...(delta.cachedInputTokens === undefined
+                ? {}
+                : { cachedInputTokens: delta.cachedInputTokens }),
+              ...(delta.cacheWriteTokens === undefined
+                ? {}
+                : { cacheWriteTokens: delta.cacheWriteTokens }),
+              ...(delta.model === undefined ? {} : { model: delta.model }),
             });
             break;
           case "finish":

@@ -597,7 +597,12 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
       } else {
         // 首轮也要注入人格 + 记忆（P0-10「每轮注入」）：没有历史可重建，
         // 就只带「人格 + 记忆」，不带引导语与消息段。
-        const bootstrap = buildBootstrapContext({ db: deps.db, botId: row.bot_id });
+        // 传 sessionId：session/channel 作用域的记忆靠它命中（R3）。
+        const bootstrap = buildBootstrapContext({
+          db: deps.db,
+          botId: row.bot_id,
+          sessionId,
+        });
         if (bootstrap.systemPrompt.length > 0) systemPrompt = bootstrap.systemPrompt;
         omitted = 0;
       }

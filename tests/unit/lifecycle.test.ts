@@ -31,6 +31,9 @@ import type { CanonicalEvent } from "../../src/shared/events.js";
 
 const NODE = process.execPath;
 const HANG = "setInterval(()=>{},1000)";
+/** 边界外目标：Windows 用系统盘路径，POSIX 用 /etc/hosts（见 http-permissions 同名字段说明）。 */
+const OUTSIDE_TARGET =
+  process.platform === "win32" ? "C:\\Windows\\System32\\drivers\\etc\\hosts" : "/etc/hosts";
 
 let workDir = "";
 
@@ -411,7 +414,7 @@ describe("权限接线：驱动上报 → 裁决 → 卡片 DTO", () => {
       botId: f.botId,
       turnId: info.turnId,
       source: "interactive",
-      request: { requestId: "perm_boundary", action: "write", target: "C:\\Windows\\System32\\drivers\\etc\\hosts" },
+      request: { requestId: "perm_boundary", action: "write", target: OUTSIDE_TARGET },
     });
 
     const row = permissions.get("perm_boundary")!;

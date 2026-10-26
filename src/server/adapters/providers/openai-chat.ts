@@ -51,7 +51,13 @@ interface OpenAiChoice {
 
 interface OpenAiChunk {
   choices?: OpenAiChoice[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    /** OpenAI 的缓存命中口径。 */
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
+  model?: string;
   error?: { message?: string } | string;
 }
 
@@ -119,12 +125,27 @@ function bodyOf(cfg: ProviderConfig, req: ProviderRequest, stream: boolean): str
   });
 }
 
-function usageOf(chunk: OpenAiChunk): { inputTokens: number; outputTokens: number; reported: boolean } | null {
+function usageOf(
+  chunk: OpenAiChunk,
+  fallbackModel: string,
+): {
+  inputTokens: number;
+  outputTokens: number;
+  reported: boolean;
+  cachedInputTokens: number;
+  model: string;
+} | null {
   if (!chunk.usage) return null;
   return {
     inputTokens: typeof chunk.usage.prompt_tokens === "number" ? chunk.usage.prompt_tokens : 0,
     outputTokens: typeof chunk.usage.completion_tokens === "number" ? chunk.usage.completion_tokens : 0,
     reported: true,
+    // 缺失按 0 记：OpenAI 口径没有「未上报缓存」这种状态，0 就是没命中
+    cachedInputTokens:
+      typeof chunk.usage.prompt_tokens_details?.cached_tokens === "number"
+        ? chunk.usage.prompt_tokens_details.cached_tokens
+        : 0,
+    model: typeof chunk.model === "string" && chunk.model.length > 0 ? chunk.model : fallbackModel,
   };
 }
 
@@ -168,7 +189,7 @@ export function createOpenAiChatClient(cfg: ProviderConfig): ProviderClient {
     const toolCalls = (message.tool_calls ?? [])
       .filter((c) => typeof c.function?.name === "string" && c.function.name.length > 0)
       .map((c) => toolCallOf(c.id, c.function?.name ?? "", c.function?.arguments ?? ""));
-    const usage = usageOf(json);
+    const usage = usageOf(json, cfg.model);
     return {
       text: typeof message.content === "string" ? message.content : "",
       reasoning:
@@ -220,7 +241,7 @@ export function createOpenAiChatClient(cfg: ProviderConfig): ProviderClient {
         throw providerHttpError(0, message);
       }
 
-      const usage = usageOf(chunk);
+      const usage = usageOf(chunk, cfg.model);
       if (usage) yield { kind: "usage", ...usage };
 
       const choice = chunk.choices?.[0];

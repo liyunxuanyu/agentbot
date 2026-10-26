@@ -28,8 +28,14 @@ export interface UsageSample {
   inputTokens: number;
   outputTokens: number;
   reported: boolean;
-  /** true 表示这两个数字是「本 Session 累计值」而不是「本轮增量」。 */
+  /** true 表示这些数字是「本 Session 累计值」而不是「本轮增量」。 */
   cumulative?: boolean;
+  /** 缓存命中（读）token。 */
+  cachedInputTokens?: number;
+  /** 缓存写入 token。 */
+  cacheWriteTokens?: number;
+  /** 本轮实际使用的模型。 */
+  model?: string;
 }
 
 export interface UsageRecorderDeps {
@@ -46,6 +52,8 @@ export interface RecordUsageInput {
   samples: UsageSample[];
   /** 本轮结局。失败/中断也落记录（运行时可能已消耗 token），只用于日志口径。 */
   outcome?: "done" | "interrupted" | "failed";
+  /** 会话级模型覆盖（样本里没带 model 时兜底）。 */
+  model?: string | null;
 }
 
 export interface RecordUsageResult {
@@ -53,6 +61,8 @@ export interface RecordUsageResult {
   reported: boolean;
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
   /** 数据源不一致等告警（同时已写日志）。 */
   warnings: string[];
 }
@@ -69,6 +79,16 @@ export const CUMULATIVE_MISMATCH_RATIO = 0.1;
 interface Baseline {
   input: number;
   output: number;
+  cachedInput: number;
+  cacheWrite: number;
+}
+
+interface ResolvedTotals {
+  input: number;
+  output: number;
+  cachedInput: number;
+  cacheWrite: number;
+  model: string | null;
 }
 
 function finiteOrZero(v: number): number {
@@ -88,43 +108,76 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
     sessionId: string | null,
     samples: UsageSample[],
     warnings: string[],
-  ): { input: number; output: number } | null {
+  ): ResolvedTotals | null {
     const reported = samples.filter((s) => s.reported === true);
     if (reported.length === 0) return null;
 
     const incremental = reported.filter((s) => s.cumulative !== true);
     const cumulative = reported.filter((s) => s.cumulative === true);
+    const modelOf = (list: UsageSample[]): string | null => {
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        const m = list[i]?.model;
+        if (typeof m === "string" && m.length > 0) return m;
+      }
+      return null;
+    };
 
     let incrementalInput = 0;
     let incrementalOutput = 0;
+    let incrementalCached = 0;
+    let incrementalCacheWrite = 0;
     for (const s of incremental) {
       incrementalInput += finiteOrZero(s.inputTokens);
       incrementalOutput += finiteOrZero(s.outputTokens);
+      incrementalCached += finiteOrZero(s.cachedInputTokens ?? 0);
+      incrementalCacheWrite += finiteOrZero(s.cacheWriteTokens ?? 0);
     }
 
     // 只有累计值：用「本次累计 − 上次累计」得到本轮增量
-    let cumulativeDelta: { input: number; output: number } | null = null;
+    let cumulativeDelta: ResolvedTotals | null = null;
     if (cumulative.length > 0) {
       const last = cumulative[cumulative.length - 1];
       if (last) {
         const cur: Baseline = {
           input: finiteOrZero(last.inputTokens),
           output: finiteOrZero(last.outputTokens),
+          cachedInput: finiteOrZero(last.cachedInputTokens ?? 0),
+          cacheWrite: finiteOrZero(last.cacheWriteTokens ?? 0),
         };
         const base = sessionId ? baselines.get(sessionId) : undefined;
         if (!base) {
-          cumulativeDelta = { input: cur.input, output: cur.output };
-        } else if (cur.input < base.input || cur.output < base.output) {
+          cumulativeDelta = {
+            input: cur.input,
+            output: cur.output,
+            cachedInput: cur.cachedInput,
+            cacheWrite: cur.cacheWrite,
+            model: modelOf(cumulative),
+          };
+        } else if (
+          cur.input < base.input ||
+          cur.output < base.output ||
+          cur.cachedInput < base.cachedInput ||
+          cur.cacheWrite < base.cacheWrite
+        ) {
           // 累计值回退：进程重启 / 会话重建，累计从 0 重新开始。
           // 保守取 0，不重复计数（宁可少算也不把同一批 token 记两遍）。
           warnings.push(
             `累计值回退（${base.input}/${base.output} → ${cur.input}/${cur.output}），按新基线处理`,
           );
-          cumulativeDelta = { input: 0, output: 0 };
+          cumulativeDelta = {
+            input: 0,
+            output: 0,
+            cachedInput: 0,
+            cacheWrite: 0,
+            model: modelOf(cumulative),
+          };
         } else {
           cumulativeDelta = {
             input: cur.input - base.input,
             output: cur.output - base.output,
+            cachedInput: cur.cachedInput - base.cachedInput,
+            cacheWrite: cur.cacheWrite - base.cacheWrite,
+            model: modelOf(cumulative),
           };
         }
         if (sessionId) baselines.set(sessionId, cur);
@@ -143,10 +196,18 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
           );
         }
       }
-      return { input: incrementalInput, output: incrementalOutput };
+      return {
+        input: incrementalInput,
+        output: incrementalOutput,
+        cachedInput: incrementalCached,
+        cacheWrite: incrementalCacheWrite,
+        model: modelOf(incremental),
+      };
     }
 
-    return cumulativeDelta ?? { input: 0, output: 0 };
+    return (
+      cumulativeDelta ?? { input: 0, output: 0, cachedInput: 0, cacheWrite: 0, model: null }
+    );
   }
 
   return {
@@ -159,13 +220,18 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
       const reported = totals !== null;
       const inputTokens = totals?.input ?? 0;
       const outputTokens = totals?.output ?? 0;
+      const cachedInputTokens = totals?.cachedInput ?? 0;
+      const cacheWriteTokens = totals?.cacheWrite ?? 0;
+      // 模型：样本里的实际模型优先，会话级覆盖兜底（跨协议切换时样本可能没带）
+      const model = totals?.model ?? input.model ?? null;
       const id = `use_${randomUUID()}`;
 
       deps.db
         .prepare(
           `INSERT INTO usage_records
-             (id, bot_id, runtime_id, session_id, mode, input_tokens, output_tokens, reported, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (id, bot_id, runtime_id, session_id, mode, input_tokens, output_tokens,
+              cached_input_tokens, cache_write_tokens, model, reported, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -175,11 +241,22 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
           input.mode === "headless" ? "headless" : "interactive",
           inputTokens,
           outputTokens,
+          cachedInputTokens,
+          cacheWriteTokens,
+          model,
           reported ? 1 : 0,
           Date.now(),
         );
 
-      return { id, reported, inputTokens, outputTokens, warnings };
+      return {
+        id,
+        reported,
+        inputTokens,
+        outputTokens,
+        cachedInputTokens,
+        cacheWriteTokens,
+        warnings,
+      };
     },
 
     forgetSession(sessionId) {

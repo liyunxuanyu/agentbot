@@ -285,6 +285,12 @@ export function checkBoundary(
       };
     }
 
+    case "admin": {
+      // 管理动作（create_bot）没有文件目标，Bot 级边界不适用：
+      // 是否放行由四档权限模式裁决（plan 下工具被裁掉；confirm/auto 弹卡；full 自动批）。
+      return { verdict: "allowed", target: rawTarget, reason: "管理动作由权限模式裁决" };
+    }
+
     default: {
       const never: never = action;
       return { verdict: "denied", target: rawTarget, reason: `未知动作：${String(never)}` };
