@@ -717,6 +717,8 @@ export interface UsageRowDto {
   cachedInputTokens: number | null;
   /** 缓存写入 token；该行没有任何缓存上报时为 null。 */
   cacheWriteTokens: number | null;
+  /** 命中率分母：只算缓存字段已上报的请求的输入 token（R8）；未上报为 null。 */
+  cacheInputTokens: number | null;
   /** 命中率 0–100（1 位小数）；未上报为 null。 */
   cacheHitRate: number | null;
   unreportedRequests: number;
@@ -734,6 +736,8 @@ export interface UsageResponseDto {
     outputTokens: number;
     cachedInputTokens: number;
     cacheWriteTokens: number;
+    /** 合计命中率的分母：只算缓存字段已上报的请求（R8）。 */
+    cacheInputTokens: number;
     /** 合计命中率；没有任何缓存上报时为 null。 */
     cacheHitRate: number | null;
     unreportedRequests: number;

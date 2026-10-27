@@ -134,7 +134,7 @@ function cacheRateText(rate: number | null): string {
 /** 悬停给出口径：命中 token / 输入 token。 */
 function cacheTitle(row: UsageRowDto): string {
   if (row.cacheHitRate === null) return "该行没有缓存上报";
-  return `命中 ${num(row.cachedInputTokens)} / 输入 ${num(row.inputTokens)} token`;
+  return `命中 ${num(row.cachedInputTokens)} / 输入 ${num(row.cacheInputTokens)} token（只算缓存已上报的请求）`;
 }
 
 const totals = computed(() => data.value?.totals ?? null);
@@ -271,7 +271,7 @@ onMounted(async () => {
             <span class="cell-num" data-label="缓存命中率" :title="cacheTitle(row)">
               {{ cacheRateText(row.cacheHitRate) }}
               <span v-if="row.cacheHitRate !== null" class="cell-sub" style="display: block">
-                {{ num(row.cachedInputTokens) }} / {{ num(row.inputTokens) }}
+                {{ num(row.cachedInputTokens) }} / {{ num(row.cacheInputTokens) }}
               </span>
             </span>
           </span>
@@ -295,7 +295,7 @@ onMounted(async () => {
             <span class="cell-num" data-label="缓存命中率" style="font-weight: var(--weight-bold); color: var(--color-text)">
               {{ cacheRateText(totals.cacheHitRate) }}
               <span v-if="totals.cacheHitRate !== null" class="cell-sub" style="display: block">
-                {{ num(totals.cachedInputTokens) }} / {{ num(totals.inputTokens) }}
+                {{ num(totals.cachedInputTokens) }} / {{ num(totals.cacheInputTokens) }}
               </span>
             </span>
           </span>

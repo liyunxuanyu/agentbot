@@ -63,6 +63,8 @@ export interface RecordUsageResult {
   outputTokens: number;
   cachedInputTokens: number;
   cacheWriteTokens: number;
+  /** 本轮供应商是否真的上报了缓存字段（R8）；false 时缓存命中率未知。 */
+  cacheReported: boolean;
   /** 数据源不一致等告警（同时已写日志）。 */
   warnings: string[];
 }
@@ -89,6 +91,19 @@ interface ResolvedTotals {
   cachedInput: number;
   cacheWrite: number;
   model: string | null;
+  /**
+   * 本轮是否有样本真的带了缓存字段（R8）。
+   *
+   * 与 `reported` 不同：供应商回了 prompt/completion 但没给缓存字段时，
+   * 用量是有数的、缓存命中率是未知的。落库时写进 `cache_reported`，
+   * 聚合层据此显示 `—` 而不是 0%。
+   */
+  cacheReported: boolean;
+}
+
+/** 样本里是否出现过缓存字段（0 也算「出现过」—— 那是真实的 0 命中）。 */
+function hasCacheFields(sample: UsageSample): boolean {
+  return sample.cachedInputTokens !== undefined || sample.cacheWriteTokens !== undefined;
 }
 
 function finiteOrZero(v: number): number {
@@ -152,6 +167,7 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
             cachedInput: cur.cachedInput,
             cacheWrite: cur.cacheWrite,
             model: modelOf(cumulative),
+            cacheReported: cumulative.some(hasCacheFields),
           };
         } else if (
           cur.input < base.input ||
@@ -170,6 +186,7 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
             cachedInput: 0,
             cacheWrite: 0,
             model: modelOf(cumulative),
+            cacheReported: cumulative.some(hasCacheFields),
           };
         } else {
           cumulativeDelta = {
@@ -178,6 +195,7 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
             cachedInput: cur.cachedInput - base.cachedInput,
             cacheWrite: cur.cacheWrite - base.cacheWrite,
             model: modelOf(cumulative),
+            cacheReported: cumulative.some(hasCacheFields),
           };
         }
         if (sessionId) baselines.set(sessionId, cur);
@@ -202,11 +220,19 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
         cachedInput: incrementalCached,
         cacheWrite: incrementalCacheWrite,
         model: modelOf(incremental),
+        cacheReported: incremental.some(hasCacheFields),
       };
     }
 
     return (
-      cumulativeDelta ?? { input: 0, output: 0, cachedInput: 0, cacheWrite: 0, model: null }
+      cumulativeDelta ?? {
+        input: 0,
+        output: 0,
+        cachedInput: 0,
+        cacheWrite: 0,
+        model: null,
+        cacheReported: false,
+      }
     );
   }
 
@@ -222,6 +248,9 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
       const outputTokens = totals?.output ?? 0;
       const cachedInputTokens = totals?.cachedInput ?? 0;
       const cacheWriteTokens = totals?.cacheWrite ?? 0;
+      // R8：缓存字段是否真的出现过。未上报时 token 记 0 但 cache_reported=0，
+      // 聚合层据此把命中率显示成 —，而不是拿这个 0 当成「0% 命中」。
+      const cacheReported = totals?.cacheReported === true;
       // 模型：样本里的实际模型优先，会话级覆盖兜底（跨协议切换时样本可能没带）
       const model = totals?.model ?? input.model ?? null;
       const id = `use_${randomUUID()}`;
@@ -230,8 +259,8 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
         .prepare(
           `INSERT INTO usage_records
              (id, bot_id, runtime_id, session_id, mode, input_tokens, output_tokens,
-              cached_input_tokens, cache_write_tokens, model, reported, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              cached_input_tokens, cache_write_tokens, cache_reported, model, reported, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -243,6 +272,7 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
           outputTokens,
           cachedInputTokens,
           cacheWriteTokens,
+          cacheReported ? 1 : 0,
           model,
           reported ? 1 : 0,
           Date.now(),
@@ -255,6 +285,7 @@ export function createUsageRecorder(deps: UsageRecorderDeps): UsageRecorder {
         outputTokens,
         cachedInputTokens,
         cacheWriteTokens,
+        cacheReported,
         warnings,
       };
     },

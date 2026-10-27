@@ -48,6 +48,14 @@ export interface UsageAggregateRow {
   /** 缓存写入 token；该行没有任何缓存上报时为 null。 */
   cacheWriteTokens: number | null;
   /**
+   * 命中率分母：**缓存字段已上报**那部分请求的输入 token。
+   *
+   * 与 `inputTokens` 的差别只在混合行：同一行里既有上报缓存的请求，
+   * 也有没上报的请求时，拿总输入当分母会让副行的「命中 / 输入」与命中率对不上。
+   * 该行没有任何缓存上报时为 null。
+   */
+  cacheInputTokens: number | null;
+  /**
    * 缓存命中率（0–100，1 位小数）= 缓存读 / (输入 + 缓存读)。
    *
    * 两端口径已归一：OpenAI 的 `prompt_tokens` 含缓存命中，provider 层已把
@@ -67,6 +75,8 @@ export interface UsageTotals {
   outputTokens: number;
   cachedInputTokens: number;
   cacheWriteTokens: number;
+  /** 合计命中率的分母：只有缓存字段已上报的请求才计入（R8）。 */
+  cacheInputTokens: number;
   /** 合计命中率；没有任何缓存上报时为 null。 */
   cacheHitRate: number | null;
   unreportedRequests: number;
@@ -101,7 +111,14 @@ interface RawAggRow {
   output_tokens: number;
   cached_input_tokens: number;
   cache_write_tokens: number;
-  /** 带缓存口径的上报请求数（迁移前的历史记录 model 为 NULL，按未上报处理）。 */
+  /** 缓存字段真的上报了的请求的输入 token（命中率分母，R8）。 */
+  cache_input_tokens: number;
+  /**
+   * 带缓存口径的上报请求数（R8）。
+   *
+   * 用 `cache_reported` 而不是 `model IS NOT NULL` 推断：供应商回了 token
+   * 但没给缓存字段时，这行是「有用量、无命中率」，必须显示 — 而不是 0%。
+   */
   cache_reported_requests: number;
   reported_requests: number;
   bot_name: string | null;
@@ -150,6 +167,7 @@ function emptyTotals(): UsageTotals {
     outputTokens: 0,
     cachedInputTokens: 0,
     cacheWriteTokens: 0,
+    cacheInputTokens: 0,
     cacheHitRate: null,
     unreportedRequests: 0,
   };
@@ -199,7 +217,10 @@ export function aggregate(
               SUM(CASE WHEN u.reported = 1 THEN u.output_tokens ELSE 0 END) AS output_tokens,
               SUM(CASE WHEN u.reported = 1 THEN u.cached_input_tokens ELSE 0 END) AS cached_input_tokens,
               SUM(CASE WHEN u.reported = 1 THEN u.cache_write_tokens ELSE 0 END) AS cache_write_tokens,
-              SUM(CASE WHEN u.reported = 1 AND u.model IS NOT NULL THEN 1 ELSE 0 END) AS cache_reported_requests,
+              -- 命中率分母只算「缓存字段真的上报了」的请求（R8）：
+              -- 未上报缓存的行 input 有数但缓存未知，混进分母会稀释成伪 0。
+              SUM(CASE WHEN u.reported = 1 AND u.cache_reported = 1 THEN u.input_tokens ELSE 0 END) AS cache_input_tokens,
+              SUM(CASE WHEN u.reported = 1 AND u.cache_reported = 1 THEN 1 ELSE 0 END) AS cache_reported_requests,
               SUM(CASE WHEN u.reported = 1 THEN 1 ELSE 0 END) AS reported_requests,
               b.name AS bot_name
          FROM usage_records u
@@ -226,6 +247,8 @@ export function aggregate(
 
   const totals = emptyTotals();
   let totalsCacheReported = false;
+  // 合计命中率的分母：逐行累加「缓存已上报」部分的输入（R8）。
+  let totalsCacheInput = 0;
   const out: UsageAggregateRow[] = rows.map((row) => {
     const reported = row.reported_requests > 0;
     const input = reported ? (row.input_tokens ?? 0) : 0;
@@ -233,6 +256,7 @@ export function aggregate(
     const cacheReported = row.cache_reported_requests > 0;
     const cachedInput = cacheReported ? (row.cached_input_tokens ?? 0) : 0;
     const cacheWrite = cacheReported ? (row.cache_write_tokens ?? 0) : 0;
+    const cacheInput = cacheReported ? (row.cache_input_tokens ?? 0) : 0;
     const unreported = row.requests - row.reported_requests;
     const info = row.runtime_id ? runtimes.get(row.runtime_id) : undefined;
     const tokens = input + output;
@@ -243,7 +267,10 @@ export function aggregate(
     totals.cachedInputTokens += cachedInput;
     totals.cacheWriteTokens += cacheWrite;
     totals.unreportedRequests += unreported;
-    if (cacheReported) totalsCacheReported = true;
+    if (cacheReported) {
+      totalsCacheReported = true;
+      totalsCacheInput += cacheInput;
+    }
 
     return {
       botId: row.bot_id,
@@ -260,15 +287,17 @@ export function aggregate(
       outputTokens: reported ? output : null,
       cachedInputTokens: cacheReported ? cachedInput : null,
       cacheWriteTokens: cacheReported ? cacheWrite : null,
-      cacheHitRate: hitRateOf(cachedInput, input, cacheReported),
+      cacheInputTokens: cacheReported ? cacheInput : null,
+      cacheHitRate: hitRateOf(cachedInput, cacheInput, cacheReported),
       unreportedRequests: unreported,
       share: totalTokens > 0 ? Math.round((tokens / totalTokens) * 1000) / 10 : 0,
     };
   });
 
+  totals.cacheInputTokens = totalsCacheInput;
   totals.cacheHitRate = hitRateOf(
     totals.cachedInputTokens,
-    totals.inputTokens,
+    totalsCacheInput,
     totalsCacheReported,
   );
 

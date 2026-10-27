@@ -132,24 +132,23 @@ function usageOf(
   inputTokens: number;
   outputTokens: number;
   reported: boolean;
-  cachedInputTokens: number;
+  cachedInputTokens?: number;
   model: string;
 } | null {
   if (!chunk.usage) return null;
   const promptTokens = typeof chunk.usage.prompt_tokens === "number" ? chunk.usage.prompt_tokens : 0;
-  // 缺失按 0 记：OpenAI 口径没有「未上报缓存」这种状态，0 就是没命中
-  const cached =
-    typeof chunk.usage.prompt_tokens_details?.cached_tokens === "number"
-      ? chunk.usage.prompt_tokens_details.cached_tokens
-      : 0;
+  // R8：`prompt_tokens_details` 整块缺失 = 网关没上报缓存，留 undefined（用量页显示 —）；
+  // 明确给了 `cached_tokens: 0` = 真的 0 命中，那是 0 不是「未上报」。
+  const rawCached = chunk.usage.prompt_tokens_details?.cached_tokens;
+  const cached = typeof rawCached === "number" ? rawCached : undefined;
   return {
     // OpenAI 的 prompt_tokens 含缓存命中；Anthropic 的 input_tokens 不含。
     // 两端口径归一：这里只记「未命中缓存的那部分」，命中率公式才能统一
     // 成 cached / (input + cached)（R8 / G6）。
-    inputTokens: Math.max(0, promptTokens - cached),
+    inputTokens: Math.max(0, promptTokens - (cached ?? 0)),
     outputTokens: typeof chunk.usage.completion_tokens === "number" ? chunk.usage.completion_tokens : 0,
     reported: true,
-    cachedInputTokens: cached,
+    ...(cached === undefined ? {} : { cachedInputTokens: cached }),
     model: typeof chunk.model === "string" && chunk.model.length > 0 ? chunk.model : fallbackModel,
   };
 }

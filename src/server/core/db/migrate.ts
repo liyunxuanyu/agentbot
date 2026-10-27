@@ -11,7 +11,7 @@ import type { DB } from "./db.js";
  * `CREATE TABLE IF NOT EXISTS`，首次执行与重复执行都安全）。
  */
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export interface MigrationResult {
   /** 迁移前版本。 */
@@ -147,6 +147,18 @@ const STEPS: MigrationStep[] = [
       addColumn(db, "usage_records", "cached_input_tokens", "INTEGER NOT NULL DEFAULT 0");
       addColumn(db, "usage_records", "cache_write_tokens", "INTEGER NOT NULL DEFAULT 0");
       addColumn(db, "usage_records", "model", "TEXT");
+    },
+  },
+  {
+    version: 4,
+    name: "v4 缓存上报标记（R8）+ Bot 技能开关（N4）",
+    run: (db) => {
+      // R8：缓存字段是否真的上报。历史行回填 0 —— 升级前确实不知道有没有上报，
+      // 宁可显示「—」也不要把未知当成 0% 命中。
+      addColumn(db, "usage_records", "cache_reported", "INTEGER NOT NULL DEFAULT 0");
+      // N4：Bot 启用的技能（JSON 数组，NULL = 默认集合）。历史 Bot 回填 NULL
+      // 表示「保持原行为」（全部技能都注入），不改变现有 Bot 的表现。
+      addColumn(db, "bots", "enabled_skills", "TEXT");
     },
   },
 ];

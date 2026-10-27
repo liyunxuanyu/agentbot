@@ -115,8 +115,9 @@ describe("迁移 v3", () => {
 
     const result = migrate(db);
     expect(result.from).toBe(2);
-    expect(result.to).toBe(3);
-    expect(result.applied).toHaveLength(1);
+    // v2 老库会连续执行 v3、v4 两步
+    expect(result.to).toBe(4);
+    expect(result.applied).toHaveLength(2);
 
     // 数据不丢：行数与内容都在
     expect((db.prepare("SELECT COUNT(*) AS n FROM bots").get() as { n: number }).n).toBe(1);
@@ -184,6 +185,62 @@ describe("迁移 v3", () => {
     expect(idx?.name).toBe("idx_memory_scope");
 
     // 重复执行安全
+    expect(migrate(db).applied).toHaveLength(0);
+    db.close();
+  });
+});
+
+describe("迁移 v4", () => {
+  it("v3 老库升 v4：usage_records.cache_reported=0、bots.enabled_skills=NULL，重复执行安全", () => {
+    const db = new Database(":memory:");
+    // 模拟 v3 库：只建 v4 会 ALTER 的两张表（v3 形状）+ 版本行
+    db.exec(`
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO schema_meta(key, value) VALUES ('version', '3');
+
+      CREATE TABLE bots (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        provider_id TEXT,
+        repo_path TEXT,
+        role TEXT NOT NULL DEFAULT 'member',
+        permission_mode TEXT NOT NULL DEFAULT 'confirm'
+      );
+      CREATE TABLE usage_records (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        model TEXT,
+        reported INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL
+      );
+
+      INSERT INTO bots(id, name) VALUES ('bot_1', '老 Bot');
+      INSERT INTO usage_records(id, bot_id, input_tokens, output_tokens, model, reported, created_at)
+        VALUES ('use_1', 'bot_1', 10, 5, 'gpt-x', 1, 1000);
+    `);
+
+    const result = migrate(db);
+    expect(result.from).toBe(3);
+    expect(result.to).toBe(4);
+    expect(result.applied).toEqual(["v4 缓存上报标记（R8）+ Bot 技能开关（N4）"]);
+
+    // R8：历史行 cache_reported=0（升级前不知道有没有上报），数据不丢
+    const use = db
+      .prepare("SELECT input_tokens, cache_reported FROM usage_records WHERE id = 'use_1'")
+      .get() as { input_tokens: number; cache_reported: number };
+    expect(use).toEqual({ input_tokens: 10, cache_reported: 0 });
+
+    // N4：历史 Bot 的 enabled_skills 为 NULL（= 保持原行为，全部技能都注入）
+    const bot = db
+      .prepare("SELECT enabled_skills FROM bots WHERE id = 'bot_1'")
+      .get() as { enabled_skills: string | null };
+    expect(bot.enabled_skills).toBeNull();
+
+    // 幂等
     expect(migrate(db).applied).toHaveLength(0);
     db.close();
   });

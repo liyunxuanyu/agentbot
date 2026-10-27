@@ -196,8 +196,14 @@ export function createAnthropicClient(cfg: ProviderConfig): ProviderClient {
             inputTokens: json.usage.input_tokens ?? 0,
             outputTokens: json.usage.output_tokens ?? 0,
             reported: true,
-            cachedInputTokens: json.usage.cache_read_input_tokens ?? 0,
-            cacheWriteTokens: json.usage.cache_creation_input_tokens ?? 0,
+            // R8：缓存字段缺失 = 供应商没上报（用量页显示 —），不补 0；
+            // 明确给了 0 才是「真的没命中」。
+            ...(typeof json.usage.cache_read_input_tokens === "number"
+              ? { cachedInputTokens: json.usage.cache_read_input_tokens }
+              : {}),
+            ...(typeof json.usage.cache_creation_input_tokens === "number"
+              ? { cacheWriteTokens: json.usage.cache_creation_input_tokens }
+              : {}),
             model: json.model ?? cfg.model,
           }
         : null;
@@ -232,8 +238,9 @@ export function createAnthropicClient(cfg: ProviderConfig): ProviderClient {
     let currentEvent: string | null = null;
     let inputTokens = 0;
     let outputTokens = 0;
-    let cachedInputTokens = 0;
-    let cacheWriteTokens = 0;
+    // R8：缓存字段只在真的出现过时才上报（undefined = 供应商没说，不是 0）
+    let cachedInputTokens: number | undefined;
+    let cacheWriteTokens: number | undefined;
     let sawUsage = false;
     let finish: ProviderFinish = "stop";
 
@@ -341,8 +348,8 @@ export function createAnthropicClient(cfg: ProviderConfig): ProviderClient {
         inputTokens,
         outputTokens,
         reported: true,
-        cachedInputTokens,
-        cacheWriteTokens,
+        ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+        ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
         model: cfg.model,
       };
     }

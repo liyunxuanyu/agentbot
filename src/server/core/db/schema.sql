@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS bots (
   -- Bot 默认权限模式；会话显式设置优先于它
   permission_mode     TEXT NOT NULL DEFAULT 'confirm'
     CHECK (permission_mode IN ('confirm','auto','plan','full')),
+  -- 启用的技能（JSON string[]，存技能目录名）。
+  -- NULL = 全部启用（迁移前的老 Bot，保持原行为；见 N3-1 口径）；
+  -- 新建 Bot 写入基础技能包（N2 的 4 个）；空数组 = 一个都不注入。
+  enabled_skills      TEXT,
   status              TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
   -- 权限边界
   allow_dirs          TEXT NOT NULL DEFAULT '[]',   -- JSON string[]
@@ -233,6 +237,11 @@ CREATE TABLE IF NOT EXISTS usage_records (
   -- Anthropic cache_read_input_tokens / cache_creation_input_tokens
   cached_input_tokens INTEGER NOT NULL DEFAULT 0,
   cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
+  -- 本轮供应商是否真的上报了缓存字段（R8）。
+  -- 与 reported（用量是否上报）是两个概念：reported=1 但 cache_reported=0
+  -- 表示「token 有数，但缓存命中率未知」，用量页显示 — 而不是 0%。
+  -- 历史行回填 0（升级前不知道有没有上报）。
+  cache_reported INTEGER NOT NULL DEFAULT 0,
   -- 本轮实际使用的模型（会话内可切，聚合时按模型区分）
   model         TEXT,
   reported      INTEGER NOT NULL DEFAULT 1,

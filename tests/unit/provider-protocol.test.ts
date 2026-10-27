@@ -117,8 +117,8 @@ describe("OpenAI Chat Completions 客户端", () => {
           inputTokens: 3,
           outputTokens: 2,
           reported: true,
-          // OpenAI 没有缓存上报时按 0 记（R8：0 就是没命中，不是「未上报」）
-          cachedInputTokens: 0,
+          // R8：网关没给 prompt_tokens_details 时不补 0 —— 缓存命中率未知，
+          // 用量页显示 —，不能把它当成「0 命中」稀释合计。
           model: "test-model",
         });
         expect(result.finish).toBe("tool_calls");
