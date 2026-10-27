@@ -3,6 +3,7 @@ import { createCreateBotTool, type CreateBotHandler } from "./create_bot.js";
 import { editFileTool } from "./edit_file.js";
 import { grepTool } from "./grep.js";
 import { listDirTool } from "./list_dir.js";
+import { createListSkillsTool, type ListSkillsToolOptions } from "./list_skills.js";
 import { readFileTool } from "./read_file.js";
 import { readSkillTool } from "./read_skill.js";
 import { runShellTool } from "./run_shell.js";
@@ -10,6 +11,7 @@ import { webFetchTool } from "./web_fetch.js";
 import { writeFileTool } from "./write_file.js";
 
 export type { CreateBotHandler, CreateBotRequest, CreateBotResult } from "./create_bot.js";
+export { createListSkillsTool, type ListSkillsToolOptions } from "./list_skills.js";
 
 export interface BuiltinToolsOptions {
   /**
@@ -17,6 +19,8 @@ export interface BuiltinToolsOptions {
    * 普通 Bot 的模型根本看不到它（M3）。
    */
   createBot?: CreateBotHandler;
+  /** 技能目录与启用列表（`list_skills` 用，N4）。 */
+  skills?: ListSkillsToolOptions;
 }
 
 /** 内置工具全集。顺序即系统提示里的工具顺序（稳定，便于缓存）。 */
@@ -30,6 +34,8 @@ export function createBuiltinTools(opts: BuiltinToolsOptions = {}): ToolDefiniti
     runShellTool,
     webFetchTool,
     readSkillTool,
+    // N4：长尾技能靠它发现；放在 read_skill 之后（先读提示里的，再发现其余的）
+    createListSkillsTool(opts.skills ?? {}),
   ];
   // 管理工具放最后：普通 Bot 的列表与历史完全一致，缓存不因角色变化而整体失效
   if (opts.createBot) tools.push(createCreateBotTool(opts.createBot));

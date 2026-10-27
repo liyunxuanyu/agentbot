@@ -14,6 +14,7 @@ import { config } from "../../config.js";
 import type { EventBus } from "../events/bus.js";
 import { createIngest } from "../events/ingest.js";
 import { buildBootstrapContext, buildRebuildContext } from "../orchestrator/context.js";
+import { parseEnabledSkills } from "../agent/skills.js";
 import { killTree, killTreeSync } from "./kill-tree.js";
 import { resolveSessionCwd, resolveWorkspace } from "./session-cwd.js";
 import {
@@ -238,6 +239,7 @@ interface SessionRow {
   bot_permission_mode: string | null;
   bot_role: string | null;
   channel_id: string | null;
+  bot_enabled_skills: string | null;
 }
 
 export function createSupervisor(deps: SupervisorDeps): Supervisor {
@@ -356,7 +358,8 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
                 s.channel_id,
                 b.provider_id AS bot_provider_id,
                 b.permission_mode AS bot_permission_mode,
-                b.role AS bot_role
+                b.role AS bot_role,
+                b.enabled_skills AS bot_enabled_skills
            FROM sessions s
            LEFT JOIN bots b ON b.id = s.bot_id
           WHERE s.id = ?`,
@@ -576,6 +579,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         model: row.session_model ?? null,
         permissionMode: permissionModeOf(row),
         botRole: row.bot_role === "admin" ? "admin" : "member",
+        enabledSkills: parseEnabledSkills(row.bot_enabled_skills),
       });
     } catch (err) {
       setStatus(sessionId, "crashed");

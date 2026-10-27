@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -531,5 +531,87 @@ describe("R5-c MCP 工具的计划模式裁剪", () => {
     expect(names).not.toContain("write_file");
     expect(names).not.toContain("run_shell");
     expect(names).toContain("read_file");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N3-1 / N4：Bot 的技能启用列表影响系统提示索引
+// ---------------------------------------------------------------------------
+
+class PromptCapturingProvider implements ProviderClient {
+  readonly protocol = "openai-chat" as const;
+  systemPrompts: string[] = [];
+  async *stream(req: ProviderRequest): AsyncGenerator<ProviderDelta> {
+    const sys = req.messages.find((m) => m.role === "system");
+    this.systemPrompts.push(sys?.content ?? "");
+    yield { kind: "finish", reason: "stop" };
+  }
+  async complete(): Promise<ProviderCompletion> {
+    throw new Error("测试不支持降级");
+  }
+}
+
+describe("技能启用列表（N3-1 / N4）", () => {
+  const skillNames = ["file-basics", "shell-basics", "long-tail"];
+
+  function skillsDirWithThree(): string {
+    const dir = tempDir();
+    for (const name of skillNames) {
+      mkdirSync(join(dir, name), { recursive: true });
+      writeFileSync(
+        join(dir, name, "SKILL.md"),
+        `---\nname: ${name}\ndescription: ${name} 的说明\n---\n`,
+        "utf8",
+      );
+    }
+    return dir;
+  }
+
+  async function promptWith(enabledSkills: string[] | null): Promise<string> {
+    const provider = new PromptCapturingProvider();
+    const dir = skillsDirWithThree();
+    const driver = createBuiltinDriver({
+      skillsDir: dir,
+      resolveProvider: () => PROVIDER,
+      createClient: () => provider,
+      tools: [],
+    });
+    const h = await driver.start(BUILTIN_DECL_LOCAL, {
+      cwd: dir,
+      sessionId: `s_${String(enabledSkills)}`,
+      botId: "b1",
+      channelId: "ch1",
+      providerId: "p1",
+      enabledSkills,
+    });
+    await driver.newSession(h, { cwd: dir, systemPrompt: "测试" });
+    setTurnContext(h, { turnId: "t1", messageId: "m1", botId: "b1" });
+    try {
+      await driver.prompt(h, { text: "hi" });
+    } finally {
+      clearTurnContext(h);
+    }
+    return provider.systemPrompts[0] ?? "";
+  }
+
+  it("启用白名单：索引只有列出的技能", async () => {
+    const prompt = await promptWith(["file-basics", "shell-basics"]);
+    expect(prompt).toContain("- file-basics");
+    expect(prompt).toContain("- shell-basics");
+    expect(prompt).not.toContain("- long-tail");
+    // 未启用但有目录 → 提示可发现
+    expect(prompt).toContain("还有 1 个技能未在本 Bot 启用");
+  });
+
+  it("空数组：索引为空，但提示可用 list_skills 发现", async () => {
+    const prompt = await promptWith([]);
+    expect(prompt).not.toContain("- file-basics");
+    expect(prompt).toContain("未启用任何技能索引");
+    expect(prompt).toContain("list_skills");
+  });
+
+  it("null：全部启用（老 Bot 行为不变）", async () => {
+    const prompt = await promptWith(null);
+    for (const name of skillNames) expect(prompt).toContain(`- ${name}`);
   });
 });

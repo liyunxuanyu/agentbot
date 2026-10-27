@@ -23,6 +23,8 @@ export const AGENT_LIMITS = {
   maxGrepMatches: 200,
   /** 技能索引在系统提示里的字符上限。 */
   maxSkillsIndexChars: 800,
+  /** 技能索引最多列多少条（N4：超出部分靠 list_skills 发现）。 */
+  maxSkillsIndexEntries: 12,
   /** 一次 web_fetch 最多读取的字节数。 */
   maxFetchBytes: 64 * 1024,
 } as const;

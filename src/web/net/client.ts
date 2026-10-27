@@ -518,6 +518,11 @@ export const api = {
       role?: "member" | "admin";
       /** Bot 默认权限模式（新会话继承；已有会话不受影响）。 */
       permissionMode?: PermissionMode;
+      /**
+       * 启用的技能目录名（N3-1 / N4）。
+       * null = 全部启用；[] = 一个都不注入；其它 = 白名单。
+       */
+      enabledSkills?: string[] | null;
       confirmRisk?: boolean;
     },
   ) => request<BotPatchResponse>(`/api/bots/${encodeURIComponent(botId)}`, { method: "PATCH", body }),

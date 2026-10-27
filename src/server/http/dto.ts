@@ -1,5 +1,6 @@
 import type { DB } from "../core/db/db.js";
 import type { RuntimeRecord } from "../adapters/probe.js";
+import { parseEnabledSkills } from "../core/agent/skills.js";
 import { requiresWorktree } from "../core/permissions/worktree-guard.js";
 
 /**
@@ -102,6 +103,11 @@ export interface BotDto {
   role: "member" | "admin";
   /** Bot 默认权限模式；会话显式设置优先于它。 */
   permissionMode: "confirm" | "auto" | "plan" | "full";
+  /**
+   * 启用的技能目录名（N3-1 / N4）。null = 全部启用（迁移前的老 Bot）；
+   * [] = 一个都不注入；其它 = 只注入列出的。
+   */
+  enabledSkills: string[] | null;
   executionLocation: "local" | "worktree";
   /** 默认工作区（`bots.repo_path`）；未设置时前端显示「未设置默认工作区」。 */
   defaultWorkspace: string | null;
@@ -122,6 +128,7 @@ interface BotRow {
   avatar: string | null;
   default_runtime_id: string | null;
   provider_id: string | null;
+  enabled_skills: string | null;
   role: string;
   permission_mode: string;
   execution_location: string;
@@ -171,7 +178,7 @@ function deriveBotState(sessionStatus: string | null, pendingPermissions: number
 export function listBots(db: DB, runtimes: Map<string, RuntimeDto>): BotDto[] {
   const bots = db
     .prepare(
-      `SELECT id, name, persona, avatar, default_runtime_id, provider_id, role,
+      `SELECT id, name, persona, avatar, default_runtime_id, provider_id, enabled_skills, role,
               permission_mode, execution_location,
               repo_path, worktree_path, worktree_state, status, created_at
          FROM bots
@@ -229,6 +236,7 @@ export function listBots(db: DB, runtimes: Map<string, RuntimeDto>): BotDto[] {
       colorIndex: (index % 8) + 1,
       runtime,
       providerId: row.provider_id ?? null,
+      enabledSkills: parseEnabledSkills(row.enabled_skills),
       role: row.role === "admin" ? "admin" : "member",
       permissionMode:
         row.permission_mode === "auto" || row.permission_mode === "plan" || row.permission_mode === "full"

@@ -178,11 +178,15 @@ export interface SkillDto {
   description: string;
   dirName: string;
   path: string;
+  /** 来自内置技能包（N2）：技能页显示「内置」徽标。 */
+  builtin: boolean;
 }
 
 export interface SkillsResponse {
   skills: SkillDto[];
   dir: string;
+  /** 仅 rescan 返回：本次补装的内置技能目录名（N2）。 */
+  installed?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +216,11 @@ export interface BotDto {
   role: "member" | "admin";
   /** Bot 默认权限模式；会话显式设置优先于它。 */
   permissionMode: PermissionMode;
+  /**
+   * 启用的技能目录名（N3-1 / N4）。
+   * null = 全部启用（迁移前的老 Bot）；[] = 一个都不注入；其它 = 白名单。
+   */
+  enabledSkills: string[] | null;
   executionLocation: ExecutionLocation;
   /** 默认工作区（bots.repo_path）；未设置时显示「未设置默认工作区」。 */
   defaultWorkspace: string | null;

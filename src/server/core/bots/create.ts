@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DB } from "../db/db.js";
+import { DEFAULT_BOT_SKILLS } from "../agent/skills/install.js";
 import {
   ensureWorktreeForBot,
   validateRepoPath,
@@ -164,12 +165,16 @@ export function createBot(
   const avatar = typeof input.avatar === "string" ? input.avatar : null;
   const role = input.role === "admin" ? "admin" : "member";
 
+  // N4 档 B：新 Bot 默认只启用基础技能包（4 个），长尾技能靠 list_skills 发现。
+  // 空数组也是合法值（档 A），但默认不给 —— 那会让模型连看家本领都想不到。
+  const enabledSkills = JSON.stringify(DEFAULT_BOT_SKILLS);
+
   db.prepare(
     `INSERT INTO bots
        (id, name, persona, avatar, default_runtime_id, provider_id, role, execution_location, repo_path,
-        status, allow_dirs, allow_shell, allow_network, auto_approve_write,
+        enabled_skills, status, allow_dirs, allow_shell, allow_network, auto_approve_write,
         created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', '[]', 0, 0, 0, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', '[]', 0, 0, 0, ?, ?)`,
   ).run(
     id,
     name,
@@ -180,6 +185,7 @@ export function createBot(
     role,
     executionLocation,
     workspacePath.length > 0 ? workspacePath : null,
+    enabledSkills,
     now,
     now,
   );

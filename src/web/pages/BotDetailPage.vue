@@ -16,6 +16,7 @@ import { useBotsStore } from "../stores/bots";
 import { useChannelsStore } from "../stores/channels";
 import { useProvidersStore } from "../stores/providers";
 import { useRuntimesStore } from "../stores/runtimes";
+import { useSkillsStore } from "../stores/skills";
 import { useUiStore } from "../stores/ui";
 import { botVars } from "../lib/botVars";
 import { clockTime, dateTimeText, dayTimeText, num } from "../lib/format";
@@ -58,12 +59,14 @@ const bots = useBotsStore();
 const channels = useChannelsStore();
 const runtimes = useRuntimesStore();
 const providers = useProvidersStore();
+const skills = useSkillsStore();
 const ui = useUiStore();
 
-type TabKey = "overview" | "memory" | "boundary" | "sessions";
+type TabKey = "overview" | "memory" | "skills" | "boundary" | "sessions";
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "概览" },
   { key: "memory", label: "记忆" },
+  { key: "skills", label: "技能" },
   { key: "boundary", label: "权限边界" },
   { key: "sessions", label: "会话列表" },
 ];
@@ -96,6 +99,8 @@ async function loadBot(): Promise<void> {
   loading.value = true;
   loadError.value = "";
   missingBot.value = false;
+  // 技能列表与 Bot 并行拉：技能页展示「全目录」，Bot 只决定勾选状态
+  if (skills.status === "idle") void skills.load();
   try {
     const res = await api.bot(props.id);
     bot.value = res.bot;
@@ -589,6 +594,79 @@ async function confirmRebind(): Promise<void> {
     }
     rebindError.value =
       err instanceof ApiError ? (err.messageText() ?? `改绑失败（${err.code}）`) : "改绑失败";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 技能（N3-1 / N4）：按 Bot 勾选启用哪些
+// ---------------------------------------------------------------------------
+const skillsBusy = ref(false);
+const skillsNotice = ref("");
+
+/**
+ * 启用列表的三态（与后端一致）：
+ *   null = 全部启用（迁移前的老 Bot）；[] = 一个都不启用；其它 = 白名单。
+ * 本页所有开关都写成显式数组 —— 一旦用户动过，就不再回「全部启用」，
+ * 否则关掉最后一个技能会变成「全开」，是个反直觉的坑。
+ */
+const skillsAllEnabled = computed(() => bot.value?.enabledSkills === null);
+
+function isSkillEnabled(dirName: string): boolean {
+  const list = bot.value?.enabledSkills;
+  if (list === null || list === undefined) return true;
+  return list.includes(dirName);
+}
+
+async function toggleSkill(dirName: string, next: boolean): Promise<void> {
+  if (!bot.value || skillsBusy.value) return;
+  const current = isSkillEnabled(dirName);
+  if (current === next) return;
+  const base =
+    bot.value.enabledSkills === null
+      ? skills.skills.map((s) => s.dirName) // 全部启用 → 物化成显式数组
+      : [...bot.value.enabledSkills];
+  const nextList = next
+    ? [...new Set([...base, dirName])]
+    : base.filter((name) => name !== dirName);
+  skillsBusy.value = true;
+  skillsNotice.value = "";
+  try {
+    await api.patchBot(props.id, { enabledSkills: nextList });
+    await loadBot();
+    skillsNotice.value = next ? `已启用「${dirName}」` : `已停用「${dirName}」`;
+    ui.toast(skillsNotice.value);
+  } catch (err) {
+    ui.toast(err instanceof ApiError ? (err.messageText() ?? "保存失败") : "保存失败");
+  } finally {
+    skillsBusy.value = false;
+  }
+}
+
+async function enableAllSkills(): Promise<void> {
+  if (!bot.value || skillsBusy.value) return;
+  skillsBusy.value = true;
+  try {
+    await api.patchBot(props.id, { enabledSkills: null });
+    await loadBot();
+    ui.toast("已恢复为「全部启用」");
+  } catch {
+    ui.toast("保存失败");
+  } finally {
+    skillsBusy.value = false;
+  }
+}
+
+async function disableAllSkills(): Promise<void> {
+  if (!bot.value || skillsBusy.value) return;
+  skillsBusy.value = true;
+  try {
+    await api.patchBot(props.id, { enabledSkills: [] });
+    await loadBot();
+    ui.toast("已全部停用：模型仍可用 list_skills 发现并按需 read_skill");
+  } catch {
+    ui.toast("保存失败");
+  } finally {
+    skillsBusy.value = false;
   }
 }
 
@@ -1159,6 +1237,90 @@ void grants;
           <div v-if="injection" class="kv" style="margin-top: 10px">
             <span class="k">人格占用</span>
             <span class="v u-mono">{{ num(injection.personaChars) }} 字符</span>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <!-- ================= 技能（N3-1 / N4） ================= -->
+    <div v-else-if="tab === 'skills'" class="detail-grid">
+      <div>
+        <div class="filters" style="min-height: auto">
+          <span class="u-label">启用技能</span>
+          <span class="u-mono" style="color: var(--color-text-secondary)">
+            {{ skillsAllEnabled ? "全部启用（老 Bot 的默认）" : `${bot?.enabledSkills?.length ?? 0} / ${skills.skills.length} 个` }}
+          </span>
+          <span class="spacer" />
+          <button class="btn btn--sm btn--ghost" :disabled="skillsBusy" @click="disableAllSkills">全部停用</button>
+          <button class="btn btn--sm btn--secondary" :disabled="skillsBusy" @click="enableAllSkills">全部启用</button>
+        </div>
+
+        <div v-if="skills.status === 'loading' || skills.status === 'idle'" style="display: grid; gap: 10px; margin-top: 12px">
+          <div v-for="i in 4" :key="i" class="sk" style="height: 52px" />
+        </div>
+
+        <div v-else-if="skills.status === 'error'" class="banner">
+          <span class="state-dot" :style="{ '--s': 'var(--state-blocked)' }" />
+          <span>读取技能失败：{{ skills.errorText }}</span>
+          <span class="spacer" />
+          <button class="btn btn--sm" @click="skills.load()">重试</button>
+        </div>
+
+        <EmptyState
+          v-else-if="skills.status === 'empty'"
+          title="技能目录是空的"
+          description="内置的基础技能包会在服务启动时装进 ~/.agentbot/skills/。也可以在设置页手动新建一个 SKILL.md。"
+        >
+          <template #icon><AppIcon name="gear" :size="24" /></template>
+          <template #actions>
+            <button class="btn btn--secondary" @click="skills.load()">重新读取</button>
+          </template>
+        </EmptyState>
+
+        <template v-else>
+          <div
+            v-for="s in skills.skills"
+            :key="s.dirName"
+            class="card"
+            style="padding: 12px 16px; margin-top: 10px; display: flex; gap: 12px; align-items: flex-start"
+          >
+            <button
+              class="switch"
+              :class="{ 'is-on': isSkillEnabled(s.dirName) }"
+              :aria-pressed="isSkillEnabled(s.dirName)"
+              :aria-label="isSkillEnabled(s.dirName) ? '停用这个技能' : '启用这个技能'"
+              :disabled="skillsBusy"
+              @click="toggleSkill(s.dirName, !isSkillEnabled(s.dirName))"
+            />
+            <div style="flex: 1; min-width: 0">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                <span style="font-weight: var(--weight-semibold)">{{ s.name }}</span>
+                <span v-if="s.builtin" class="cap cap--scope" title="随代码分发的基础技能包">内置</span>
+                <span class="u-mono" style="font-size: var(--font-size-micro); color: var(--color-text-muted)">{{ s.dirName }}</span>
+              </div>
+              <div style="font-size: var(--font-size-caption); color: var(--color-text-secondary); margin-top: 4px">
+                {{ s.description || "（无描述）" }}
+              </div>
+            </div>
+          </div>
+          <p class="hint" style="margin-top: 12px">
+            停用的技能不进系统提示的索引，模型仍可用 <code class="u-mono">list_skills</code> 发现、用
+            <code class="u-mono">read_skill</code> 读取。改动下一轮对话即生效，不需要重启。
+          </p>
+        </template>
+      </div>
+
+      <aside>
+        <section class="card card-pad">
+          <div class="u-label" style="margin-bottom: 8px">按需加载</div>
+          <p style="font-size: var(--font-size-caption); color: var(--color-text-muted); line-height: 1.8">
+            系统提示只放启用的技能名与一行描述（≤800 字符、最多 12 条），正文由模型按需
+            <code class="u-mono">read_skill</code> 读取。新建 Bot 默认只启用基础技能包；
+            其余技能通过 <code class="u-mono">list_skills</code> 发现，不占上下文。
+          </p>
+          <div class="kv" style="margin-top: 10px">
+            <span class="k">技能目录</span>
+            <span class="v u-mono" style="word-break: break-all">{{ skills.dir || "~/.agentbot/skills" }}</span>
           </div>
         </section>
       </aside>

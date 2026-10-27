@@ -28,5 +28,10 @@ export default defineConfig({
     if (existsSync(declarations)) {
       cpSync(declarations, "dist/declarations", { recursive: true });
     }
+    // 内置技能包（N2）也是运行时读取的资源
+    const builtinSkills = "src/server/core/agent/skills/builtin";
+    if (existsSync(builtinSkills)) {
+      cpSync(builtinSkills, "dist/skills/builtin", { recursive: true });
+    }
   },
 });

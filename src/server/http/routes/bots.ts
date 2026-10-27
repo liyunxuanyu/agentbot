@@ -93,6 +93,13 @@ interface PatchBoundaryBody {
    * 前端弹确认框，用户点「我明白风险」后带上它重试。
    */
   confirmRisk?: unknown;
+  /**
+   * 启用的技能目录名（N3-1 / N4）。
+   *
+   * `null` = 全部启用；`[]` = 一个都不注入；其它 = 只注入列出的。
+   * 只影响系统提示里的索引，不影响 read_skill / list_skills。
+   */
+  enabledSkills?: unknown;
 }
 
 interface FieldError {
@@ -108,7 +115,8 @@ interface FieldError {
     | "executionLocation"
     | "repoPath"
     | "role"
-    | "permissionMode";
+    | "permissionMode"
+    | "enabledSkills";
   index?: number;
   code: string;
   message: string;
@@ -363,6 +371,36 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         }
       }
 
+      // ---- 启用技能（N3-1 / N4）----
+      //
+      // 只校验形状：技能是不是真的存在允许「先勾后建」—— 用户可能先在设置页
+      // 装技能包、再回来启用，或者删掉技能目录后保留配置。不存在由驱动扫描时
+      // 自然忽略，报错反而会挡住正常的编辑流程。
+      let enabledSkillsTouched = false;
+      let enabledSkills: string[] | null = null;
+      if (body.enabledSkills !== undefined) {
+        enabledSkillsTouched = true;
+        if (body.enabledSkills === null) {
+          enabledSkills = null;
+        } else if (
+          !Array.isArray(body.enabledSkills) ||
+          body.enabledSkills.some((v) => typeof v !== "string")
+        ) {
+          fields.push({
+            field: "enabledSkills",
+            code: "invalid_value",
+            message: "enabledSkills 必须是字符串数组或 null",
+          });
+        } else {
+          // 去重 + 丢掉空串：同一技能写两遍没有意义
+          enabledSkills = [
+            ...new Set(
+              (body.enabledSkills as string[]).map((v) => v.trim()).filter((v) => v.length > 0),
+            ),
+          ];
+        }
+      }
+
       // ---- 执行位置（P0-13）----
       //
       // 校验顺序：先看字段类型，再看「选 worktree 时仓库路径必须是 git 仓库」。
@@ -509,6 +547,10 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         if (permissionMode !== null) {
           sets.push("permission_mode = ?");
           params.push(permissionMode);
+        }
+        if (enabledSkillsTouched) {
+          sets.push("enabled_skills = ?");
+          params.push(enabledSkills === null ? null : JSON.stringify(enabledSkills));
         }
         params.push(bot.id);
         ctx.db.prepare(`UPDATE bots SET ${sets.join(", ")} WHERE id = ?`).run(...params);

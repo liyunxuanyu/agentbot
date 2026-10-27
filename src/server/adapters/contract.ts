@@ -115,6 +115,13 @@ export interface SpawnContext {
   permissionMode?: PermissionMode;
   /** Bot 角色：管理员多一个 create_bot 工具。 */
   botRole?: "member" | "admin";
+  /**
+   * Bot 启用的技能目录名（N3-1 / N4）。
+   *
+   * `null` = 全部启用（迁移前的老 Bot）；`[]` = 一个都不注入；
+   * 其它 = 只注入列出的。只影响系统提示里的索引，不影响 read_skill/list_skills。
+   */
+  enabledSkills?: string[] | null;
   env?: Record<string, string>;
 }
 

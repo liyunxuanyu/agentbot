@@ -14,6 +14,7 @@ import { ensureWorktreeForBot } from "./core/assignment/worktree.js";
 import { createUsageRecorder } from "./core/usage/recorder.js";
 import { createSummarizer } from "./core/memory/summarizer.js";
 import { createBot, fieldErrorsText } from "./core/bots/create.js";
+import { installBuiltinSkills } from "./core/agent/skills/install.js";
 import { seedAdminBot } from "./core/bots/seed.js";
 import {
   runtimeDisplayName,
@@ -74,6 +75,17 @@ async function main(): Promise<void> {
     log(`数据库已迁移 v${migration.from} → v${migration.to}：${migration.applied.join("，")}`);
   } else {
     log(`数据库已是最新 v${migration.to}（${config.dbPath}）`);
+  }
+
+  // ②' 基础技能包（N2）：首次启动把内置 SKILL.md 装进 ~/.agentbot/skills/。
+  //     已存在的目录跳过（不覆盖用户改动），被删掉的会补回来。
+  {
+    const installed = installBuiltinSkills();
+    if (installed.installed.length > 0) {
+      log(`已安装内置技能：${installed.installed.join("、")}`);
+    } else if (installed.sourceDir === null) {
+      log("未找到内置技能包源目录，跳过安装");
+    }
   }
 
   // ③ 本地 token（P0-14）

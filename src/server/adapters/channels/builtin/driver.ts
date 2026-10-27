@@ -23,9 +23,10 @@ import { createProviderClient } from "../../providers/index.js";
 import { resolveProvider } from "../../providers/store.js";
 import { runAgentLoop, type AgentLoopResult } from "../../../core/agent/loop.js";
 import { buildSystemPrompt } from "../../../core/agent/prompt.js";
-import { scanSkills } from "../../../core/agent/skills.js";
+import { filterSkillsByEnabled, scanSkills, type SkillInfo } from "../../../core/agent/skills.js";
 import {
   createBuiltinTools,
+  createListSkillsTool,
   type CreateBotHandler,
 } from "../../../core/agent/tools/builtin/index.js";
 import {
@@ -91,6 +92,8 @@ interface SessionState {
   botId: string | null;
   /** 会话所属渠道（G7 写锁的键）；单测可不传。 */
   channelId: string | null;
+  /** Bot 启用的技能目录名（N3-1 / N4）；null = 全部启用。 */
+  enabledSkills: string[] | null;
   providerId: string | null;
   /** 会话级模型覆盖（R4）；null = 用供应商默认模型。 */
   model: string | null;
@@ -229,13 +232,21 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     });
   }
 
-  /** 重建系统提示：cwd / 供应商 / 权限模式都可能在会话内变化。 */
+  /**
+   * 重建系统提示：cwd / 供应商 / 权限模式都可能在会话内变化。
+   *
+   * 技能目录每轮重扫（scanSkills 自带 mtime 缓存，文件变化即失效 → 热插拔），
+   * 再按 Bot 的启用列表过滤（N3-1 / N4）。过滤只影响系统提示索引；
+   * `list_skills` / `read_skill` 仍然能看到/读取未启用的技能。
+   */
   function systemPromptOf(state: SessionState): string {
     const providerName = resolveCfg(state.providerId)?.name;
+    const all: SkillInfo[] = scanSkills(opts.skillsDir);
     const base = buildSystemPrompt({
       ...(state.baseSystemPrompt.length > 0 ? { baseSystemPrompt: state.baseSystemPrompt } : {}),
       cwd: state.cwd,
-      skills: scanSkills(opts.skillsDir),
+      skills: filterSkillsByEnabled(all, state.enabledSkills),
+      totalSkills: all.length,
       ...(providerName === undefined ? {} : { providerName }),
     });
     const note = modeNote(state.permissionMode);
@@ -253,11 +264,22 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
    */
   function toolsFor(state: SessionState): ToolDefinition[] {
     const mcpTools = opts.mcp ? opts.mcp.tools() : [];
-    return [...baseTools, ...mcpTools].filter((tool) => {
-      if (tool.name === "create_bot" && state.botRole !== "admin") return false;
-      if (state.permissionMode === "plan" && isWriteLike(tool.permission)) return false;
-      return true;
-    });
+    return [...baseTools, ...mcpTools]
+      .map((tool) =>
+        // list_skills 要知道本会话的技能目录与启用列表：工具实例是全驱动共享的，
+        // 但这两项是会话级状态，所以每轮换成一个绑定到 state 的实例（N4）。
+        tool.name === "list_skills"
+          ? createListSkillsTool({
+              ...(opts.skillsDir === undefined ? {} : { skillsDir: opts.skillsDir }),
+              enabledSkills: () => state.enabledSkills,
+            })
+          : tool,
+      )
+      .filter((tool) => {
+        if (tool.name === "create_bot" && state.botRole !== "admin") return false;
+        if (state.permissionMode === "plan" && isWriteLike(tool.permission)) return false;
+        return true;
+      });
   }
 
   function clipText(text: string, max: number): string {
@@ -662,6 +684,7 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
         cwd: ctx.workspacePath ?? ctx.cwd,
         botId: ctx.botId ?? null,
         channelId: ctx.channelId ?? null,
+        enabledSkills: ctx.enabledSkills ?? null,
         providerId: ctx.providerId ?? null,
         model: ctx.model ?? null,
         permissionMode:

@@ -1510,7 +1510,11 @@ onBeforeUnmount(() => {
 
           <template v-else>
             <div v-for="s in skills.skills" :key="s.dirName" class="card" style="padding: 14px 16px; margin-bottom: 10px">
-              <div style="font-weight: var(--weight-semibold)">{{ s.name }}</div>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                <span style="font-weight: var(--weight-semibold)">{{ s.name }}</span>
+                <!-- N2：内置技能包随代码分发，技能页标出来 -->
+                <span v-if="s.builtin" class="cap cap--scope" title="随代码分发的基础技能包；改过的内容不会被升级覆盖">内置</span>
+              </div>
               <div style="font-size: var(--font-size-caption); color: var(--color-text-secondary); margin-top: 4px">
                 {{ s.description || "（无描述）" }}
               </div>
@@ -1519,8 +1523,10 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <p class="hint">
-              技能索引总长度上限 800 字符；超出部分不注入，但模型仍可用 read_skill 按名称读取。
-              改动 SKILL.md 后点「重扫」即可生效（下一次新建会话注入）。
+              技能索引总长度上限 800 字符、最多 12 条；超出部分不注入，模型可用
+              <code class="u-mono">list_skills</code> 发现、<code class="u-mono">read_skill</code> 读取。
+              改动 SKILL.md 后下一轮对话即生效（扫描按目录 mtime 自动失效，不需要重启）。
+              哪个 Bot 启用哪些技能在 Bot 详情的「技能」标签里设置。
             </p>
           </template>
         </template>

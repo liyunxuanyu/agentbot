@@ -11,6 +11,8 @@ export const useSkillsStore = defineStore("skills", () => {
   const dir = ref("");
   const status = ref<SkillsStatus>("idle");
   const errorText = ref("");
+  /** 最近一次 rescan 补装的内置技能（N2）。 */
+  const installed = ref<string[]>([]);
 
   async function load(signal?: AbortSignal): Promise<void> {
     status.value = "loading";
@@ -32,13 +34,15 @@ export const useSkillsStore = defineStore("skills", () => {
     }
   }
 
+  /** 重扫并补装内置技能；返回补装数量（N2 的「删了能恢复」）。 */
   async function rescan(): Promise<number> {
     const res = await api.rescanSkills();
     skills.value = res.skills;
     dir.value = res.dir;
     status.value = res.skills.length === 0 ? "empty" : "ready";
+    installed.value = res.installed ?? [];
     return res.skills.length;
   }
 
-  return { skills, dir, status, errorText, load, rescan };
+  return { skills, dir, status, errorText, installed, load, rescan };
 });
