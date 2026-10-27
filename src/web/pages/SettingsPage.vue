@@ -1276,36 +1276,41 @@ onBeforeUnmount(() => {
                 还没有覆盖规则。点下面「加一条」开始。
               </p>
 
-              <div
-                v-for="(rule, i) in catalogDraft"
-                :key="`rule-${i}`"
-                style="display: grid; grid-template-columns: minmax(0, 1fr) 110px 110px auto; gap: 8px; margin-bottom: 8px; align-items: center"
-              >
-                <input v-model="rule.match" class="input u-mono" style="font-size: var(--font-size-caption)" placeholder="正则，如 ^my-model-200k$" />
-                <input
-                  :value="rule.contextWindow ?? ''"
-                  class="input u-mono"
-                  style="font-size: var(--font-size-caption)"
-                  placeholder="上下文窗口"
-                  inputmode="numeric"
-                  @input="rule.contextWindow = catalogNum(($event.target as HTMLInputElement).value)"
-                />
-                <input
-                  :value="rule.maxOutputTokens ?? ''"
-                  class="input u-mono"
-                  style="font-size: var(--font-size-caption)"
-                  placeholder="最大输出"
-                  inputmode="numeric"
-                  @input="rule.maxOutputTokens = catalogNum(($event.target as HTMLInputElement).value)"
-                />
-                <div style="display: flex; gap: 4px">
-                  <button
-                    class="btn btn--sm btn--ghost"
-                    :disabled="rule.match.trim().length === 0 || catalogTestModel.trim().length === 0"
-                    :title="'用下面输入的模型 id 试这条规则'"
-                    @click="testCatalogRule(rule)"
-                  >试</button>
-                  <button class="btn btn--sm btn--ghost" title="删除这条" @click="removeCatalogRule(i)">✕</button>
+              <div v-else class="card" style="padding: 6px; background: var(--color-surface-2)">
+                <div class="grid-row is-head cat-head">
+                  <span>匹配规则（正则）</span><span>上下文窗口</span><span>最大输出</span><span style="text-align: right">操作</span>
+                </div>
+                <div v-for="(rule, i) in catalogDraft" :key="`rule-${i}`" class="grid-row cat-row">
+                  <span class="cat-field" data-label="匹配规则（正则）">
+                    <input v-model="rule.match" class="cat-input" placeholder="如 ^my-model-200k$" />
+                  </span>
+                  <span class="cat-field" data-label="上下文窗口">
+                    <input
+                      :value="rule.contextWindow ?? ''"
+                      class="cat-input"
+                      placeholder="如 204800"
+                      inputmode="numeric"
+                      @input="rule.contextWindow = catalogNum(($event.target as HTMLInputElement).value)"
+                    />
+                  </span>
+                  <span class="cat-field" data-label="最大输出">
+                    <input
+                      :value="rule.maxOutputTokens ?? ''"
+                      class="cat-input"
+                      placeholder="如 16384"
+                      inputmode="numeric"
+                      @input="rule.maxOutputTokens = catalogNum(($event.target as HTMLInputElement).value)"
+                    />
+                  </span>
+                  <span class="cat-actions">
+                    <button
+                      class="btn btn--sm btn--ghost"
+                      :disabled="rule.match.trim().length === 0 || catalogTestModel.trim().length === 0"
+                      title="用下面输入的模型 id 试这条规则"
+                      @click="testCatalogRule(rule)"
+                    >试</button>
+                    <button class="btn btn--sm btn--ghost" title="删除这条" @click="removeCatalogRule(i)">✕</button>
+                  </span>
                 </div>
               </div>
 
@@ -1333,13 +1338,25 @@ onBeforeUnmount(() => {
               <p class="hint" style="margin-top: 0">
                 只读，随代码升级。按顺序匹配，第一条命中即用。
               </p>
-              <div
-                class="u-mono"
-                style="font-size: var(--font-size-micro); max-height: 320px; overflow: auto; background: var(--color-surface-2); border-radius: var(--radius-md); padding: 10px 12px"
-              >
-                <div v-for="(e, i) in catalog?.builtin ?? []" :key="`b${i}`" style="padding: 2px 0">
-                  {{ e.match }} → {{ e.contextWindow ?? "?" }} / {{ e.maxOutputTokens ?? "?" }}
-                  <span v-if="e.note" style="opacity: .7">· {{ e.note }}</span>
+              <div class="card" style="padding: 6px; background: var(--color-surface-2)">
+                <div class="grid-row is-head cat-head">
+                  <span>匹配规则（正则）</span><span>上下文窗口</span><span>最大输出</span><span style="text-align: right">备注</span>
+                </div>
+                <div
+                  v-for="(e, i) in catalog?.builtin ?? []"
+                  :key="`b${i}`"
+                  class="grid-row cat-row cat-builtin-row"
+                >
+                  <span class="cat-field cat-builtin-rule" data-label="匹配规则（正则）">
+                    <span class="cat-rule-text">{{ e.match }}</span>
+                  </span>
+                  <span class="cat-field cat-builtin-nums" data-label="上下文窗口">
+                    <span class="u-mono" style="font-variant-numeric: tabular-nums">{{ e.contextWindow ?? "—" }}</span>
+                  </span>
+                  <span class="cat-field" data-label="最大输出">
+                    <span class="u-mono" style="font-variant-numeric: tabular-nums">{{ e.maxOutputTokens ?? "—" }}</span>
+                  </span>
+                  <span class="cat-note" style="text-align: right">{{ e.note ?? "" }}</span>
                 </div>
               </div>
               <p v-if="(catalog?.sources.length ?? 0) > 0" class="hint" style="margin-top: 12px">
@@ -1348,6 +1365,7 @@ onBeforeUnmount(() => {
             </section>
           </template>
         </template>
+
 
         <!-- ================= MCP ================= -->
         <template v-else-if="tab === 'mcp'">
