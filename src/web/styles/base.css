@@ -123,6 +123,10 @@ button { font-family: inherit; font-size: inherit; }
   background: var(--color-surface-2); font-size: var(--font-size-micro); color: var(--color-text-muted);
 }
 .foot-card b { font-size: 13px; color: var(--color-text); font-variant-numeric: tabular-nums; }
+/* N1：初始化未完成的轻提示可点，视觉上仍是 foot-card 而不是主按钮 */
+.foot-card--link { text-decoration: none; cursor: pointer; transition: background 160ms var(--ease-out); }
+.foot-card--link:hover { background: var(--color-surface); }
+.foot-card--link:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .foot-roster { display: flex; gap: 5px; flex-wrap: wrap; padding: 0 var(--space-2); }
 .roster-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--c); }
 

@@ -58,6 +58,13 @@ interface CreateBotBody {
   providerId?: unknown;
   executionLocation?: unknown;
   repoPath?: unknown;
+  /**
+   * 角色（N1）：引导第 3 步可以一键创建管理员。
+   *
+   * 管理员只是多一个 `create_bot` 工具，不自动获得 full 权限（G4）；
+   * 本地单用户服务，没有「谁能创建管理员」的权限问题（PATCH 早已开放同一字段）。
+   */
+  role?: unknown;
 }
 
 interface PatchBoundaryBody {
@@ -196,6 +203,16 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
 
     // 创建逻辑与管理员工具 `create_bot` 共用 `core/bots/create.ts`，
     // 这里只负责把 HTTP 字段翻译成输入、把字段级错误回给前端。
+    let createRole: "member" | "admin" | undefined;
+    if (body.role !== undefined) {
+      if (body.role !== "member" && body.role !== "admin") {
+        return json(reply, 400, {
+          error: "invalid_bot",
+          fields: [{ field: "role", code: "invalid_value", message: "角色只能是 member 或 admin" }],
+        });
+      }
+      createRole = body.role;
+    }
     const result = createBot(
       ctx.db,
       {
@@ -206,6 +223,7 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         providerId: body.providerId,
         executionLocation: body.executionLocation,
         workspacePath: body.repoPath,
+        ...(createRole === undefined ? {} : { role: createRole }),
       },
       {
         runtimeExists: (id) =>

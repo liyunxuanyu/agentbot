@@ -19,6 +19,7 @@ import { registerAdminRoutes } from "./admin.js";
 import { registerProviderRoutes } from "./providers.js";
 import { registerMcpRoutes } from "./mcp.js";
 import { registerSkillRoutes } from "./skills.js";
+import { registerSetupRoutes } from "./setup.js";
 
 /**
  * 路由注册入口。
@@ -50,6 +51,8 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerContext): void {
   registerMcpRoutes(app, ctx);
   // 技能索引（N5）：只读扫描 + 重扫
   registerSkillRoutes(app, ctx);
+  // 初始化引导（N1）：5 步完成度 + 首启判定
+  registerSetupRoutes(app, ctx);
   registerBotRoutes(app, ctx);
   registerChannelRoutes(app, ctx);
   // P0-04/P0-05：刷新后重建事件流（含 meta 与用量），SSE 只负责增量

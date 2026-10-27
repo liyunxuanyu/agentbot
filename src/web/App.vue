@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { useRoute, RouterLink } from "vue-router";
+import { computed, onMounted, watch } from "vue";
+import { useRoute, useRouter, RouterLink } from "vue-router";
 import { storeToRefs } from "pinia";
 import AppIcon from "./components/common/AppIcon.vue";
 import type { IconName } from "./lib/icons";
 import Toast from "./components/common/Toast.vue";
 import { useUiStore } from "./stores/ui";
 import { useBotsStore } from "./stores/bots";
+import { useSetupStore } from "./stores/setup";
 import { botVars } from "./lib/botVars";
 
 /**
@@ -21,9 +22,39 @@ import { botVars } from "./lib/botVars";
  */
 const ui = useUiStore();
 const bots = useBotsStore();
+const setup = useSetupStore();
 const { crumbs, isDark, toasts } = storeToRefs(ui);
 
 const route = useRoute();
+const router = useRouter();
+
+/**
+ * 首启判定（N1）：服务端 `/api/setup/state` 说必需项没齐、且当前不在引导页 →
+ * 跳过去一次。只跳一次（`setup.needsSetup` 在用户点「稍后再说」后变 false），
+ * 避免用户在工作台里做别的事时被反复拽回。
+ *
+ * 不放在路由守卫里：守卫会阻塞首屏，而 `/api/setup/state` 要等 pinia 就绪；
+ * 这里挂载后再判断，页面先照常渲染 —— 网络慢时用户看到的不是白屏。
+ */
+const setupRemaining = computed(() => setup.total - setup.completed);
+const showSetupHint = computed(
+  () => setup.state !== null && setupRemaining.value > 0 && route.name !== "setup",
+);
+
+onMounted(async () => {
+  await setup.load();
+  if (setup.needsSetup && route.name !== "setup") {
+    void router.replace("/setup");
+  }
+});
+
+// 从引导页回到工作台后刷新一次：用户在向导里建了 Bot / 配了供应商
+watch(
+  () => route.name,
+  (name) => {
+    if (name !== "setup" && setup.state !== null) void setup.refresh();
+  },
+);
 
 interface NavItem {
   key: string;
@@ -127,6 +158,16 @@ void toasts;
           <span class="state-dot" :style="{ '--s': 'var(--state-working)' }" />
           <b>{{ workingBots }}</b><span>个在干活</span>
         </div>
+        <!-- N1：初始化未完成时的轻提示，点回去继续（不阻断） -->
+        <RouterLink
+          v-if="showSetupHint"
+          class="foot-card foot-card--link"
+          to="/setup"
+          :title="`初始化还有 ${setupRemaining} 步未完成，点这里继续`"
+        >
+          <span class="state-dot" :style="{ '--s': 'var(--color-warning)' }" />
+          <b>{{ setupRemaining }}</b><span>初始化待完成</span>
+        </RouterLink>
       </div>
     </aside>
 

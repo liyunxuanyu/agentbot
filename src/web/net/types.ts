@@ -190,6 +190,31 @@ export interface SkillsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// 初始化引导（N1）
+// ---------------------------------------------------------------------------
+
+export type SetupStepKey = "runtime" | "provider" | "admin" | "workspace" | "skills";
+
+export interface SetupStepDto {
+  key: SetupStepKey;
+  label: string;
+  done: boolean;
+  /** 可选步骤：跳过不影响「是否需要打开引导」。 */
+  optional: boolean;
+  detail: string;
+}
+
+export interface SetupStateResponse {
+  /** 必需项（运行时 / 供应商 / 管理员）有任意一项没完成。 */
+  needsSetup: boolean;
+  completed: number;
+  total: number;
+  steps: SetupStepDto[];
+  skillCount: number;
+  skillsDir: string;
+}
+
+// ---------------------------------------------------------------------------
 // Bot
 // ---------------------------------------------------------------------------
 

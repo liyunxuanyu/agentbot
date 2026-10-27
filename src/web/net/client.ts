@@ -463,6 +463,10 @@ export const api = {
 
   skills: (signal?: AbortSignal) => request<SkillsResponse>("/api/skills", { signal }),
 
+  /** 初始化引导的完成度（N1）：首启跳转与侧栏提示共用。 */
+  setupState: (signal?: AbortSignal) =>
+    request<import("./types").SetupStateResponse>("/api/setup/state", { signal }),
+
   rescanSkills: () =>
     request<SkillsResponse>("/api/skills/rescan", { method: "POST", timeoutMs: 30_000 }),
 
@@ -493,6 +497,8 @@ export const api = {
     providerId?: string;
     executionLocation?: ExecutionLocation;
     repoPath?: string;
+    /** N1 引导：一键创建管理员（管理员只是多一个 create_bot 工具）。 */
+    role?: "member" | "admin";
   }) => request<BotCreateResponse>("/api/bots", { method: "POST", body }),
 
   /**

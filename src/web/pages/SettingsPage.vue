@@ -1048,7 +1048,10 @@ function mcpStatusWord(s: McpServerDto): string {
 async function rescanSkills(): Promise<void> {
   try {
     const count = await skills.rescan();
-    ui.toast(count === 0 ? `没有找到技能（${skills.dir}）` : `已重扫：${count} 个技能`);
+    // N2：被删掉的内置技能会在重扫时补回来（已存在的不覆盖）
+    const restored =
+      skills.installed.length > 0 ? `，补装 ${skills.installed.length} 个内置技能` : "";
+    ui.toast(count === 0 ? `没有找到技能（${skills.dir}）` : `已重扫：${count} 个技能${restored}`);
   } catch (err) {
     ui.toast(err instanceof Error ? err.message : "重扫失败");
   }
@@ -1081,6 +1084,10 @@ onBeforeUnmount(() => {
         <p class="page-desc">
           治理动作发生在会话里；这里放默认值、运行时管理和审计回看。
         </p>
+      </div>
+      <!-- N1：引导可重入 —— 任何时候都能从这里回去补齐 -->
+      <div class="page-actions">
+        <RouterLink class="btn btn--secondary btn--sm" to="/setup">初始化引导</RouterLink>
       </div>
     </div>
 
