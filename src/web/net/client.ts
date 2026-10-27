@@ -233,14 +233,17 @@ import type {
   McpServerInput,
   McpServersResponse,
   MetaDto,
+  ModelListResponse,
   PermissionsResponse,
   PermissionMode,
   ProbeRuntimeResponse,
   ProviderDto,
   ProviderInput,
+  ProviderProtocol,
   ProvidersResponse,
   ProviderTestResponse,
   PurgeResponse,
+  TidyPreview,
   RuntimesResponse,
   ScheduleDto,
   SchedulesResponse,
@@ -388,6 +391,30 @@ export const api = {
       method: "POST",
       timeoutMs: 25_000,
     }),
+
+  /** 用表单里正在填的 baseUrl/apiKey 拉模型清单；编辑已有供应商时给 id 即可。 */
+  listProviderModels: (body: {
+    id?: string;
+    protocol?: ProviderProtocol;
+    baseUrl?: string;
+    apiKey?: string;
+  }) =>
+    request<ModelListResponse>("/api/providers/models", {
+      method: "POST",
+      body,
+      timeoutMs: 30_000,
+    }),
+
+  /** 数据整理预览（只统计）。 */
+  tidyPreview: (signal?: AbortSignal) =>
+    request<{ preview: TidyPreview }>("/api/admin/tidy", { signal }),
+
+  /** 执行数据整理（不可逆，需 confirm）。 */
+  tidyApply: () =>
+    request<{ ok: boolean; preview: TidyPreview; deleted: Record<string, number> }>(
+      "/api/admin/tidy",
+      { method: "POST", body: { confirm: true }, timeoutMs: 60_000 },
+    ),
 
   mcpServers: (signal?: AbortSignal) =>
     request<McpServersResponse>("/api/mcp", { signal }),

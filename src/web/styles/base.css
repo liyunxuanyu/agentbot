@@ -1306,6 +1306,20 @@ body.is-chat .toast-wrap { bottom: 112px; }
   .nav-label { display: block; font-size: 10px; font-weight: 600; }
   .nav-item.is-active::before { left: 30%; right: 30%; top: 0; bottom: auto; width: auto; height: 3px; }
   .sidebar-foot { display: none; }
+  /* 1279 断点的「悬停展开」在底栏模式下必须失效：fixed + left/right 时 width
+     会赢，鼠标一放上去整条底栏被压成 240px，图标挤成一团。 */
+  .sidebar:hover, .sidebar:focus-within {
+    width: 100%;
+    box-shadow: 0 -1px 0 var(--color-border);
+  }
+  .sidebar:hover .nav-item, .sidebar:focus-within .nav-item {
+    justify-content: center;
+    padding: 4px 0;
+  }
+  .sidebar:hover .nav-item.is-active::before, .sidebar:focus-within .nav-item.is-active::before {
+    left: 30%;
+    right: 30%;
+  }
   .main { padding-bottom: 58px; }
   .topbar { padding: 0 var(--space-4); height: 52px; }
   .page { padding: var(--space-4) var(--space-4) var(--space-8); }

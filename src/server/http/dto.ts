@@ -311,7 +311,19 @@ export function listChannels(db: DB): ChannelDto[] {
   const rows = db
     .prepare("SELECT * FROM channels ORDER BY created_at DESC")
     .all() as ChannelRow[];
-  return rows.map((row) => toChannelDto(db, row));
+  // 归档/删除的 Bot 不该再占着会话列表：dm / group 至少要有一个在用的参与者。
+  // task 渠道没有参与者语义，始终显示，否则任务详情会失去入口。
+  const active = new Set(
+    (db.prepare("SELECT id FROM bots WHERE status = 'active'").all() as { id: string }[]).map(
+      (r) => r.id,
+    ),
+  );
+  return rows
+    .filter((row) => {
+      if (row.type === "task") return true;
+      return parseIds(row.participant_bot_ids).some((id) => active.has(id));
+    })
+    .map((row) => toChannelDto(db, row));
 }
 
 export function getChannel(db: DB, channelId: string): ChannelDto | null {

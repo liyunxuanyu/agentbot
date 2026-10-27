@@ -268,6 +268,7 @@ const PROVIDER: ProviderConfig = {
   apiKey: "k",
   model: "m",
   contextWindow: null,
+  maxOutputTokens: null,
   supportsTools: true,
   supportsStreaming: true,
 };
@@ -430,6 +431,37 @@ describe("上下文压缩（R7 / G5）", () => {
     } finally {
       limits.compactionRatio = originalRatio;
       limits.compactionKeepRecent = originalKeep;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 归档 Bot 的会话不再出现在列表里
+// ---------------------------------------------------------------------------
+
+describe("会话列表过滤已归档 Bot（R1 附带）", () => {
+  it("dm / group 至少有一个在用参与者才显示；task 渠道始终显示", async () => {
+    const { listChannels } = await import("../../src/server/http/dto.js");
+    const db = openDb(":memory:");
+    try {
+      db.prepare(
+        `INSERT INTO bots (id, name, persona, status, created_at, updated_at)
+         VALUES ('alive', '在用的', '', 'active', ?, ?), ('gone', '已归档的', '', 'archived', ?, ?)`,
+      ).run(NOW, NOW, NOW, NOW);
+      const insert = db.prepare(
+        `INSERT INTO channels (id, type, name, participant_bot_ids, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      insert.run("dm_alive", "dm", "在用私聊", '["alive"]', NOW);
+      insert.run("dm_gone", "dm", "归档私聊", '["gone"]', NOW);
+      insert.run("grp_mixed", "group", "混合群聊", '["alive","gone"]', NOW);
+      insert.run("grp_gone", "group", "全归档群聊", '["gone"]', NOW);
+      insert.run("task_1", "task", "任务渠道", '["gone"]', NOW);
+
+      const ids = listChannels(db).map((c) => c.id).sort();
+      expect(ids).toEqual(["dm_alive", "grp_mixed", "task_1"]);
+    } finally {
+      db.close();
     }
   });
 });

@@ -37,6 +37,7 @@ const CONFIG: ProviderConfig = {
   apiKey: "sk-1234567890abcd",
   model: "test-model",
   contextWindow: 100000,
+  maxOutputTokens: null,
   supportsTools: true,
   supportsStreaming: true,
 };

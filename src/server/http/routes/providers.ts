@@ -11,6 +11,11 @@ import {
   type ProviderDto,
 } from "../../adapters/providers/store.js";
 import { createProviderClient } from "../../adapters/providers/index.js";
+import {
+  defaultWindowFor,
+  fetchModels,
+  ModelListError,
+} from "../../adapters/providers/models.js";
 import type { ProviderConfig, ProviderProtocol } from "../../core/agent/provider.js";
 
 /**
@@ -55,8 +60,18 @@ interface ProviderBody {
   apiKey?: unknown;
   model?: unknown;
   contextWindow?: unknown;
+  maxOutputTokens?: unknown;
   supportsTools?: unknown;
   supportsStreaming?: unknown;
+  headers?: unknown;
+}
+
+/** 拉模型清单的入参：新建时给全量，编辑时给 id 即可。 */
+interface ModelListBody {
+  id?: unknown;
+  protocol?: unknown;
+  baseUrl?: unknown;
+  apiKey?: unknown;
   headers?: unknown;
 }
 
@@ -155,6 +170,17 @@ function readProviderInput(
     } else out.contextWindow = body.contextWindow;
   }
 
+  if (body.maxOutputTokens !== undefined) {
+    if (body.maxOutputTokens === null) out.maxOutputTokens = null;
+    else if (typeof body.maxOutputTokens !== 'number' || !Number.isInteger(body.maxOutputTokens) || body.maxOutputTokens <= 0) {
+      fields.push({
+        field: 'maxOutputTokens',
+        code: 'invalid_value',
+        message: 'maxOutputTokens 必须是正整数或 null',
+      });
+    } else out.maxOutputTokens = body.maxOutputTokens;
+  }
+
   if (body.supportsTools !== undefined) {
     if (typeof body.supportsTools !== "boolean") {
       fields.push({ field: "supportsTools", code: "invalid_value", message: "supportsTools 必须是布尔值" });
@@ -216,6 +242,7 @@ export function registerProviderRoutes(app: FastifyInstance, ctx: ServerContext)
       apiKey: input.apiKey as string,
       model: input.model as string,
       contextWindow: input.contextWindow ?? null,
+      maxOutputTokens: input.maxOutputTokens ?? null,
       supportsTools: input.supportsTools ?? true,
       supportsStreaming: input.supportsStreaming ?? true,
       ...(input.headers !== undefined ? { headers: input.headers } : {}),
@@ -249,6 +276,7 @@ export function registerProviderRoutes(app: FastifyInstance, ctx: ServerContext)
         ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.contextWindow !== undefined ? { contextWindow: input.contextWindow } : {}),
+        ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
         ...(input.supportsTools !== undefined ? { supportsTools: input.supportsTools } : {}),
         ...(input.supportsStreaming !== undefined ? { supportsStreaming: input.supportsStreaming } : {}),
         ...(input.headers !== undefined ? { headers: input.headers } : {}),
@@ -318,5 +346,81 @@ export function registerProviderRoutes(app: FastifyInstance, ctx: ServerContext)
   app.get("/api/providers/available", async () => {
     const providers = listProviders();
     return { count: providers.length, defaultId: readProviderFile().defaultId };
+  });
+
+  /**
+   * `POST /api/providers/models` —— 用「表单里正在填的」baseUrl / apiKey / protocol
+   * 拉一份模型清单。新建供应商时还没落盘，所以不能按 id 取，必须吃 body。
+   *
+   * 编辑已有供应商时只需给 id（apiKey 留空表示用已存的）。
+   * 响应带每个模型的上下文窗口 / 最大输出默认值，供表单「带出来」。
+   */
+  app.post<{ Body: ModelListBody }>("/api/providers/models", async (req, reply) => {
+    const body = req.body ?? {};
+    let protocol: ProviderProtocol | undefined;
+    let baseUrl: string | undefined;
+    let apiKey: string | undefined;
+    let headers: Record<string, string> | undefined;
+
+    const existingId = typeof body.id === "string" && body.id.length > 0 ? body.id : null;
+    if (existingId) {
+      const existing = getProvider(existingId);
+      if (!existing) return json(reply, 404, { error: "provider_not_found" });
+      protocol = existing.protocol;
+      baseUrl = existing.baseUrl;
+      apiKey = existing.apiKey;
+      headers = existing.headers;
+    }
+
+    if (isProviderProtocol(body.protocol)) protocol = body.protocol;
+    if (typeof body.baseUrl === "string" && body.baseUrl.trim().length > 0) {
+      baseUrl = body.baseUrl.trim().replace(/\/+$/, "");
+    }
+    // 明文 key 只在内存里用一次，不写日志、不回响应
+    if (typeof body.apiKey === "string" && body.apiKey.trim().length > 0) {
+      apiKey = body.apiKey.trim();
+    }
+    const parsedHeaders = readHeaders(body.headers, []);
+    if (parsedHeaders !== undefined) headers = parsedHeaders;
+
+    const fields: FieldError[] = [];
+    if (protocol === undefined) {
+      fields.push({ field: "protocol", code: "required", message: "需要 protocol 或已有供应商 id" });
+    }
+    if (baseUrl === undefined) {
+      fields.push({ field: "baseUrl", code: "required", message: "需要 baseUrl 或已有供应商 id" });
+    }
+    if (apiKey === undefined) {
+      fields.push({ field: "apiKey", code: "required", message: "需要 apiKey 或已有供应商 id" });
+    }
+    if (fields.length > 0) return json(reply, 400, { error: "invalid_provider", fields });
+
+    const started = Date.now();
+    try {
+      const models = await fetchModels({
+        protocol: protocol as ProviderProtocol,
+        baseUrl: baseUrl as string,
+        apiKey: apiKey as string,
+        ...(headers !== undefined ? { headers } : {}),
+      });
+      return {
+        ok: true,
+        latencyMs: Date.now() - started,
+        count: models.length,
+        models,
+        /** 供应商与模型都判断不出窗口时的兜底值，前端可显示为「默认」。 */
+        fallbackContextWindow: defaultWindowFor(protocol as ProviderProtocol),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        count: 0,
+        models: [],
+        error: message,
+        ...(err instanceof ModelListError && err.status !== undefined ? { status: err.status } : {}),
+      };
+    }
   });
 }

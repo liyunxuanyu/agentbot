@@ -89,11 +89,33 @@ export interface ProviderDto {
   baseUrl: string;
   model: string;
   contextWindow: number | null;
+  /** 单次回复最大输出 token；null = 不传，由供应商默认。 */
+  maxOutputTokens: number | null;
   supportsTools: boolean;
   supportsStreaming: boolean;
   /** 掩码，如 `sk-****abcd`；明文永不下发。 */
   apiKeyMasked: string;
   isDefault: boolean;
+}
+
+/** 从供应商拉到的模型条目（上下文/输出上限是默认值，可手改）。 */
+export interface ModelMeta {
+  id: string;
+  label: string;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  /** true = 命中内置对照表；false = 命名推断，需用户核对。 */
+  known: boolean;
+}
+
+export interface ModelListResponse {
+  ok: boolean;
+  latencyMs: number;
+  count: number;
+  models: ModelMeta[];
+  fallbackContextWindow?: number;
+  error?: string;
+  status?: number;
 }
 
 export interface ProvidersResponse {
@@ -108,6 +130,7 @@ export interface ProviderInput {
   apiKey?: string;
   model: string;
   contextWindow?: number | null;
+  maxOutputTokens?: number | null;
   supportsTools?: boolean;
   supportsStreaming?: boolean;
 }
@@ -774,6 +797,17 @@ export interface PurgeResponse {
   ok: boolean;
   deleted: Record<string, number>;
   closedStreams: number;
+}
+
+/** 数据整理预览：归档/删除 Bot 后留下的孤儿数据。 */
+export interface TidyPreview {
+  channels: { id: string; type: string; name: string; participantCount: number }[];
+  sessions: number;
+  messages: number;
+  events: number;
+  memories: number;
+  /** 所属 Bot 已不存在的用量记录数（只统计，保留作历史账目）。 */
+  orphanUsage: number;
 }
 
 /** 群聊发送响应（`POST /api/messages` 在 group 渠道上多出的字段）。 */

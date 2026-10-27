@@ -22,6 +22,11 @@ export interface ProviderConfig {
   model: string;
   /** 上下文窗口（token）；未知为 null（不估算、不裁剪）。 */
   contextWindow: number | null;
+  /**
+   * 单次回复的最大输出 token；null = 不发送该参数，由供应商用自身默认值。
+   * 与 `contextWindow` 分开：前者是「能读多少」，这是「一次能写多少」。
+   */
+  maxOutputTokens: number | null;
   supportsTools: boolean;
   supportsStreaming: boolean;
   /** 额外请求头（某些网关要求 x-title 之类）。 */

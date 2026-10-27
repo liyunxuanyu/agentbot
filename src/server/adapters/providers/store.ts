@@ -24,6 +24,7 @@ const providerSchema = z.object({
   apiKey: z.string().min(1),
   model: z.string().min(1),
   contextWindow: z.number().int().positive().nullable().default(null),
+  maxOutputTokens: z.number().int().positive().nullable().default(null),
   supportsTools: z.boolean().default(true),
   supportsStreaming: z.boolean().default(true),
   headers: z.record(z.string()).optional(),
@@ -47,6 +48,7 @@ export interface ProviderDto {
   baseUrl: string;
   model: string;
   contextWindow: number | null;
+  maxOutputTokens: number | null;
   supportsTools: boolean;
   supportsStreaming: boolean;
   /** 掩码，如 `sk-****abcd`。 */
@@ -67,6 +69,7 @@ export function providerDto(p: ProviderConfig, defaultId: string | null): Provid
     baseUrl: p.baseUrl,
     model: p.model,
     contextWindow: p.contextWindow,
+    maxOutputTokens: p.maxOutputTokens,
     supportsTools: p.supportsTools,
     supportsStreaming: p.supportsStreaming,
     apiKeyMasked: maskApiKey(p.apiKey),

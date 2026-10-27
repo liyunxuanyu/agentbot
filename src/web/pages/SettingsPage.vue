@@ -4,11 +4,13 @@ import { useRouter } from "vue-router";
 import { ApiError, api, isMissingEndpoint } from "../net/client";
 import type {
   McpServerDto,
+  ModelMeta,
   PermissionDto,
   ProviderDto,
   ProviderProtocol,
   RuntimeDetailDto,
   RuntimeProtocol,
+  TidyPreview,
   TokenStatusResponse,
 } from "../net/types";
 import { useBotsStore } from "../stores/bots";
@@ -336,6 +338,49 @@ const purging = ref(false);
 const purgeError = ref("");
 const PURGE_PHRASE = "删除全部数据";
 
+// ---- 数据整理（清理归档/删除 Bot 留下的孤儿数据）----
+const tidyPreview = ref<TidyPreview | null>(null);
+const tidyBusy = ref(false);
+const tidyError = ref("");
+const tidyResult = ref<Record<string, number> | null>(null);
+
+async function previewTidy(): Promise<void> {
+  if (tidyBusy.value) return;
+  tidyBusy.value = true;
+  tidyError.value = "";
+  tidyResult.value = null;
+  try {
+    const res = await api.tidyPreview();
+    tidyPreview.value = res.preview;
+  } catch (err) {
+    tidyError.value =
+      err instanceof ApiError ? (err.messageText() ?? `统计失败（${err.code}）`) : "统计失败，请重试";
+    tidyPreview.value = null;
+  } finally {
+    tidyBusy.value = false;
+  }
+}
+
+async function applyTidy(): Promise<void> {
+  if (tidyBusy.value || !tidyPreview.value) return;
+  tidyBusy.value = true;
+  tidyError.value = "";
+  try {
+    const res = await api.tidyApply();
+    tidyResult.value = res.deleted;
+    ui.toast(`已清理 ${res.deleted.channels ?? 0} 个渠道、${res.deleted.memories ?? 0} 条孤儿记忆`);
+    // 列表与用量都变了：让下次进入时重新拉
+    void channels.load();
+    void bots.load();
+    await previewTidy();
+  } catch (err) {
+    tidyError.value =
+      err instanceof ApiError ? (err.messageText() ?? `整理失败（${err.code}）`) : "整理失败，请重试";
+  } finally {
+    tidyBusy.value = false;
+  }
+}
+
 async function purgeAll(): Promise<void> {
   if (purging.value) return;
   if (purgeInput.value.trim() !== PURGE_PHRASE) {
@@ -497,6 +542,12 @@ const editingProviderId = ref<string | null>(null);
 const providerErr = ref("");
 const providerSaving = ref(false);
 const providerBusy = ref<string | null>(null);
+/** 从供应商拉到（或编辑时回填）的模型清单；空数组 = 还没拉过。 */
+const modelList = ref<ModelMeta[]>([]);
+const modelListBusy = ref(false);
+const modelListErr = ref("");
+/** 拉取结果是否来自内置对照表；false 时提示「默认值靠命名推断，请核对」。 */
+const modelListAllKnown = ref(true);
 const providerForm = reactive({
   name: "",
   protocol: "openai-chat" as ProviderProtocol,
@@ -504,9 +555,65 @@ const providerForm = reactive({
   apiKey: "",
   model: "",
   contextWindow: "",
+  maxOutputTokens: "",
   supportsTools: true,
   supportsStreaming: true,
 });
+
+/** 表单里选了某个模型后，把它的默认能力带出来（用户可再手改）。 */
+function applyModelDefaults(id: string): void {
+  const meta = modelList.value.find((m) => m.id === id);
+  if (!meta) return;
+  if (meta.contextWindow !== null) providerForm.contextWindow = String(meta.contextWindow);
+  if (meta.maxOutputTokens !== null) providerForm.maxOutputTokens = String(meta.maxOutputTokens);
+}
+
+function onModelPick(): void {
+  if (providerForm.model.trim().length > 0) applyModelDefaults(providerForm.model.trim());
+}
+
+/** 拉模型清单：新建时用表单值，编辑时只给 id（key 用已存的，不回显明文）。 */
+async function loadModels(): Promise<void> {
+  if (modelListBusy.value) return;
+  modelListBusy.value = true;
+  modelListErr.value = "";
+  try {
+    const res = await api.listProviderModels({
+      ...(editingProviderId.value ? { id: editingProviderId.value } : {}),
+      protocol: providerForm.protocol,
+      baseUrl: providerForm.baseUrl.trim(),
+      ...(providerForm.apiKey.trim().length > 0 ? { apiKey: providerForm.apiKey.trim() } : {}),
+    });
+    if (!res.ok) {
+      modelListErr.value = res.error ?? "拉取失败";
+      modelList.value = [];
+      return;
+    }
+    modelList.value = res.models;
+    modelListAllKnown.value = res.models.every((m) => m.known);
+    if (res.models.length === 0) {
+      modelListErr.value = "供应商返回了空列表，模型名请手填。";
+      return;
+    }
+    // 当前模型不在清单里（或还没选）→ 自动选第一个并带出默认值
+    const current = providerForm.model.trim();
+    if (current.length === 0 || !res.models.some((m) => m.id === current)) {
+      const first = res.models[0];
+      if (first) {
+        providerForm.model = first.id;
+        applyModelDefaults(first.id);
+      }
+    } else {
+      applyModelDefaults(current);
+    }
+    ui.toast(`拉到 ${res.count} 个模型 · ${res.latencyMs}ms`);
+  } catch (err) {
+    modelListErr.value = err instanceof ApiError ? (err.messageText() ?? err.message) : "拉取失败";
+    modelList.value = [];
+  } finally {
+    modelListBusy.value = false;
+  }
+}
 
 function openAddProvider(): void {
   editingProviderId.value = null;
@@ -517,8 +624,11 @@ function openAddProvider(): void {
   providerForm.apiKey = "";
   providerForm.model = "";
   providerForm.contextWindow = "";
+  providerForm.maxOutputTokens = "";
   providerForm.supportsTools = true;
   providerForm.supportsStreaming = true;
+  modelList.value = [];
+  modelListErr.value = "";
   providerOpen.value = true;
 }
 
@@ -531,8 +641,11 @@ function openEditProvider(p: ProviderDto): void {
   providerForm.apiKey = "";
   providerForm.model = p.model;
   providerForm.contextWindow = p.contextWindow === null ? "" : String(p.contextWindow);
+  providerForm.maxOutputTokens = p.maxOutputTokens === null ? "" : String(p.maxOutputTokens);
   providerForm.supportsTools = p.supportsTools;
   providerForm.supportsStreaming = p.supportsStreaming;
+  modelList.value = [];
+  modelListErr.value = "";
   providerOpen.value = true;
 }
 
@@ -553,6 +666,20 @@ async function saveProvider(): Promise<void> {
     providerErr.value = "上下文窗口必须是正整数或留空。";
     return;
   }
+  const outRaw = providerForm.maxOutputTokens.trim();
+  const maxOutputTokens = outRaw.length === 0 ? null : Number.parseInt(outRaw, 10);
+  if (maxOutputTokens !== null && (!Number.isFinite(maxOutputTokens) || maxOutputTokens <= 0)) {
+    providerErr.value = "最大输出 token 必须是正整数或留空。";
+    return;
+  }
+  if (
+    contextWindow !== null &&
+    maxOutputTokens !== null &&
+    maxOutputTokens > contextWindow
+  ) {
+    providerErr.value = "最大输出 token 不能大于上下文窗口。";
+    return;
+  }
   providerSaving.value = true;
   try {
     const common = {
@@ -561,6 +688,7 @@ async function saveProvider(): Promise<void> {
       baseUrl: providerForm.baseUrl.trim(),
       model: providerForm.model.trim(),
       contextWindow,
+      maxOutputTokens,
       supportsTools: providerForm.supportsTools,
       supportsStreaming: providerForm.supportsStreaming,
     };
@@ -1204,6 +1332,48 @@ token  {{ tokenStatus.preview }}</pre>
             </section>
 
             <section class="card card-pad">
+              <div class="u-label" style="margin-bottom: 8px">数据整理</div>
+              <p style="font-size: var(--font-size-caption); color: var(--color-text-muted); line-height: 1.8; margin-bottom: 12px">
+                归档或删除 Bot 之后，它的会话、消息与事件不会自己消失，会继续占着列表和磁盘。
+                这里清理这些孤儿数据 —— 先预览，再执行。
+              </p>
+
+              <div v-if="tidyPreview" style="margin-bottom: 12px">
+                <div class="kv"><span class="k">待清理会话渠道</span><span class="v">{{ tidyPreview.channels.length }}</span></div>
+                <div class="kv"><span class="k">连带会话 / 消息 / 事件</span><span class="v u-mono">{{ tidyPreview.sessions }} / {{ tidyPreview.messages }} / {{ tidyPreview.events }}</span></div>
+                <div class="kv"><span class="k">孤儿记忆条目</span><span class="v">{{ tidyPreview.memories }}</span></div>
+                <div class="kv">
+                  <span class="k">孤儿用量记录</span>
+                  <span class="v" :title="'保留作历史账目，不删除'">{{ tidyPreview.orphanUsage }}（保留）</span>
+                </div>
+                <ul v-if="tidyPreview.channels.length > 0" class="hint" style="margin: 8px 0 0; padding-left: 18px">
+                  <li v-for="c in tidyPreview.channels.slice(0, 6)" :key="c.id">
+                    {{ c.type === "group" ? "群聊" : "私聊" }} · {{ c.name }}
+                  </li>
+                  <li v-if="tidyPreview.channels.length > 6">…还有 {{ tidyPreview.channels.length - 6 }} 个</li>
+                </ul>
+              </div>
+              <div v-else-if="tidyError" class="field-err" style="margin-bottom: 12px">{{ tidyError }}</div>
+
+              <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                <button class="btn btn--sm btn--secondary" :disabled="tidyBusy" @click="previewTidy">
+                  {{ tidyBusy ? "统计中…" : "预览可整理数据" }}
+                </button>
+                <button
+                  class="btn btn--sm btn--danger"
+                  :disabled="tidyBusy || !tidyPreview || tidyPreview.channels.length === 0 && tidyPreview.memories === 0"
+                  @click="applyTidy"
+                >
+                  执行整理
+                </button>
+              </div>
+              <p v-if="tidyResult" class="hint" style="margin-top: 10px">
+                已清理：渠道 {{ tidyResult.channels }} · 会话 {{ tidyResult.sessions }} ·
+                消息 {{ tidyResult.messages }} · 事件 {{ tidyResult.events }} · 记忆 {{ tidyResult.memories }}
+              </p>
+            </section>
+
+            <section class="card card-pad">
               <div class="u-label" style="margin-bottom: 8px; color: var(--color-danger-ink)">全量删除</div>
               <p style="font-size: var(--font-size-caption); color: var(--color-text-muted); line-height: 1.8; margin-bottom: 12px">
                 需要输入确认短语。删除后不可恢复；worktree 目录不会被删除（那是你的文件）。
@@ -1472,11 +1642,55 @@ token  {{ tokenStatus.preview }}</pre>
       </div>
       <div class="field">
         <label class="u-label" for="pv-model">模型</label>
-        <input id="pv-model" v-model="providerForm.model" class="input u-mono" placeholder="例如：deepseek-chat" />
+        <div style="display: flex; gap: 8px; align-items: flex-start">
+          <input
+            v-if="modelList.length === 0"
+            id="pv-model"
+            v-model="providerForm.model"
+            class="input u-mono"
+            style="flex: 1"
+            placeholder="例如：deepseek-chat（也可以点右侧拉取）"
+          />
+          <select
+            v-else
+            id="pv-model"
+            v-model="providerForm.model"
+            class="select u-mono"
+            style="flex: 1"
+            @change="onModelPick"
+          >
+            <option v-for="m in modelList" :key="m.id" :value="m.id">
+              {{ m.label === m.id ? m.id : `${m.id} · ${m.label}` }}
+            </option>
+          </select>
+          <button
+            class="btn btn--sm btn--secondary"
+            :disabled="modelListBusy"
+            :title="'用当前 Base URL 与 API Key 拉取可用模型'"
+            @click="loadModels"
+          >
+            {{ modelListBusy ? "拉取中…" : "拉取模型" }}
+          </button>
+        </div>
+        <div v-if="modelListErr" class="field-err" style="margin-top: 6px">{{ modelListErr }}</div>
+        <div v-else-if="modelList.length > 0 && !modelListAllKnown" class="hint">
+          部分模型的上下文窗口来自命名推断，请核对后按需修改。
+        </div>
+        <div v-else-if="modelList.length > 0" class="hint">
+          已拉到 {{ modelList.length }} 个模型；选中后自动带出上下文与输出上限，可手改。
+        </div>
+        <div v-else class="hint">
+          点「拉取模型」可从当前 Key 读取模型清单；拉不到时手填也可以。
+        </div>
       </div>
       <div class="field">
         <label class="u-label" for="pv-window">上下文窗口（token）</label>
-        <input id="pv-window" v-model="providerForm.contextWindow" class="input u-mono" placeholder="留空表示未知" inputmode="numeric" />
+        <input id="pv-window" v-model="providerForm.contextWindow" class="input u-mono" placeholder="留空表示未知（用协议默认值）" inputmode="numeric" />
+      </div>
+      <div class="field">
+        <label class="u-label" for="pv-out">最大输出 token</label>
+        <input id="pv-out" v-model="providerForm.maxOutputTokens" class="input u-mono" placeholder="留空表示不限制，由供应商默认" inputmode="numeric" />
+        <div class="hint">这是单次回复的上限，不是上下文窗口。留空时请求里不发送该参数。</div>
       </div>
       <div class="field">
         <label class="radio">

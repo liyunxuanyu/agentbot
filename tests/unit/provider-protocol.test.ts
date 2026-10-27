@@ -26,6 +26,7 @@ const CFG: ProviderConfig = {
   apiKey: "test-key",
   model: "test-model",
   contextWindow: null,
+  maxOutputTokens: null,
   supportsTools: true,
   supportsStreaming: true,
 };

@@ -327,6 +327,7 @@ const PROVIDER: ProviderConfig = {
   apiKey: "k",
   model: "base-model",
   contextWindow: null,
+  maxOutputTokens: null,
   supportsTools: true,
   supportsStreaming: true,
 };

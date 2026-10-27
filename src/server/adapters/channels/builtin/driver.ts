@@ -503,6 +503,10 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
         permissionMode: state.permissionMode,
         botRole: state.botRole,
         signal: controller.signal,
+        // 供应商配置的单次输出上限：null 时不传，交给供应商默认值
+        ...(effective.maxOutputTokens !== null
+          ? { maxOutputTokens: effective.maxOutputTokens }
+          : {}),
         callbacks: {
           onTextDelta: (delta) => emitDelta(state, turnId, "delta", delta, messageId),
           onReasoningDelta: (delta) => {

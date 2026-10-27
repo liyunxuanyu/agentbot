@@ -304,7 +304,7 @@ describe("管理员种子（Q16）", () => {
     }
   });
 
-  it("已有 Bot → 不替用户做决定", () => {
+  it("已有普通 Bot 但没有管理员 → 仍然补一个管理员，不动用户的 Bot", () => {
     const db = newDb();
     try {
       insertBuiltinRuntime(db);
@@ -325,8 +325,44 @@ describe("管理员种子（Q16）", () => {
         runtimeId: "builtin",
         log: () => undefined,
       });
-      expect(result).toEqual({ seeded: false, reason: "has_bots" });
+      expect(result.seeded).toBe(true);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM bots").get() as { n: number }).n).toBe(2);
+      const admin = db
+        .prepare("SELECT name, role FROM bots WHERE id = ?")
+        .get(result.botId) as { name: string; role: string };
+      expect(admin).toEqual({ name: ADMIN_BOT_NAME, role: "admin" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("已有同名「管理员」且是内置引擎 → 提升角色，不再新建", () => {
+    const db = newDb();
+    try {
+      insertBuiltinRuntime(db);
+      const created = createBot(
+        db,
+        { name: ADMIN_BOT_NAME, runtimeId: "builtin" },
+        {
+          runtimeExists: () => true,
+          runtimeRequiresWorktree: () => false,
+          runtimeDisplayName: () => "内置引擎",
+          providerExists: () => true,
+        },
+      );
+      expect(created.outcome.ok).toBe(true);
+
+      const result = seedAdminBot(db, {
+        hasProviders: true,
+        runtimeId: "builtin",
+        log: () => undefined,
+      });
+      expect(result.seeded).toBe(true);
       expect((db.prepare("SELECT COUNT(*) AS n FROM bots").get() as { n: number }).n).toBe(1);
+      const row = db
+        .prepare("SELECT role FROM bots WHERE id = ?")
+        .get(result.botId) as { role: string };
+      expect(row.role).toBe("admin");
     } finally {
       db.close();
     }
@@ -470,5 +506,110 @@ describe("角色切换（R6）", () => {
     };
     expect(body.totalBots).toBe(2);
     expect(body.bots.map((b) => b.id)).toEqual(["b_admin"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 数据整理（清理归档/删除 Bot 留下的孤儿数据）
+// ---------------------------------------------------------------------------
+
+describe("数据整理", () => {
+  it("先预览再执行：只删无在用参与者的渠道，孤儿用量保留", async () => {
+    const c = await boot();
+    try {
+      c.db
+        .prepare(
+          `INSERT INTO bots (id, name, persona, status, created_at, updated_at)
+           VALUES ('alive', '在用的', '', 'active', 1, 1), ('gone', '已归档', '', 'archived', 1, 1)`,
+        )
+        .run();
+      const insertCh = c.db.prepare(
+        `INSERT INTO channels (id, type, name, participant_bot_ids, created_at) VALUES (?, ?, ?, ?, 1)`,
+      );
+      insertCh.run("ch_alive", "dm", "在用私聊", '["alive"]');
+      insertCh.run("ch_gone", "dm", "归档私聊", '["gone"]');
+      insertCh.run("ch_empty", "group", "空参与者", "[]");
+      insertCh.run("ch_task", "task", "任务渠道", '["gone"]');
+
+      c.db
+        .prepare(
+          `INSERT INTO sessions (id, bot_id, channel_id, status, started_at) VALUES ('s1','gone','ch_gone','ready',1)`,
+        )
+        .run();
+      c.db
+        .prepare(
+          `INSERT INTO messages (id, session_id, channel_id, turn_id, role, content, created_at)
+           VALUES ('m1','s1','ch_gone','t1','user','hi',1)`,
+        )
+        .run();
+      c.db
+        .prepare(
+          `INSERT INTO events (session_id, turn_id, type, seq, payload, created_at)
+           VALUES ('s1','t1','done',1,'{}',1)`,
+        )
+        .run();
+      c.db
+        .prepare(
+          `INSERT INTO usage_records (id, bot_id, input_tokens, output_tokens, created_at)
+           VALUES ('u1','ghost',10,20,1)`,
+        )
+        .run();
+
+      // memory_entries 有 ON DELETE CASCADE，正常情况下不会留下孤儿记忆；
+      // 端点仍做防御性统计（外键曾关掉过的库），这里只断言它如实报 0。
+
+      // 预览：ch_gone 与 ch_empty 是孤儿，ch_alive 与 task 渠道保留
+      const previewRes = await fetch(`${c.base}/api/admin/tidy`);
+      expect(previewRes.status).toBe(200);
+      const previewBody = (await previewRes.json()) as {
+        preview: {
+          channels: { id: string }[];
+          sessions: number;
+          messages: number;
+          events: number;
+          memories: number;
+          orphanUsage: number;
+        };
+      };
+      const ids = previewBody.preview.channels.map((x) => x.id).sort();
+      expect(ids).toEqual(["ch_empty", "ch_gone"]);
+      expect(previewBody.preview.sessions).toBe(1);
+      expect(previewBody.preview.messages).toBe(1);
+      expect(previewBody.preview.events).toBe(1);
+      expect(previewBody.preview.memories).toBe(0);
+      expect(previewBody.preview.orphanUsage).toBe(1);
+
+      // 不带 confirm → 拒绝，且什么都没删
+      const denied = await fetch(`${c.base}/api/admin/tidy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(denied.status).toBe(400);
+      expect((await denied.json()) as { error: string }).toMatchObject({ error: "confirm_required" });
+
+      // 带 confirm → 执行
+      const applied = await fetch(`${c.base}/api/admin/tidy`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      });
+      expect(applied.status).toBe(200);
+      const appliedBody = (await applied.json()) as { deleted: Record<string, number> };
+      expect(appliedBody.deleted["channels"]).toBe(2);
+      expect(appliedBody.deleted["sessions"]).toBe(1);
+      expect(appliedBody.deleted["memories"]).toBe(0);
+
+      const left = c.db
+        .prepare("SELECT id FROM channels ORDER BY id")
+        .all() as { id: string }[];
+      expect(left.map((r) => r.id)).toEqual(["ch_alive", "ch_task"]);
+      // 孤儿用量保留作历史账目
+      expect(
+        (c.db.prepare("SELECT COUNT(*) AS n FROM usage_records").get() as { n: number }).n,
+      ).toBe(1);
+    } finally {
+      await c.close();
+    }
   });
 });
