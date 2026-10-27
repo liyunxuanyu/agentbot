@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createBuiltinDriver } from "../../src/server/adapters/channels/builtin/driver.js";
 import { setTurnContext, clearTurnContext } from "../../src/server/adapters/turn-context.js";
+import { createWriteLock } from "../../src/server/core/group/write-lock.js";
 import type {
   ProviderClient,
   ProviderCompletion,
@@ -242,5 +243,191 @@ describe("builtin driver", () => {
     expect(events.find((e) => e.type === "error")).toMatchObject({
       payload: { code: "provider_unavailable", fatal: true },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G7：同一渠道的写类工具串行（两个 Bot 并发写同一文件）
+// ---------------------------------------------------------------------------
+
+/** 记录执行区间的写工具：模拟真实写文件需要的耗时。 */
+function slowWriteTool(spans: { who: string; start: number; end: number }[], who: string, ms: number): ToolDefinition {
+  return {
+    name: "act",
+    description: "test",
+    parameters: { type: "object", properties: {} },
+    permission: "write",
+    source: "builtin",
+    async execute() {
+      const start = Date.now();
+      await new Promise((r) => setTimeout(r, ms));
+      spans.push({ who, start, end: Date.now() });
+      return { ok: true, output: "written", durationMs: Date.now() - start };
+    },
+  };
+}
+
+const BUILTIN_DECL_LOCAL = {
+  schemaVersion: 1 as const,
+  id: "builtin",
+  displayName: "内置引擎",
+  protocol: "builtin" as const,
+  launch: { command: "x", args: [] },
+  detect: { versionArgs: [], versionPattern: "x" },
+  capabilities: {
+    plan: true,
+    permissionRequest: true,
+    resume: true,
+    images: false,
+    streaming: true,
+    contextWindow: null,
+  },
+  eventCapabilities: [],
+  permission: { channel: "internal" as const, defaultTimeoutPolicy: "reject" as const },
+  resumeStrategy: "native" as const,
+  executionLocations: ["local" as const],
+};
+
+function twoToolScript(): ProviderDelta[][] {
+  return [
+    [
+      { kind: "tool_call", call: { id: "c1", name: "act", args: { path: "same.txt" }, rawArguments: '{"path":"same.txt"}' } },
+      { kind: "finish", reason: "tool_calls" },
+    ],
+    [{ kind: "text", text: "完成" }, { kind: "finish", reason: "stop" }],
+  ];
+}
+
+describe("G7 写锁", () => {
+  it("同一渠道两个 Bot 并发写：执行区间不重叠", async () => {
+    const spans: { who: string; start: number; end: number }[] = [];
+    const lock = createWriteLock();
+    const cwd = tempDir();
+
+    async function runBot(botId: string, sessionId: string, ms: number): Promise<void> {
+      const driver = createBuiltinDriver({
+        skillsDir: tempDir(),
+        resolveProvider: () => PROVIDER,
+        createClient: () => new ScriptedProvider(twoToolScript()),
+        tools: [slowWriteTool(spans, botId, ms)],
+        writeLock: lock,
+      });
+      const h = await driver.start(BUILTIN_DECL_LOCAL, {
+        cwd,
+        sessionId,
+        botId,
+        channelId: "ch_shared",
+        providerId: "p1",
+      });
+      driver.onPermission(h, (req) => {
+        void driver.respondPermission(h, req.requestId, { kind: "approve", scope: "once" });
+      });
+      await driver.newSession(h, { cwd, systemPrompt: "测试" });
+      setTurnContext(h, { turnId: `t_${botId}`, messageId: `m_${botId}`, botId });
+      try {
+        await driver.prompt(h, { text: "写文件" });
+      } finally {
+        clearTurnContext(h);
+      }
+    }
+
+    await Promise.all([runBot("b1", "s1", 50), runBot("b2", "s2", 20)]);
+
+    expect(spans).toHaveLength(2);
+    spans.sort((a, b) => a.start - b.start);
+    expect(spans[1]!.start).toBeGreaterThanOrEqual(spans[0]!.end);
+  });
+
+  it("不同渠道的两个 Bot 仍并行（写锁按渠道隔离）", async () => {
+    const spans: { who: string; start: number; end: number }[] = [];
+    const lock = createWriteLock();
+    const cwd = tempDir();
+
+    async function runBot(botId: string, sessionId: string, channelId: string): Promise<void> {
+      const driver = createBuiltinDriver({
+        skillsDir: tempDir(),
+        resolveProvider: () => PROVIDER,
+        createClient: () => new ScriptedProvider(twoToolScript()),
+        tools: [slowWriteTool(spans, botId, 50)],
+        writeLock: lock,
+      });
+      const h = await driver.start(BUILTIN_DECL_LOCAL, {
+        cwd,
+        sessionId,
+        botId,
+        channelId,
+        providerId: "p1",
+      });
+      driver.onPermission(h, (req) => {
+        void driver.respondPermission(h, req.requestId, { kind: "approve", scope: "once" });
+      });
+      await driver.newSession(h, { cwd, systemPrompt: "测试" });
+      setTurnContext(h, { turnId: `t_${botId}`, messageId: `m_${botId}`, botId });
+      try {
+        await driver.prompt(h, { text: "写文件" });
+      } finally {
+        clearTurnContext(h);
+      }
+    }
+
+    const started = Date.now();
+    await Promise.all([runBot("b1", "s1", "chA"), runBot("b2", "s2", "chB")]);
+    const elapsed = Date.now() - started;
+
+    expect(spans).toHaveLength(2);
+    // 并行：两个 50ms 的写操作若串行会 ≥100ms
+    expect(elapsed).toBeLessThan(95);
+  });
+
+  it("读类工具不被写锁影响：并发读仍然并行", async () => {
+    const lock = createWriteLock();
+    // 用一个占位的长写操作占住渠道
+    const hold = lock.run("ch_read", () => new Promise<void>((r) => setTimeout(r, 80)));
+    await new Promise((r) => setTimeout(r, 5));
+
+    let readEnded: number | null = null;
+    const started = Date.now();
+    const driver = createBuiltinDriver({
+      skillsDir: tempDir(),
+      resolveProvider: () => PROVIDER,
+      createClient: () =>
+        new ScriptedProvider([
+          [{ kind: "tool_call", call: { id: "c1", name: "act", args: {}, rawArguments: "{}" } }, { kind: "finish", reason: "tool_calls" }],
+          [{ kind: "finish", reason: "stop" }],
+        ]),
+      tools: [
+        {
+          name: "act",
+          description: "read",
+          parameters: { type: "object", properties: {} },
+          permission: "read",
+          source: "builtin",
+          async execute() {
+            readEnded = Date.now();
+            return { ok: true, output: "read-ok", durationMs: 0 };
+          },
+        },
+      ],
+      writeLock: lock,
+    });
+    const h = await driver.start(BUILTIN_DECL_LOCAL, {
+      cwd: tempDir(),
+      sessionId: "s_read",
+      botId: "b1",
+      channelId: "ch_read",
+      providerId: "p1",
+    });
+    await driver.newSession(h, { cwd: tempDir(), systemPrompt: "测试" });
+    setTurnContext(h, { turnId: "t_read", messageId: "m_read", botId: "b1" });
+    try {
+      await driver.prompt(h, { text: "读" });
+    } finally {
+      clearTurnContext(h);
+    }
+
+    // 读操作在写锁被占用的 80ms 内就完成了
+    expect(readEnded).not.toBeNull();
+    expect((readEnded ?? 0) - started).toBeLessThan(60);
+    await hold;
   });
 });

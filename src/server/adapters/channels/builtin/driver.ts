@@ -34,6 +34,7 @@ import {
   type ToolPermissionRequest,
 } from "../../../core/agent/tools/registry.js";
 import type { McpManager } from "../../mcp/manager.js";
+import { sharedWriteLock, type WriteLock } from "../../../core/group/write-lock.js";
 
 /**
  * 内置引擎通道驱动（N2）。
@@ -70,6 +71,12 @@ export interface BuiltinDriverOptions {
    * 记忆保存后下一轮立即生效；返回 null 表示会话不存在，保留旧值。
    */
   refreshBasePrompt?: (sessionId: string) => string | null;
+  /**
+   * 渠道级写锁（G7）：同一个渠道里的写类工具（write/exec/network/admin）串行执行，
+   * 读类工具不排队。缺省用进程级单例 —— 群聊里每个 Bot 一个驱动实例，
+   * 各建一把锁等于没锁。
+   */
+  writeLock?: WriteLock;
   log?: (message: string) => void;
 }
 
@@ -82,6 +89,8 @@ interface SessionState {
   sessionId: string;
   cwd: string;
   botId: string | null;
+  /** 会话所属渠道（G7 写锁的键）；单测可不传。 */
+  channelId: string | null;
   providerId: string | null;
   /** 会话级模型覆盖（R4）；null = 用供应商默认模型。 */
   model: string | null;
@@ -152,6 +161,8 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
       ...(opts.createBot === undefined ? {} : { createBot: opts.createBot }),
     });
   const log = opts.log ?? ((msg: string) => console.warn(`[builtin] ${msg}`));
+  // G7：写锁必须是进程级单例（群里每个 Bot 一个驱动实例，各建一把 = 没锁）
+  const lock = opts.writeLock ?? sharedWriteLock();
 
   function stateOf(h: SessionHandle): SessionState | null {
     return states.get(h.sessionId) ?? null;
@@ -477,6 +488,8 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     state.systemPrompt = prompt;
 
     const client = makeClient(effective);
+    // G7：本会话所属渠道（写锁的键）。闭包里 TS 不保留外层判空收窄。
+    const channelKey = state.channelId;
     // 上下文压缩（R7）：阈值按上下文窗口占用比，压缩完再追加本轮用户消息
     await maybeCompact(state, client, effective, controller.signal);
     if (state.disposed || controller.signal.aborted) {
@@ -507,6 +520,16 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
         ...(effective.maxOutputTokens !== null
           ? { maxOutputTokens: effective.maxOutputTokens }
           : {}),
+        // G7：写类工具按渠道串行。没有渠道（理论上不会发生）时不串行 ——
+        // 宁可保持旧行为，也不要让所有会话共用一把「null 渠道」的锁。
+        ...(channelKey === null
+          ? {}
+          : {
+              serializeWrite: (_tool, execute) =>
+                lock.runCancellable(channelKey, controller.signal, execute).then((r) =>
+                  r.ok ? r.value : null,
+                ),
+            }),
         callbacks: {
           onTextDelta: (delta) => emitDelta(state, turnId, "delta", delta, messageId),
           onReasoningDelta: (delta) => {
@@ -635,6 +658,7 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
         sessionId: ctx.sessionId,
         cwd: ctx.workspacePath ?? ctx.cwd,
         botId: ctx.botId ?? null,
+        channelId: ctx.channelId ?? null,
         providerId: ctx.providerId ?? null,
         model: ctx.model ?? null,
         permissionMode:

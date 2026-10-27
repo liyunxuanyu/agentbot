@@ -343,7 +343,7 @@ created → starting → ready → running ⇄ waiting_permission │
 | 场景 | 机制 |
 |---|---|
 | 同一 Bot 双标签页发消息（P0-15） | `session-lock.ts` 内存互斥 + `sessions.status` 落库；第二个请求返回 `202 {queued:true, position}`，前端显示「排队中」，前一 Turn 结束自动放行；重启后锁由 `status` 重建 |
-| 群聊多 Bot 并发 | 默认**顺序执行**（03-decisions Q3）：`dispatcher` 串行调度，同一 worktree 同时只有一个写者；仅显式 @ 多个 Bot 时并行，若共享 `local` 目录则额外提示「并发写风险」 |
+| 群聊多 Bot 并发 | 默认**顺序执行**（03-decisions Q3）：`dispatcher` 串行调度，同一 worktree 同时只有一个写者；显式 @ 多个 Bot 时并行，并行期间的写类工具由**渠道级写锁**（`core/group/write-lock.ts`）串行化 —— 同渠道的 write/exec/network/admin 排队执行，读类不排队，第二个写者能看到第一个的结果（G7） |
 | 文件冲突（C7） | 优先 worktree 隔离；`local` 目录多 Bot 靠顺序执行 + 每轮前后 `git status --porcelain` 快照对比，报告列出「本轮改动文件」 |
 | worktree 生命周期 | 创建：Bot 首次 Session / 首个 Assignment 时 `git worktree add`；复用：同 Bot 后续 Session 复用同一路径（P0-13）；Assignment 用独立子 worktree 保证不干扰主会话；清理：删除后保留 7 天再提示，**永不自动删用户文件** |
 | Assignment 队列 | 同 Bot 最多 **1 个**执行中（与 PRD P0-07 对齐：local 模式下并发写同目录有真实冲突风险），队列上限 5，超出 409；`queue_pos` 持久化，重启后按序恢复 |

@@ -571,6 +571,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         workspacePath: resolved.workspacePath,
         sessionId,
         botId: row.bot_id,
+        channelId: row.channel_id,
         providerId: row.session_provider_id ?? row.bot_provider_id ?? null,
         model: row.session_model ?? null,
         permissionMode: permissionModeOf(row),

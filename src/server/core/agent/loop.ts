@@ -53,6 +53,17 @@ export interface AgentLoopOptions {
   maxIterations?: number;
   maxToolCalls?: number;
   maxOutputTokens?: number;
+  /**
+   * 写类工具的串行化门（G7）。
+   *
+   * 只有 write / exec / network / admin 会经过它；读类工具与 `null` 权限直接执行。
+   * 返回 `null` 表示等待期间被取消（用户中断 / 超时），本轮按 cancelled 收口，
+   * 并且不再执行后续工具。
+   */
+  serializeWrite?: (
+    tool: ToolDefinition,
+    run: () => Promise<ToolResult>,
+  ) => Promise<ToolResult | null>;
 }
 
 export type LoopStopReason =
@@ -304,7 +315,19 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 
       let result: ToolResult;
       try {
-        result = await tool.execute(toolCtx, call.args);
+        // 闭包里 TS 不保留上方 `call.args === null` 的收窄，这里显式断言
+        const args = call.args as Record<string, unknown>;
+        const execute = (): Promise<ToolResult> => tool.execute(toolCtx, args);
+        // G7：写类工具按渠道串行（读类不排队）。没注入串行门时行为与之前完全一致。
+        const serialized =
+          opts.serializeWrite !== undefined && tool.permission !== null && tool.permission !== "read"
+            ? await opts.serializeWrite(tool, execute)
+            : await execute();
+        if (serialized === null) {
+          // 排队期间被取消：不执行，本轮直接收口（已写正文保留）
+          return { stopReason: "cancelled", iterations, toolCalls: toolCallCount };
+        }
+        result = serialized;
       } catch (err) {
         result = errorResult(
           `工具执行异常：${err instanceof Error ? err.message : String(err)}`,

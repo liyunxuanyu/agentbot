@@ -102,6 +102,11 @@ export interface SpawnContext {
   sessionId: string;
   /** 会话归属的 Bot；内置引擎据此选供应商（其它通道不需要）。 */
   botId?: string;
+  /**
+   * 会话所属渠道；内置引擎据此串行化同一群聊里的写类工具（G7）。
+   * 私聊也是一个渠道（dm），同样适用。
+   */
+  channelId?: string | null;
   /** Bot 绑定的模型供应商 id；null/缺省时用默认供应商。 */
   providerId?: string | null;
   /** 会话级模型覆盖；null/缺省时用供应商默认模型。 */
