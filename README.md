@@ -706,3 +706,7 @@ tests/unit/            ingest/repo/sse/turn/process/permissions/lifecycle/contex
 ```
 
 新增一个 ACP 运行时 = 往 `src/server/adapters/declarations/` 放一个 YAML，不改核心代码。
+
+## 会话控制（2026-10-27）
+
+内置引擎会话内可切**四档权限**（计划模式 / 变更前确认 / 自动模式 / 完全访问）与**模型**（供应商 + 模型），工作区下沉到会话/群聊，记忆按会话隔离，支持上下文压缩与缓存命中率统计；管理员 Bot 持 `create_bot` 工具。详见 [`.forge/agentbot-15-change-log-session-control.md`](.forge/agentbot-15-change-log-session-control.md)。

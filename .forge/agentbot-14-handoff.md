@@ -9,8 +9,8 @@
 |---|---|
 | 分支 | `continue-dev` |
 | 已完成 | M1–M14 全部 P0、内置引擎 N1–N6、三轮试用修复、5 个交互问题、消息顺序 bug、grep 路径 POSIX 化 |
-| 本轮 | **需求已对齐，代码未开始**（迁移 v3 还没写） |
-| 待办 | 下面第 5、6 节 |
+| 本轮 | **已完成并验收**（迁移 v3 → M1/M2/M3/M5），证据见 [`agentbot-15-change-log-session-control.md`](agentbot-15-change-log-session-control.md) |
+| 待办 | 无。本文保留作实现记录与验收清单 |
 
 上一轮遗留的两个环境性结论，别再重查：
 

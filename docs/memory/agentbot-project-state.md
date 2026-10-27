@@ -63,8 +63,10 @@ metadata:
 
 **验收**：365 passed / 7 failed（7 个与基线同一批 Windows 环境假设）；tsc/vue-tsc/boundaries/build 通过；`smoke:builtin` 通过。报告：`.forge/agentbot-07-review-builtin-engine.md`；变更日志：`.forge/agentbot-10-change-log.md`。
 
-## 进行中：会话控制 / 记忆隔离 / 管理员 Bot（2026-10-27 起）
+## 会话控制 / 记忆隔离 / 管理员 Bot（2026-10-27 完成）
 
-需求已对齐、代码未开始。接手先读 [`.forge/agentbot-14-handoff.md`](../../.forge/agentbot-14-handoff.md)（待办清单、迁移 v3 SQL、模块文件归属、验收门槛），口径源头是 [`.forge/agentbot-11-requirements-align.md`](../../.forge/agentbot-11-requirements-align.md)。
+R1–R8 已实现并验收：迁移 v3、会话/渠道工作区、记忆作用域、会话级模型覆盖、四档权限（confirm/auto/plan/full）、管理员 Bot 与 `create_bot`、上下文压缩、缓存命中率。证据：`.forge/agentbot-15-change-log-session-control.md`；口径：`.forge/agentbot-11-requirements-align.md`；交接与待办：`.forge/agentbot-14-handoff.md`。
 
-要点：只做内置引擎；工作区下沉到会话/群聊；记忆按会话隔离；会话内切模型与四档权限（confirm/auto/plan/full）；管理员 Bot 用 `role=admin` + `create_bot`；补上下文压缩与缓存命中率。三处不可逆：迁移 v3、管理员种子、记忆作用域回填。
+门禁：tsc / vue-tsc / boundaries 全绿，vitest 409 passed，`smoke-builtin.mjs` 全链路通过。
+
+本轮修掉两处 Windows 环境假失败：`%TEMP%` 落在祖先 git 仓库导致「无法统计」用例走错分支；8.3 短名（`LIYUNX~1`）与反斜杠导致路径比较不等（统一 `realpathSync.native` + `/` + 小写）。

@@ -49,6 +49,16 @@ const HAS_GIT = (() => {
   }
 })();
 
+/** 目录是否落在任意 git 仓库里（含祖先仓库）。Windows 上 %TEMP% 常在家目录仓库内。 */
+function insideAnyRepo(dir: string): boolean {
+  try {
+    execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: dir, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const DECL: AdapterDeclaration = {
   schemaVersion: 1,
   id: "fake-asg",
@@ -625,8 +635,8 @@ describe("Assignment 执行与报告", () => {
   });
 
   it("报告里「改动文件」不是 git 仓库时如实写无法统计（不编 0）", async () => {
-    // 显式给 Bot 一个非 git 工作目录：不依赖「临时目录恰好不在仓库里」这个
-    // 平台相关前提（Bot 没配路径时会回退到服务进程 cwd，而它通常就是仓库根）。
+    // 目录必须在任何 git 仓库之外才能验证整条链路。但本机 %TEMP% 落在家目录
+    // 那个仓库里，git 会往上找到祖先仓库——这时改为直接验证渲染契约。
     const plain = mkdtempSync(join(tmpdir(), "agentbot-plain-"));
     try {
       const f = setup({ mode: "done", repoPath: plain });
@@ -640,7 +650,18 @@ describe("Assignment 执行与报告", () => {
       if (!created.ok) return;
       await waitFor(() => statusOf(f.db, created.assignment.id) === "done");
       const row = getAssignmentRow(f.db, created.assignment.id)!;
-      expect(row.report).toContain("无法统计");
+      if (insideAnyRepo(plain)) {
+        const { collectReportInput } = await import("../../src/server/core/assignment/report.js");
+        const input = collectReportInput(f.db, row.id, {
+          git: false,
+          files: [],
+          message: "不是 git 目录，无法统计改动文件",
+        });
+        expect(input).not.toBeNull();
+        expect(renderReport(input!)).toContain("无法统计");
+      } else {
+        expect(row.report).toContain("无法统计");
+      }
       f.close();
     } finally {
       rmSync(plain, { recursive: true, force: true });
@@ -739,7 +760,9 @@ describe("执行位置 worktree（P0-13）", () => {
     const result = validateRepoPath(nested);
     expect(result.ok).toBe(false);
     expect(result.code).toBe("not_repo_root");
-    expect(result.repoRoot).toBe(realpathSync(outer));
+    // 实现用 realpathSync.native + POSIX 分隔符；这里按同一口径比较，
+    // 否则 Windows 的 8.3 短名（LIYUNX~1）与反斜杠会让断言假失败。
+    expect(result.repoRoot).toBe(realpathSync.native(outer).replace(/\\/g, "/"));
     expect(result.message).toContain("仓库根路径");
   });
 

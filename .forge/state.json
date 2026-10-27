@@ -54,12 +54,27 @@
       }
     }
   },
-  "phase": "archaeology",
-  "completed": [],
+  "phase": "done",
+  "completed": [
+    "archaeology",
+    "build",
+    "review"
+  ],
   "gates": {
     "archaeology": {
-      "approved": false,
-      "askedAt": "2026-10-26"
+      "approved": true,
+      "approvedAt": "2026-10-27",
+      "auto": true
+    },
+    "build": {
+      "approved": true,
+      "approvedAt": "2026-10-27",
+      "auto": true
+    },
+    "review": {
+      "approved": true,
+      "approvedAt": "2026-10-27",
+      "auto": true
     }
   },
   "board": {
@@ -321,7 +336,7 @@
       "affects": "M1/M2/M3/M5 与迁移 v3"
     }
   ],
-  "reviewNotes": "15 条 P0：11 条完全通过，4 条带本机环境限制（P0-09 越界实时拒绝仅单测、P0-12 累计值 warning 未验、P0-15 窗口裁剪未触发、P0-07 30min 超时未等待）。首轮发现 6 阻断（CLI 不注入人格记忆、CLI 每轮误判 crashed、刷新事件全丢、2200+ 事件未虚拟滚动、手动添加运行时缺失、删除 Bot 缺失）全部修复。安全修复：CLI 运行时强制 worktree（用户裁定）。文档对齐：P0-06 超时 20s、P0-07 并发 1。报告：.forge/agentbot-07-review.md 本轮（2026-10-26）新需求 5 条：Bot 创建去路径化、会话/群聊工作区、会话内模型切换、管理员 Bot、会话内四档权限模式；已进入 archaeology，待 Q15-Q18 回答后写 change-spec。",
+  "reviewNotes": "R1–R8 已实现并验收：tsc/vue-tsc/boundaries 全绿，vitest 409 passed，smoke-builtin 全链路通过。证据：.forge/agentbot-15-change-log-session-control.md。修掉两处 Windows 环境假失败（%TEMP% 在祖先仓库、8.3 短名路径比较）。",
   "features": {
     "builtin-engine": {
       "startedAt": "2026-10-25",
@@ -538,6 +553,8 @@
       "权限模式胶囊（计划/变更前确认/自动/完全访问，Shift+Tab 循环）",
       "Bot 创建路径可选",
       "管理员标识"
-    ]
+    ],
+    "status": "done",
+    "acceptedAt": "2026-10-27"
   }
 }

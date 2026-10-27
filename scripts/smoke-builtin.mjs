@@ -16,9 +16,9 @@
  */
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,6 +36,24 @@ function log(msg) {
 
 function assert(cond, message) {
   if (!cond) throw new Error(message);
+}
+
+/**
+ * Windows 的 %TEMP% 常是 8.3 短名（LIYUNX~1），服务端会把工作区 realpath 成长名，
+ * 两边直接字符串比较会假失败。按目录的真实路径 + 统一分隔符 + 小写比较。
+ */
+function samePath(a, b) {
+  return normPath(a) === normPath(b);
+}
+
+function normPath(p) {
+  const dir = dirname(p);
+  const base = basename(p);
+  try {
+    return join(realpathSync.native(dir), base).replace(/\\/g, "/").toLowerCase();
+  } catch {
+    return p.replace(/\\/g, "/").toLowerCase();
+  }
 }
 
 function sleep(ms) {
@@ -404,7 +422,7 @@ try {
   const first = await sendAndWait(channelA.id, "请把内容写进 hello.txt", true);
   assert(first.permission.action === "write", `权限动作应为 write，实际 ${first.permission.action}`);
   assert(
-    first.permission.target === join(wsA, "hello.txt"),
+    samePath(first.permission.target, join(wsA, "hello.txt")),
     `权限目标应落在渠道工作区，实际 ${first.permission.target}`,
   );
   await ok(`/api/permissions/${encodeURIComponent(first.permission.id)}/decision${q}`, {
@@ -556,7 +574,7 @@ try {
     `/api/permissions?sessionId=${encodeURIComponent(sessionA)}${q.replace("?", "&")}`,
   );
   const autoRow = autoPermissions.permissions.find(
-    (p) => p.action === "write" && p.target === join(wsA, "auto.txt"),
+    (p) => p.action === "write" && samePath(p.target, join(wsA, "auto.txt")),
   );
   assert(autoRow, "auto 模式没有留下写操作审计");
   assert(autoRow.decidedBy === "mode:auto", `auto 审计来源应为 mode:auto，实际 ${autoRow.decidedBy}`);
@@ -581,7 +599,7 @@ try {
     `/api/permissions?sessionId=${encodeURIComponent(sessionA)}${q.replace("?", "&")}`,
   );
   const fullRow = fullPermissions.permissions.find(
-    (p) => p.action === "write" && p.target === fullFile,
+    (p) => p.action === "write" && samePath(p.target, fullFile),
   );
   assert(fullRow, "full 模式没有留下越界写审计");
   assert(fullRow.decidedBy === "mode:full", `full 审计来源应为 mode:full，实际 ${fullRow.decidedBy}`);

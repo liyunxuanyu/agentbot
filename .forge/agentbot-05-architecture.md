@@ -468,3 +468,20 @@ pending ──approve/deny/remember──→ decided
 - **技术因素**：本项目前端复杂度集中在「长列表 + 流式追加 + 多面板」，没有必须用 React 的场景。Vue 的响应式 + `shallowRef` 手动控制粒度完全够用，`computed` / `v-memo` 能把重渲染限制在单 Turn；React 的并发渲染、Suspense 在本项目用不上。
 - **代价与风险**：① AI 聊天组件库在 Vue 侧成熟度略低于 React——TDesign Vue Next 的 Chat 组件可用，但定制深度不如 shadcn 生态；② 虚拟滚动、富文本渲染等库的 Vue 版本通常比 React 晚 1–2 个版本，升级要等依赖；③ 未来若要复用 React 生态的 AI 组件，需要重写而非直接引入。
 - **明确不做**：不引入 Nuxt（纯本地 SPA，不需要 SSR/SSG，多一层构建与部署复杂度）；不引入 Element Plus 全套（体积大、默认样式强、定制成本高）。组件库只保留「可选按需引入 TDesign Vue Next 的 Dialog / Dropdown / Tooltip」这一条口子。
+
+## 迁移 v3 与契约变更（2026-10-27）
+
+**迁移 v3**（`core/db/migrate.ts`，全部可空或带默认值）：
+`channels.workspace_path`；`sessions.workspace_path/provider_id/model/permission_mode`；`bots.role/permission_mode`；`memory_entries.scope/channel_id` + `idx_memory_scope`；`usage_records.cached_input_tokens/cache_write_tokens/model`。
+
+**契约**：
+
+- `SpawnContext` 增加 `workspacePath / providerId / model / permissionMode`。
+- `PermissionAction` 增加 `'admin'`（create_bot）。
+- `ToolContext` 增加 `permissionMode`；四档裁决在 `askPermission` 之前完成，plan 同时按模式裁剪工具表。
+- 新端点：`PATCH /api/channels/:id`、`PATCH /api/sessions/:id/controls`、`POST /api/sessions/:id/compact`、`GET /api/admin/bots`。
+- 记忆装配按 scope 过滤；摘要写入时带 `scope / channel_id`。
+
+**cwd 解析**：`sessions.workspace_path` → `channels.workspace_path` → `bots.repo_path` → `process.cwd()`。内置引擎不使用 worktree；CLI 路径不变。
+
+**并发**：同 Bot 会话并发仍为 1；群聊共用 cwd，写类工具按主持人串行。
