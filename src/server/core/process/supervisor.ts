@@ -635,6 +635,11 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     if (!runtimeSessionId) {
       const hasHistory = sessionHasHistory(sessionId, opts?.excludeTurnId);
       let systemPrompt: string | undefined;
+      let history: { role: "user" | "assistant"; content: string }[] | undefined;
+      // 内置引擎有自己的对话历史：历史以消息形式交给它，系统提示只留
+      // 「人格 + 记忆」并允许每轮刷新（记忆改了下一轮生效）。CLI 通道没有
+      // 消息级历史，仍把历史段落写进系统提示。
+      const builtinProtocol = runtime.declaration.protocol === "builtin";
       if (hasHistory) {
         const rebuilt = buildRebuildContext({
           db: deps.db,
@@ -643,7 +648,12 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
           contextWindow: runtime.declaration.capabilities.contextWindow,
           ...(opts?.excludeTurnId === undefined ? {} : { excludeTurnId: opts.excludeTurnId }),
         });
-        if (rebuilt.systemPrompt.length > 0) systemPrompt = rebuilt.systemPrompt;
+        if (builtinProtocol) {
+          if (rebuilt.memoryText.length > 0) systemPrompt = rebuilt.memoryText;
+          if (rebuilt.history.length > 0) history = rebuilt.history;
+        } else if (rebuilt.systemPrompt.length > 0) {
+          systemPrompt = rebuilt.systemPrompt;
+        }
         omitted = rebuilt.omittedMessages;
         resumeState = "rebuilt";
       } else {
@@ -662,6 +672,7 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         const created = await runtime.driver.newSession(handle, {
           cwd,
           ...(systemPrompt === undefined ? {} : { systemPrompt }),
+          ...(history === undefined ? {} : { history }),
         });
         runtimeSessionId = created.runtimeSessionId;
       } catch (err) {

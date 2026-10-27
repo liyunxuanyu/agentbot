@@ -178,8 +178,27 @@ export function createTurnOrchestrator(deps: TurnDeps): TurnOrchestrator {
   sup.addListener({
     onEvent(sessionId, event) {
       const turn = active.get(sessionId);
-      if (!turn || turn.settled) return;
-      handleDriverEvent(turn, event);
+      if (turn && !turn.settled) {
+        handleDriverEvent(turn, event);
+        return;
+      }
+      // 轮次之外的事件：手动压缩发生在两次 prompt 之间，没有 Turn 承接。
+      // 只放行 meta（压缩标记必须进流）；其他类型离开轮次没有可靠的消息归属，照旧丢弃。
+      if (event.type !== "meta") return;
+      const row = deps.db.prepare("SELECT bot_id FROM sessions WHERE id = ?").get(sessionId) as
+        | { bot_id: string }
+        | undefined;
+      const runtime = row ? deps.resolveRuntime(row.bot_id) : null;
+      if (!row || !runtime) return;
+      safeIngest(
+        {
+          sessionId,
+          messageId: null,
+          turnId: event.turnId,
+          eventCapabilities: runtime.declaration.eventCapabilities,
+        },
+        withBotId(event, row.bot_id),
+      );
     },
     onExit(sessionId, info, crashed) {
       const turn = active.get(sessionId);
@@ -330,6 +349,9 @@ export function createTurnOrchestrator(deps: TurnDeps): TurnOrchestrator {
         outputTokens?: unknown;
         reported?: unknown;
         cumulative?: unknown;
+        cachedInputTokens?: unknown;
+        cacheWriteTokens?: unknown;
+        model?: unknown;
       };
       // 只记上报值；未上报就保持 null，不填 0（P0-12）
       if (u.reported === true) {
@@ -344,6 +366,11 @@ export function createTurnOrchestrator(deps: TurnDeps): TurnOrchestrator {
         outputTokens: typeof u.outputTokens === "number" ? u.outputTokens : 0,
         reported: u.reported === true,
         ...(u.cumulative === true ? { cumulative: true } : {}),
+        ...(typeof u.cachedInputTokens === "number"
+          ? { cachedInputTokens: u.cachedInputTokens }
+          : {}),
+        ...(typeof u.cacheWriteTokens === "number" ? { cacheWriteTokens: u.cacheWriteTokens } : {}),
+        ...(typeof u.model === "string" && u.model.length > 0 ? { model: u.model } : {}),
       });
     }
     if (isTerminal(event)) settleFromEvent(turn, event);

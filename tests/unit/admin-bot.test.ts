@@ -9,7 +9,19 @@ import type { ServerContext } from "../../src/server/http/server.js";
 import { seedAdminBot, ADMIN_SEED_MARKER, ADMIN_BOT_NAME } from "../../src/server/core/bots/seed.js";
 import { createBot } from "../../src/server/core/bots/create.js";
 import { createCreateBotTool } from "../../src/server/core/agent/tools/builtin/create_bot.js";
-import type { ToolContext } from "../../src/server/core/agent/tools/registry.js";
+import { runAgentLoop } from "../../src/server/core/agent/loop.js";
+import type {
+  ChatMessage,
+  ProviderClient,
+  ProviderCompletion,
+  ProviderDelta,
+  ProviderRequest,
+} from "../../src/server/core/agent/provider.js";
+import {
+  createToolRegistry,
+  type ToolContext,
+  type ToolDefinition,
+} from "../../src/server/core/agent/tools/registry.js";
 import { listenEphemeral } from "./http-listen.js";
 
 /**
@@ -61,24 +73,88 @@ function toolCtx(
   };
 }
 
+/** 只投递一次工具调用、之后正常收尾的假 provider。 */
+class OneToolCallProvider implements ProviderClient {
+  readonly protocol = "openai-chat" as const;
+  private served = false;
+
+  constructor(
+    private readonly name: string,
+    private readonly args: Record<string, unknown>,
+  ) {}
+
+  async *stream(_req: ProviderRequest): AsyncGenerator<ProviderDelta> {
+    if (!this.served) {
+      this.served = true;
+      yield {
+        kind: "tool_call",
+        call: {
+          id: "call_create_bot",
+          name: this.name,
+          args: this.args,
+          rawArguments: JSON.stringify(this.args),
+        },
+      };
+      yield { kind: "finish", reason: "tool_calls" };
+      return;
+    }
+    yield { kind: "text", text: "已完成" };
+    yield { kind: "finish", reason: "stop" };
+  }
+
+  async complete(_req: ProviderRequest): Promise<ProviderCompletion> {
+    throw new Error("测试不支持非流式降级");
+  }
+}
+
+/** 走真实 agent loop 调一次工具，记录 loop 发起的权限询问。 */
+async function runToolViaLoop(
+  tool: ToolDefinition,
+  approve: boolean,
+): Promise<{ asked: { action: string; target: string }[]; messages: ChatMessage[] }> {
+  const asked: { action: string; target: string }[] = [];
+  const messages: ChatMessage[] = [{ role: "user", content: "请创建一个 Bot" }];
+  const result = await runAgentLoop({
+    provider: new OneToolCallProvider(tool.name, { name: "研究员" }),
+    registry: createToolRegistry([tool]),
+    messages,
+    cwd: workDir,
+    signal: new AbortController().signal,
+    botRole: "admin",
+    callbacks: {
+      onTextDelta: () => undefined,
+      onReasoningDelta: () => undefined,
+      onToolCall: () => undefined,
+      onToolResult: () => undefined,
+      onUsage: () => undefined,
+      async askPermission(req) {
+        asked.push({ action: req.action, target: req.target });
+        return approve;
+      },
+    },
+  });
+  expect(result.stopReason).toBe("end");
+  return { asked, messages };
+}
+
 // ---------------------------------------------------------------------------
 // create_bot 工具
 // ---------------------------------------------------------------------------
 
 describe("create_bot 工具（R6 / G4）", () => {
-  it("管理员 + 用户批准 → 调用创建逻辑并回执名称与 id", async () => {
+  it("管理员 → 调用创建逻辑并回执名称与 id；权限询问只由 loop 发起", async () => {
     const calls: unknown[] = [];
     const tool = createCreateBotTool((input) => {
       calls.push(input);
       return { ok: true, botId: "bot_new", name: input.name };
     });
 
-    const asked: unknown[] = [];
+    let asked = 0;
     const result = await tool.execute(
       toolCtx({
-        async askPermission(req) {
-          asked.push(req);
-          return true;
+        async askPermission() {
+          asked += 1;
+          return false;
         },
       }),
       { name: "研究员", persona: "负责调研", providerId: "p1" },
@@ -90,29 +166,11 @@ describe("create_bot 工具（R6 / G4）", () => {
     expect(calls).toEqual([
       { name: "研究员", persona: "负责调研", providerId: "p1" },
     ]);
-    // 管理动作走 action='admin'，由 resolver 落审计
-    expect(asked).toHaveLength(1);
-    expect((asked[0] as { action: string }).action).toBe("admin");
+    // 回归：工具自己再问一次会落两张 admin 卡，第二张永远 pending、轮次收不了口
+    expect(asked).toBe(0);
   });
 
-  it("用户拒绝 → 创建逻辑一次都不执行，回执说明原因", async () => {
-    let called = 0;
-    const tool = createCreateBotTool(() => {
-      called += 1;
-      return { ok: true, botId: "bot_new", name: "x" };
-    });
-
-    const result = await tool.execute(
-      toolCtx({ askPermission: async () => false }),
-      { name: "不该被创建" },
-    );
-
-    expect(result.ok).toBe(false);
-    expect(called).toBe(0);
-    expect(result.error).toContain("拒绝");
-  });
-
-  it("非管理员 → 不进入权限门禁，直接拒绝", async () => {
+  it("非管理员 → 直接拒绝，不进入创建逻辑", async () => {
     let called = 0;
     let asked = 0;
     const tool = createCreateBotTool(() => {
@@ -137,20 +195,43 @@ describe("create_bot 工具（R6 / G4）", () => {
     expect(result.error).toContain("管理员");
   });
 
-  it("参数缺失 → 不进入权限门禁", async () => {
-    let asked = 0;
-    const tool = createCreateBotTool(() => ({ ok: true, botId: "x", name: "x" }));
-    const result = await tool.execute(
-      toolCtx({
-        async askPermission() {
-          asked += 1;
-          return true;
-        },
-      }),
-      { name: "   " },
-    );
+  it("参数缺失 → 不进入创建逻辑", async () => {
+    let called = 0;
+    const tool = createCreateBotTool(() => {
+      called += 1;
+      return { ok: true, botId: "x", name: "x" };
+    });
+    const result = await tool.execute(toolCtx({ askPermission: async () => true }), { name: "   " });
     expect(result.ok).toBe(false);
-    expect(asked).toBe(0);
+    expect(called).toBe(0);
+  });
+
+  it("经 loop 调用：一次工具调用只产生一次 admin 权限请求，批准后创建", async () => {
+    const calls: unknown[] = [];
+    const tool = createCreateBotTool((input) => {
+      calls.push(input);
+      return { ok: true, botId: "bot_new", name: input.name };
+    });
+
+    const { asked, messages } = await runToolViaLoop(tool, true);
+
+    expect(asked).toEqual([{ action: "admin", target: "研究员" }]);
+    expect(calls).toHaveLength(1);
+    expect(messages.find((m) => m.role === "tool")?.content).toContain("bot_new");
+  });
+
+  it("经 loop 调用：用户拒绝 → 创建逻辑一次都不执行，回执可操作话术", async () => {
+    let called = 0;
+    const tool = createCreateBotTool(() => {
+      called += 1;
+      return { ok: true, botId: "bot_new", name: "x" };
+    });
+
+    const { asked, messages } = await runToolViaLoop(tool, false);
+
+    expect(asked).toEqual([{ action: "admin", target: "研究员" }]);
+    expect(called).toBe(0);
+    expect(messages.find((m) => m.role === "tool")?.content).toContain("用户拒绝");
   });
 });
 

@@ -63,6 +63,13 @@ export interface BuiltinDriverOptions {
    * 不注入时不提供该工具 —— 普通 Bot 的模型根本看不到它。
    */
   createBot?: CreateBotHandler;
+  /**
+   * 每轮重新装配「人格 + 记忆」基础提示（R3）。
+   *
+   * 驱动不碰数据库：装配层注入一个只读回调，`prompt` 前调用一次，
+   * 记忆保存后下一轮立即生效；返回 null 表示会话不存在，保留旧值。
+   */
+  refreshBasePrompt?: (sessionId: string) => string | null;
   log?: (message: string) => void;
 }
 
@@ -456,6 +463,10 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     const controller = new AbortController();
     state.controller = controller;
 
+    // 记忆每轮重新装配（R3）：保存后下一轮立即生效，不必重开进程
+    const refreshedBase = opts.refreshBasePrompt?.(state.sessionId);
+    if (typeof refreshedBase === "string") state.baseSystemPrompt = refreshedBase;
+
     // 系统提示每轮重建：工作区可能在会话内切换，权限模式也要写进提示
     const prompt = systemPromptOf(state);
     if (state.history[0]?.role === "system") {
@@ -490,6 +501,7 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
         messages: state.history,
         cwd: state.cwd,
         permissionMode: state.permissionMode,
+        botRole: state.botRole,
         signal: controller.signal,
         callbacks: {
           onTextDelta: (delta) => emitDelta(state, turnId, "delta", delta, messageId),
@@ -531,6 +543,13 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
                 outputTokens: sample.outputTokens,
                 reported: sample.reported,
                 cumulative: false,
+                ...(sample.cachedInputTokens === undefined
+                  ? {}
+                  : { cachedInputTokens: sample.cachedInputTokens }),
+                ...(sample.cacheWriteTokens === undefined
+                  ? {}
+                  : { cacheWriteTokens: sample.cacheWriteTokens }),
+                ...(sample.model === undefined ? {} : { model: sample.model }),
               }),
             );
           },
@@ -657,7 +676,11 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
       state.cwd = session.cwd;
       state.baseSystemPrompt = session.systemPrompt ?? "";
       state.systemPrompt = systemPromptOf(state);
-      state.history = [{ role: "system", content: state.systemPrompt }];
+      // 产品层重建的历史直接作为对话消息（内置引擎有消息级历史）
+      state.history = [
+        { role: "system", content: state.systemPrompt },
+        ...(session.history ?? []).map((m) => ({ role: m.role, content: m.content })),
+      ];
       return { runtimeSessionId: `builtin_${h.sessionId}` };
     },
 

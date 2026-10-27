@@ -54,6 +54,20 @@ export interface RebuildInput {
 export interface RebuildResult {
   /** 交给运行时的系统提示；人格为空且无记忆无消息时为空串。 */
   systemPrompt: string;
+  /**
+   * 人格 + 记忆段（不含历史引导语与消息）。
+   *
+   * 内置引擎把它作为可刷新的基础提示：每轮重新装配，记忆改了下一轮就生效；
+   * 历史消息走 `history` 作为真实对话，不再固化进系统提示。
+   */
+  memoryText: string;
+  /**
+   * 重建时实际带入的历史消息（按时间正序）。
+   *
+   * 只有内置引擎消费：它有自己的对话历史，历史应当以消息形式交给它；
+   * CLI 通道仍使用 `systemPrompt` 里的文本段落。
+   */
+  history: { role: "user" | "assistant"; content: string }[];
   /** 实际带入的消息条数。 */
   includedMessages: number;
   /** 因窗口预算被丢弃的历史条数（0 表示没丢）。 */
@@ -130,6 +144,8 @@ export function buildBootstrapContext(input: {
   const prompt = memoryResult.text;
   return {
     systemPrompt: prompt,
+    memoryText: prompt,
+    history: [],
     includedMessages: 0,
     omittedMessages: 0,
     estimatedTokens: estimateTokens(prompt),
@@ -215,6 +231,10 @@ export function buildRebuildContext(input: RebuildInput): RebuildResult {
 
   return {
     systemPrompt: prompt,
+    memoryText: memory,
+    history: included
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content.trim() })),
     includedMessages: included.length,
     omittedMessages: omitted,
     estimatedTokens: tokens,

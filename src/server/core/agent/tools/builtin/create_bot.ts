@@ -7,7 +7,9 @@ import type { ToolDefinition, ToolResult } from "../registry.js";
  *   ① 工具本身不碰数据库：真正的创建逻辑由装配层注入（`core/bots/create.ts`），
  *      与 `POST /api/bots` 共用同一份校验。
  *   ② 每次创建都走权限门禁（`action: "admin"`）：confirm 弹卡、auto 仍问、
- *      full 自动批准但写审计、plan 下工具根本不在列表里。
+ *      full 自动批准但写审计、plan 下工具根本不在列表里。门禁由 agent loop 按
+ *      `permission: "admin"` 统一执行 —— 工具内不再重复询问，否则一次调用会
+ *      落两张卡，第二张永远没人应答。
  *   ③ 非管理员即使拿到工具也会被拒（`ctx.botRole` 二次校验）—— 驱动已经按角色
  *      裁剪工具表，这里再挡一次，防止将来别的装配路径漏掉。
  */
@@ -81,17 +83,6 @@ export function createCreateBotTool(handler: CreateBotHandler): ToolDefinition {
       if (providerId !== null) request.providerId = providerId;
       const workspacePath = str(args, "workspacePath");
       if (workspacePath !== null) request.workspacePath = workspacePath;
-
-      // 权限门禁：管理动作也受四档模式约束（plan 下工具已被裁掉）
-      const allowed = await ctx.askPermission({
-        action: "admin",
-        target: `创建 Bot：${name}`,
-        detail: request,
-      });
-      if (!allowed) {
-        const message = "用户拒绝或当前权限模式不允许创建 Bot。";
-        return { ok: false, output: message, error: message, durationMs: Date.now() - started };
-      }
 
       let result: CreateBotResult;
       try {

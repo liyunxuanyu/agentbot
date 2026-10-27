@@ -4,6 +4,7 @@ import { closeDb, initDb, type DB } from "./core/db/db.js";
 import { eventBus } from "./core/events/bus.js";
 import { createTurnOrchestrator, type TurnRuntime } from "./core/orchestrator/turn.js";
 import { createSupervisor, sessionCwdOf } from "./core/process/supervisor.js";
+import { buildBootstrapContext } from "./core/orchestrator/context.js";
 import { sweepZombies } from "./core/process/pid-registry.js";
 import { createPermissionResolver } from "./core/permissions/resolver.js";
 import { SWEEP_INTERVAL_MS } from "./core/permissions/policy.js";
@@ -149,6 +150,14 @@ async function main(): Promise<void> {
   configureBuiltinDriver(
     createBuiltinDriver({
       mcp,
+      // 记忆每轮重新装配（R3）：保存后下一轮生效，作用域按当前会话/渠道过滤
+      refreshBasePrompt: (sessionId) => {
+        const row = db.prepare("SELECT bot_id FROM sessions WHERE id = ?").get(sessionId) as
+          | { bot_id: string }
+          | undefined;
+        if (!row) return null;
+        return buildBootstrapContext({ db, botId: row.bot_id, sessionId }).systemPrompt;
+      },
       // 管理员 Bot 的 create_bot（M3）：与 POST /api/bots 共用 core/bots/create.ts
       createBot: (input) => {
         const result = createBot(

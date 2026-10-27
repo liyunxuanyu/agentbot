@@ -6,8 +6,9 @@ import type { PermissionMode } from "../../../../shared/events.js";
  *
  * 权限语义：
  *   - `null` / `read` → loop 直接执行；
- *   - `write` / `exec` / `network` → 执行前必须走 `ctx.askPermission`，
- *     由现有权限层（边界 → 授权 → 用户）裁决。
+ *   - `write` / `exec` / `network` / `admin` → loop 在 `execute` 之前统一调
+ *     `askPermission`，由现有权限层（边界 → 授权 → 用户）裁决。
+ *     工具内部不要再问一次：一次调用只能对应一张权限卡。
  *
  * 这里不 import 任何协议/数据库模块，便于单测与边界检查。
  */

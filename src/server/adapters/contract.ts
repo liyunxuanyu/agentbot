@@ -174,7 +174,20 @@ export interface ChannelDriver {
   start(decl: AdapterDeclaration, ctx: SpawnContext): Promise<SessionHandle>;
   /** 失败不致命：退化为使用声明里的能力值。 */
   initialize(h: SessionHandle): Promise<ProbeResult>;
-  newSession(h: SessionHandle, opts: { cwd: string; systemPrompt?: string }): Promise<{ runtimeSessionId: string }>;
+  newSession(
+    h: SessionHandle,
+    opts: {
+      cwd: string;
+      systemPrompt?: string;
+      /**
+       * 产品层重建的历史消息（内置引擎消费）。
+       *
+       * 有消息级历史的通道把历史当真实对话，而不是塞进系统提示；
+       * CLI 通道忽略此字段，仍使用 `systemPrompt` 中的文本段落。
+       */
+      history?: { role: "user" | "assistant"; content: string }[];
+    },
+  ): Promise<{ runtimeSessionId: string }>;
   resumeSession(h: SessionHandle, runtimeSessionId: string): Promise<{ ok: boolean; reason?: string }>;
   prompt(h: SessionHandle, input: { text: string } & PromptControls): Promise<void>;
   cancel(h: SessionHandle): Promise<void>;
