@@ -48,11 +48,12 @@ onMounted(async () => {
   }
 });
 
-// 从引导页回到工作台后刷新一次：用户在向导里建了 Bot / 配了供应商
+// 从引导页回到工作台后刷新一次：用户在向导里建了 Bot / 配了供应商。
+// 只在「离开 /setup」时刷新，不在每次导航都发请求。
 watch(
   () => route.name,
-  (name) => {
-    if (name !== "setup" && setup.state !== null) void setup.refresh();
+  (name, previous) => {
+    if (previous === "setup" && name !== "setup" && setup.state !== null) void setup.refresh();
   },
 );
 

@@ -597,7 +597,8 @@ function skipAll(): void {
 // ---------------------------------------------------------------------------
 onMounted(async () => {
   ui.setCrumb([{ text: "首次启动" }]);
-  await setup.load();
+  // App.vue 也会在挂载时 load 一次（首启跳转需要）；已有状态就不重复请求
+  if (setup.state === null) await setup.load();
   await Promise.all([reloadProbe(), providers.load().catch(() => undefined), bots.load().catch(() => undefined)]);
   // 可重入：打开时停在第一个未完成的步骤
   jumpToFirstIncomplete();
