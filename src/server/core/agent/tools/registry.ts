@@ -1,4 +1,5 @@
 import type { ProviderTool } from "../provider.js";
+import type { PermissionMode } from "../../../../shared/events.js";
 
 /**
  * 工具注册表：内置工具与 MCP 工具同一张表。
@@ -11,7 +12,7 @@ import type { ProviderTool } from "../provider.js";
  * 这里不 import 任何协议/数据库模块，便于单测与边界检查。
  */
 
-export type ToolPermission = "read" | "write" | "exec" | "network" | null;
+export type ToolPermission = "read" | "write" | "exec" | "network" | "admin" | null;
 
 export interface ToolPermissionRequest {
   action: Exclude<ToolPermission, null | "read">;
@@ -22,6 +23,10 @@ export interface ToolPermissionRequest {
 export interface ToolContext {
   cwd: string;
   signal: AbortSignal;
+  /** 当前会话的权限模式（工具可据此调整行为；裁决本身在权限层）。 */
+  permissionMode: PermissionMode;
+  /** 调用者角色：`create_bot` 只对管理员开放（M3）。 */
+  botRole: "member" | "admin";
   /** 权限门禁：返回 true 才执行。拒绝文案由 loop 回灌给模型。 */
   askPermission(req: ToolPermissionRequest): Promise<boolean>;
 }

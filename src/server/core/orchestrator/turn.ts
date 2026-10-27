@@ -1,14 +1,19 @@
 import { randomUUID } from "node:crypto";
-import type { CanonicalEvent, EventType } from "../../../shared/events.js";
+import type { CanonicalEvent, EventType, PermissionMode } from "../../../shared/events.js";
 import type { DB } from "../db/db.js";
-import type { AdapterDeclaration, ChannelDriver } from "../../adapters/contract.js";
+import type { AdapterDeclaration, ChannelDriver, PromptControls } from "../../adapters/contract.js";
 import { clearTurnContext, setTurnContext } from "../../adapters/turn-context.js";
 import type { EventBus } from "../events/bus.js";
 import { createIngest } from "../events/ingest.js";
 import * as messagesRepo from "../repo/messages.js";
 import { sessionLock, type SessionLock } from "./session-lock.js";
 import type { Supervisor, TurnSource } from "../process/supervisor.js";
-import { resolveSessionCwd, WorktreeNotReadyError } from "../process/session-cwd.js";
+import {
+  resolveSessionCwd,
+  resolveWorkspace,
+  validateWorkspacePath,
+  WorktreeNotReadyError,
+} from "../process/session-cwd.js";
 import type { UsageRecorder, UsageSample } from "../usage/recorder.js";
 import type { Summarizer } from "../memory/summarizer.js";
 
@@ -109,7 +114,12 @@ export interface TurnHandleInfo {
 /** 编排层的可预期错误：HTTP 层按 code 映射状态码。 */
 export class TurnError extends Error {
   constructor(
-    readonly code: "runtime_not_bound" | "session_not_found" | "busy" | "worktree_not_ready",
+    readonly code:
+      | "runtime_not_bound"
+      | "session_not_found"
+      | "busy"
+      | "worktree_not_ready"
+      | "workspace_invalid",
     message: string,
   ) {
     super(message);
@@ -197,13 +207,63 @@ export function createTurnOrchestrator(deps: TurnDeps): TurnOrchestrator {
 
   function createSession(botId: string, channelId: string, runtimeId: string): string {
     const id = `sess_${randomUUID()}`;
+    // 新会话继承 Bot 默认权限模式（G2：会话显式设置 → Bot 默认 → confirm）。
+    // 会话一旦建立就持有自己的值，之后 Bot 改默认值不影响已开会话。
+    const bot = deps.db
+      .prepare("SELECT permission_mode FROM bots WHERE id = ?")
+      .get(botId) as { permission_mode: string | null } | undefined;
+    const mode =
+      bot?.permission_mode === "auto" ||
+      bot?.permission_mode === "plan" ||
+      bot?.permission_mode === "full"
+        ? bot.permission_mode
+        : "confirm";
     deps.db
       .prepare(
-        `INSERT INTO sessions (id, bot_id, channel_id, runtime_id, resume_state, status, started_at)
-         VALUES (?, ?, ?, ?, 'fresh', 'created', ?)`,
+        `INSERT INTO sessions
+           (id, bot_id, channel_id, runtime_id, resume_state, status, permission_mode, started_at)
+         VALUES (?, ?, ?, ?, 'fresh', 'created', ?, ?)`,
       )
-      .run(id, botId, channelId, runtimeId, Date.now());
+      .run(id, botId, channelId, runtimeId, mode, Date.now());
     return id;
+  }
+
+  /**
+   * 本轮下发给驱动的会话级控制项（R4/R5）。
+   *
+   * **每次 prompt 重新读取**：模型、权限模式、工作区都可以在会话进行中切换，
+   * 只影响后续轮次。固化在 newSession 会让「切换后下一条消息」看不到变化。
+   */
+  function promptControlsOf(sessionId: string, botId: string): PromptControls {
+    const row = deps.db
+      .prepare(
+        `SELECT s.provider_id AS session_provider_id, s.model AS session_model,
+                s.permission_mode AS session_permission_mode,
+                b.provider_id AS bot_provider_id,
+                b.permission_mode AS bot_permission_mode
+           FROM sessions s LEFT JOIN bots b ON b.id = s.bot_id
+          WHERE s.id = ?`,
+      )
+      .get(sessionId) as
+      | {
+          session_provider_id: string | null;
+          session_model: string | null;
+          session_permission_mode: string | null;
+          bot_provider_id: string | null;
+          bot_permission_mode: string | null;
+        }
+      | undefined;
+
+    const mode = row?.session_permission_mode ?? row?.bot_permission_mode ?? "confirm";
+    const permissionMode: PermissionMode =
+      mode === "auto" || mode === "plan" || mode === "full" ? mode : "confirm";
+    const workspace = resolveWorkspace(deps.db, { botId, sessionId });
+    return {
+      providerId: row?.session_provider_id ?? row?.bot_provider_id ?? null,
+      model: row?.session_model ?? null,
+      permissionMode,
+      workspacePath: workspace.path,
+    };
   }
 
   function removeQueued(sessionId: string, turn: ActiveTurn): void {
@@ -438,11 +498,25 @@ export function createTurnOrchestrator(deps: TurnDeps): TurnOrchestrator {
       throw new TurnError("runtime_not_bound", "该 Bot 未绑定可用的运行时");
     }
 
-    // 发送前预检工作目录（P0-13「发送时阻止并给重试」+ 安全底线）：
+    // 发送前预检工作目录（P0-13「发送时阻止并给重试」+ 安全底线 + R2）：
     // 没有权限请求通道的运行时必须落在 worktree；worktree 未就绪就**在发送前**拒绝，
     // 不能等消息落库、进程 spawn 失败后才报错（那样用户会看到一条永远失败的消息）。
+    // 内置引擎没有 worktree：会话/渠道工作区路径坏了（被删、不是目录、不可写）
+    // 同样在发送前拒绝，并指名是哪条路径 —— 绝不静默降级到进程 cwd。
     try {
-      resolveSessionCwd(deps.db, input.botId, runtime.declaration);
+      const resolved = resolveSessionCwd(deps.db, input.botId, runtime.declaration, {
+        sessionId: input.sessionId ?? null,
+        channelId: input.channelId,
+      });
+      if (runtime.declaration.protocol === "builtin" && resolved.workspaceSource !== "process") {
+        const check = validateWorkspacePath(resolved.workspacePath);
+        if (!check.ok) {
+          throw new TurnError(
+            "workspace_invalid",
+            `工作区不可用（${resolved.workspacePath}）：${check.message ?? "路径无效"}。请到会话设置里重新选择工作区。`,
+          );
+        }
+      }
     } catch (err) {
       if (err instanceof WorktreeNotReadyError) {
         throw new TurnError("worktree_not_ready", err.message);
@@ -568,7 +642,9 @@ export function createTurnOrchestrator(deps: TurnDeps): TurnOrchestrator {
     });
 
     try {
-      await ensured.driver.prompt(ensured.handle, { text: input.text });
+      // 每轮重新读会话级控制项：模型 / 权限模式 / 工作区可在会话内随时切换（R4/R5/R2）
+      const controls = promptControlsOf(sessionId, turn.botId);
+      await ensured.driver.prompt(ensured.handle, { text: input.text, ...controls });
     } finally {
       clearTurnContext(ensured.handle);
       // prompt 正常返回但没收到终态事件（驱动只 resolve 不发 done）：

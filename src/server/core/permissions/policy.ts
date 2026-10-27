@@ -32,6 +32,8 @@ export type PermissionStatus =
   | "denied_timeout"
   | "denied_hard_timeout"
   | "denied_boundary"
+  /** 被会话权限模式拒绝（计划模式下挂起的写类请求）。 */
+  | "denied_mode"
   | "invalidated";
 
 export interface PolicyInput {

@@ -12,10 +12,17 @@ import { createAssignmentRunner } from "./core/assignment/runner.js";
 import { ensureWorktreeForBot } from "./core/assignment/worktree.js";
 import { createUsageRecorder } from "./core/usage/recorder.js";
 import { createSummarizer } from "./core/memory/summarizer.js";
+import { createBot, fieldErrorsText } from "./core/bots/create.js";
+import { seedAdminBot } from "./core/bots/seed.js";
+import {
+  runtimeDisplayName,
+  runtimeExists,
+  runtimeRequiresWorktree,
+} from "./core/bots/runtime-lookup.js";
 import { createDriverFor, configureBuiltinDriver } from "./adapters/factory.js";
 import { createBuiltinDriver } from "./adapters/channels/builtin/driver.js";
 import { McpManager } from "./adapters/mcp/manager.js";
-import { listProviders } from "./adapters/providers/store.js";
+import { getProvider, listProviders } from "./adapters/providers/store.js";
 import { BUILTIN_RUNTIME_ID, builtinDeclaration } from "./adapters/builtin-runtime.js";
 import { effectiveDetectCommand, resolveCommand } from "./adapters/launch.js";
 import {
@@ -139,7 +146,41 @@ async function main(): Promise<void> {
   // MCP：随服务进程连接；单个失败只标状态，不阻断启动。
   const mcp = new McpManager();
   await mcp.start();
-  configureBuiltinDriver(createBuiltinDriver({ mcp }));
+  configureBuiltinDriver(
+    createBuiltinDriver({
+      mcp,
+      // 管理员 Bot 的 create_bot（M3）：与 POST /api/bots 共用 core/bots/create.ts
+      createBot: (input) => {
+        const result = createBot(
+          db,
+          {
+            name: input.name,
+            persona: input.persona,
+            runtimeId: input.runtimeId,
+            providerId: input.providerId,
+            workspacePath: input.workspacePath,
+          },
+          {
+            runtimeExists: (id) => runtimeExists(db, id),
+            runtimeRequiresWorktree: (id) => runtimeRequiresWorktree(db, id),
+            runtimeDisplayName: (id) => runtimeDisplayName(db, id),
+            providerExists: (id) => getProvider(id) !== null,
+          },
+        );
+        if (!result.outcome.ok) {
+          return { ok: false, message: fieldErrorsText(result.outcome.fields) };
+        }
+        return { ok: true, botId: result.outcome.botId, name: result.outcome.name };
+      },
+    }),
+  );
+
+  // 管理员种子（R6）：只在「没有任何 Bot 且已配模型」时种一次；标记保证不重复。
+  seedAdminBot(db, {
+    hasProviders: listProviders().length > 0,
+    runtimeId: BUILTIN_RUNTIME_ID,
+    log,
+  });
 
   const runtimes: RuntimeSummary[] = listRuntimes(db).map(toRuntimeDto).map((r) => ({
     id: r.id,
@@ -229,7 +270,7 @@ async function main(): Promise<void> {
     db,
     bus: eventBus,
     isSessionAlive: (sessionId) => supervisor.isAlive(sessionId),
-    sessionCwdOf: (botId) => sessionCwdOf(db, botId),
+    sessionCwdOf: (botId, sessionId) => sessionCwdOf(db, botId, sessionId),
     respond: (sessionId, requestId, decision) =>
       supervisor.respondPermission(sessionId, requestId, decision),
     setHeld: (sessionId, held) => supervisor.setHeld(sessionId, held),
@@ -346,6 +387,10 @@ async function main(): Promise<void> {
     resolveRuntime,
     orchestrator,
     permissions,
+    // R4/R5：生成中切模型 / 权限模式（进程活着时立即更新驱动状态）
+    setSessionControls: (sessionId, controls) => supervisor.setControls(sessionId, controls),
+    // R7：手动压缩（内置引擎；进程不在返回 null）
+    compactSession: (sessionId, opts) => supervisor.compact(sessionId, opts),
     assignments,
     scheduler,
     summarizer,

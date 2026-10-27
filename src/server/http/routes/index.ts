@@ -7,6 +7,7 @@ import { registerBotRoutes } from "./bots.js";
 import { registerChannelRoutes } from "./channels.js";
 import { registerEventRoutes } from "./events.js";
 import { registerMessageRoutes } from "./messages.js";
+import { registerSessionRoutes } from "./sessions.js";
 import { registerPermissionRoutes } from "./permissions.js";
 import { registerRuntimeRoutes } from "./runtimes.js";
 import { registerAssignmentRoutes } from "./assignments.js";
@@ -54,6 +55,8 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerContext): void {
   // P0-04/P0-05：刷新后重建事件流（含 meta 与用量），SSE 只负责增量
   registerEventRoutes(app, ctx);
   registerMessageRoutes(app, ctx);
+  // R2/R4/R5/R7：会话工作区、会话级模型、四档权限模式、手动压缩
+  registerSessionRoutes(app, ctx);
   registerPermissionRoutes(app, ctx);
   registerAssignmentRoutes(app, ctx);
   registerMemoryRoutes(app, ctx);

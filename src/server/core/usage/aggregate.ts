@@ -43,6 +43,18 @@ export interface UsageAggregateRow {
   requests: number;
   inputTokens: number | null;
   outputTokens: number | null;
+  /** 缓存命中（读）token；该行没有任何缓存上报时为 null。 */
+  cachedInputTokens: number | null;
+  /** 缓存写入 token；该行没有任何缓存上报时为 null。 */
+  cacheWriteTokens: number | null;
+  /**
+   * 缓存命中率（0–100，1 位小数）= 缓存读 / (输入 + 缓存读)。
+   *
+   * 两端口径已归一：OpenAI 的 `prompt_tokens` 含缓存命中，provider 层已把
+   * 命中部分从输入里扣掉；Anthropic 的 `input_tokens` 本来就不含缓存。
+   * 没有缓存上报（升级前的历史记录）时为 null，前端显示「未上报」而不是 0。
+   */
+  cacheHitRate: number | null;
   /** 未上报的请求数（token 不计入 input/output）。 */
   unreportedRequests: number;
   /** 占本筛选结果「总 token（输入+输出）」的百分比，0–100，保留 1 位。 */
@@ -53,6 +65,10 @@ export interface UsageTotals {
   requests: number;
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  /** 合计命中率；没有任何缓存上报时为 null。 */
+  cacheHitRate: number | null;
   unreportedRequests: number;
 }
 
@@ -83,6 +99,10 @@ interface RawAggRow {
   requests: number;
   input_tokens: number;
   output_tokens: number;
+  cached_input_tokens: number;
+  cache_write_tokens: number;
+  /** 带缓存口径的上报请求数（迁移前的历史记录 model 为 NULL，按未上报处理）。 */
+  cache_reported_requests: number;
   reported_requests: number;
   bot_name: string | null;
 }
@@ -124,7 +144,23 @@ function colorIndexOf(db: DB): Map<string, number> {
 }
 
 function emptyTotals(): UsageTotals {
-  return { requests: 0, inputTokens: 0, outputTokens: 0, unreportedRequests: 0 };
+  return {
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    cacheHitRate: null,
+    unreportedRequests: 0,
+  };
+}
+
+/** 命中率：缓存读 / (输入 + 缓存读)；分母为 0 或没有缓存上报时返回 null。 */
+function hitRateOf(cached: number, input: number, cacheReported: boolean): number | null {
+  if (!cacheReported) return null;
+  const total = input + cached;
+  if (total <= 0) return null;
+  return Math.round((cached / total) * 1000) / 10;
 }
 
 export function aggregate(
@@ -161,6 +197,9 @@ export function aggregate(
               COUNT(*) AS requests,
               SUM(CASE WHEN u.reported = 1 THEN u.input_tokens  ELSE 0 END) AS input_tokens,
               SUM(CASE WHEN u.reported = 1 THEN u.output_tokens ELSE 0 END) AS output_tokens,
+              SUM(CASE WHEN u.reported = 1 THEN u.cached_input_tokens ELSE 0 END) AS cached_input_tokens,
+              SUM(CASE WHEN u.reported = 1 THEN u.cache_write_tokens ELSE 0 END) AS cache_write_tokens,
+              SUM(CASE WHEN u.reported = 1 AND u.model IS NOT NULL THEN 1 ELSE 0 END) AS cache_reported_requests,
               SUM(CASE WHEN u.reported = 1 THEN 1 ELSE 0 END) AS reported_requests,
               b.name AS bot_name
          FROM usage_records u
@@ -186,10 +225,14 @@ export function aggregate(
   }
 
   const totals = emptyTotals();
+  let totalsCacheReported = false;
   const out: UsageAggregateRow[] = rows.map((row) => {
     const reported = row.reported_requests > 0;
     const input = reported ? (row.input_tokens ?? 0) : 0;
     const output = reported ? (row.output_tokens ?? 0) : 0;
+    const cacheReported = row.cache_reported_requests > 0;
+    const cachedInput = cacheReported ? (row.cached_input_tokens ?? 0) : 0;
+    const cacheWrite = cacheReported ? (row.cache_write_tokens ?? 0) : 0;
     const unreported = row.requests - row.reported_requests;
     const info = row.runtime_id ? runtimes.get(row.runtime_id) : undefined;
     const tokens = input + output;
@@ -197,7 +240,10 @@ export function aggregate(
     totals.requests += row.requests;
     totals.inputTokens += input;
     totals.outputTokens += output;
+    totals.cachedInputTokens += cachedInput;
+    totals.cacheWriteTokens += cacheWrite;
     totals.unreportedRequests += unreported;
+    if (cacheReported) totalsCacheReported = true;
 
     return {
       botId: row.bot_id,
@@ -212,10 +258,19 @@ export function aggregate(
       // 未上报用 null（前端显示 —），不估算、不混进合计
       inputTokens: reported ? input : null,
       outputTokens: reported ? output : null,
+      cachedInputTokens: cacheReported ? cachedInput : null,
+      cacheWriteTokens: cacheReported ? cacheWrite : null,
+      cacheHitRate: hitRateOf(cachedInput, input, cacheReported),
       unreportedRequests: unreported,
       share: totalTokens > 0 ? Math.round((tokens / totalTokens) * 1000) / 10 : 0,
     };
   });
+
+  totals.cacheHitRate = hitRateOf(
+    totals.cachedInputTokens,
+    totals.inputTokens,
+    totalsCacheReported,
+  );
 
   return { range, from, to: now, rows: out, totals };
 }
@@ -244,6 +299,9 @@ export function exportCsv(
     "requests",
     "input_tokens",
     "output_tokens",
+    "cached_input_tokens",
+    "cache_write_tokens",
+    "cache_hit_rate_percent",
     "unreported_requests",
     "share_percent",
   ];
@@ -266,6 +324,9 @@ export function exportCsv(
         row.requests,
         row.inputTokens,
         row.outputTokens,
+        row.cachedInputTokens,
+        row.cacheWriteTokens,
+        row.cacheHitRate,
         row.unreportedRequests,
         row.share,
       ]
@@ -286,6 +347,9 @@ export function exportCsv(
       agg.totals.requests,
       agg.totals.inputTokens,
       agg.totals.outputTokens,
+      agg.totals.cachedInputTokens,
+      agg.totals.cacheWriteTokens,
+      agg.totals.cacheHitRate,
       agg.totals.unreportedRequests,
       "",
     ]

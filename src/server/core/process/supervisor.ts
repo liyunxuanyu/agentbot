@@ -2,18 +2,20 @@ import type { DB } from "../db/db.js";
 import type {
   AdapterDeclaration,
   ChannelDriver,
+  CompactionResult,
   ExitInfo,
   PermissionDecision,
+  PromptControls,
   RuntimePermissionRequest,
   SessionHandle,
 } from "../../adapters/contract.js";
-import type { CanonicalEvent } from "../../../shared/events.js";
+import type { CanonicalEvent, PermissionMode } from "../../../shared/events.js";
 import { config } from "../../config.js";
 import type { EventBus } from "../events/bus.js";
 import { createIngest } from "../events/ingest.js";
 import { buildBootstrapContext, buildRebuildContext } from "../orchestrator/context.js";
 import { killTree, killTreeSync } from "./kill-tree.js";
-import { resolveSessionCwd } from "./session-cwd.js";
+import { resolveSessionCwd, resolveWorkspace } from "./session-cwd.js";
 import {
   createPidRegistry,
   installExitHooks,
@@ -156,6 +158,16 @@ export interface Supervisor {
     requestId: string,
     decision: PermissionDecision,
   ): Promise<boolean>;
+  /**
+   * 生成中更新会话控制项（内置引擎）。只影响后续轮次与尚未裁决的调用（G3）。
+   * 进程不在时静默忽略 —— 下次 ensure 会从库里重新读。
+   */
+  setControls(sessionId: string, controls: PromptControls): void;
+  /**
+   * 压缩会话上下文（内置引擎）。进程不在 / 驱动不支持时返回 null。
+   * `force=true` 手动触发；否则只在超过阈值时压缩。
+   */
+  compact(sessionId: string, opts?: { force?: boolean }): Promise<CompactionResult | null>;
   addListener(listener: SupervisorListener): () => void;
   /** 关服：杀掉所有进程。 */
   dispose(): Promise<void>;
@@ -184,19 +196,28 @@ const KILL_STATUS: Record<KillReason, SessionStatus> = {
 };
 
 /**
- * 会话的工作目录：worktree 优先，其次 repo，最后服务进程 cwd。
+ * 会话的工作目录：worktree 优先，其次会话/渠道工作区，最后服务进程 cwd。
  * 权限层做相对路径解析时用的是同一个基准（装配层复用它）。
+ *
+ * 传 sessionId 时会按 R2 的回退链解析（内置引擎的 cwd 就是它）；
+ * 不传时保持历史行为（只认 Bot），供 Assignment 等没有 Session 的场景使用。
  */
-export function sessionCwdOf(db: DB, botId: string): string {
+export function sessionCwdOf(db: DB, botId: string, sessionId?: string | null): string {
   const bot = db
     .prepare("SELECT repo_path, worktree_path, execution_location FROM bots WHERE id = ?")
     .get(botId) as
     | { repo_path: string | null; worktree_path: string | null; execution_location: string }
     | undefined;
   if (bot) {
-    const preferred = bot.execution_location === "worktree" ? bot.worktree_path : bot.repo_path;
-    if (preferred && preferred.length > 0) return preferred;
+    // worktree 是隔离执行位置，优先级最高；内置引擎不用 worktree，会落到回退链
+    if (bot.execution_location === "worktree" && bot.worktree_path && bot.worktree_path.length > 0) {
+      return bot.worktree_path;
+    }
   }
+  if (sessionId) {
+    return resolveWorkspace(db, { botId, sessionId }).path;
+  }
+  if (bot && bot.repo_path && bot.repo_path.length > 0) return bot.repo_path;
   // 没配路径时用服务进程 cwd：至少落在用户启动服务的地方，不会乱跑
   return process.cwd();
 }
@@ -207,8 +228,16 @@ interface SessionRow {
   runtime_id: string | null;
   runtime_session_id: string | null;
   resume_state: string;
-  /** 内置引擎用：Bot 绑定的模型供应商（其它通道忽略）。 */
-  provider_id?: string | null;
+  /** 会话级覆盖（R4/R5）；空值表示回退到 Bot 默认值。 */
+  session_provider_id: string | null;
+  session_model: string | null;
+  session_workspace_path: string | null;
+  permission_mode: string | null;
+  /** Bot 默认值。 */
+  bot_provider_id: string | null;
+  bot_permission_mode: string | null;
+  bot_role: string | null;
+  channel_id: string | null;
 }
 
 export function createSupervisor(deps: SupervisorDeps): Supervisor {
@@ -320,13 +349,28 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     const row = deps.db
       .prepare(
         `SELECT s.id, s.bot_id, s.runtime_id, s.runtime_session_id, s.resume_state,
-                b.provider_id
+                s.provider_id AS session_provider_id,
+                s.model AS session_model,
+                s.workspace_path AS session_workspace_path,
+                s.permission_mode,
+                s.channel_id,
+                b.provider_id AS bot_provider_id,
+                b.permission_mode AS bot_permission_mode,
+                b.role AS bot_role
            FROM sessions s
            LEFT JOIN bots b ON b.id = s.bot_id
           WHERE s.id = ?`,
       )
       .get(sessionId) as SessionRow | undefined;
     return row ?? null;
+  }
+
+  /** 会话级权限模式：会话值（非空）优先，其次 Bot 默认，最后 confirm（G2）。 */
+  function permissionModeOf(row: SessionRow): PermissionMode {
+    const candidate = row.permission_mode ?? row.bot_permission_mode ?? "confirm";
+    return candidate === "auto" || candidate === "plan" || candidate === "full"
+      ? candidate
+      : "confirm";
   }
 
   /**
@@ -507,7 +551,11 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
   ): Promise<EnsuredSession> {
     // 工作目录判定（安全底线）：运行时没有权限请求通道时**强制** worktree；
     // worktree 未就绪抛 WorktreeNotReadyError，绝不静默降级到 local。
-    const resolved = resolveSessionCwd(deps.db, row.bot_id, runtime.declaration);
+    // 内置引擎走会话级工作区回退链（R2）。
+    const resolved = resolveSessionCwd(deps.db, row.bot_id, runtime.declaration, {
+      sessionId,
+      channelId: row.channel_id,
+    });
     const cwd = resolved.cwd;
     if (resolved.forcedWorktree) {
       log(
@@ -520,9 +568,13 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
     try {
       handle = await runtime.driver.start(runtime.declaration, {
         cwd,
+        workspacePath: resolved.workspacePath,
         sessionId,
         botId: row.bot_id,
-        providerId: row.provider_id ?? null,
+        providerId: row.session_provider_id ?? row.bot_provider_id ?? null,
+        model: row.session_model ?? null,
+        permissionMode: permissionModeOf(row),
+        botRole: row.bot_role === "admin" ? "admin" : "member",
       });
     } catch (err) {
       setStatus(sessionId, "crashed");
@@ -803,6 +855,22 @@ export function createSupervisor(deps: SupervisorDeps): Supervisor {
         );
         return false;
       }
+    },
+
+    async compact(sessionId, opts) {
+      const entry = managed.get(sessionId);
+      if (!entry || !entry.driver.compact) return null;
+      try {
+        return await entry.driver.compact(entry.handle, opts ?? {});
+      } catch (err) {
+        log(`上下文压缩失败（${sessionId}）：${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      }
+    },
+
+    setControls(sessionId, controls) {
+      const entry = managed.get(sessionId);
+      entry?.driver.setControls?.(entry.handle, controls);
     },
 
     addListener(listener) {

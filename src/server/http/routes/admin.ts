@@ -1,6 +1,8 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ServerContext } from "../server.js";
 import { closeAllStreams } from "../sse.js";
+import { listBots, toRuntimeDto } from "../dto.js";
+import { listRuntimes } from "../../adapters/probe.js";
 
 /**
  * 全量删除（P0-12 边界 / PRD §6「全量数据（设置页，需输入确认短语）」）。
@@ -44,6 +46,21 @@ function json(reply: FastifyReply, code: number, body: unknown): FastifyReply {
 }
 
 export function registerAdminRoutes(app: FastifyInstance, ctx: ServerContext): void {
+  /**
+   * `GET /api/admin/bots` —— 管理员 Bot 列表（R6）。
+   *
+   * 管理员只是 `role='admin'` 的普通 Bot，可以有多个；前端在 Bot 列表与管理页
+   * 用这个端点标出「可创建 Bot」的身份，不另开一套模型。
+   */
+  app.get("/api/admin/bots", async () => {
+    const runtimeMap = new Map(listRuntimes(ctx.db).map((r) => [r.id, toRuntimeDto(r)]));
+    const bots = listBots(ctx.db, runtimeMap);
+    return {
+      bots: bots.filter((b) => b.role === "admin"),
+      totalBots: bots.length,
+    };
+  });
+
   app.post<{ Body: { confirm?: unknown } }>("/api/admin/purge", async (req, reply: FastifyReply) => {
     const confirm = typeof req.body?.confirm === "string" ? req.body.confirm.trim() : "";
     if (confirm !== PURGE_CONFIRM_PHRASE) {

@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ServerContext } from "../server.js";
 import { listBots, toRuntimeDto } from "../dto.js";
@@ -6,6 +5,12 @@ import { listRuntimes } from "../../adapters/probe.js";
 import { getProvider } from "../../adapters/providers/store.js";
 import { normalizeAllowedDirs, readBoundary } from "../../core/permissions/boundary.js";
 import { listGrants } from "../../core/permissions/grants.js";
+import { createBot } from "../../core/bots/create.js";
+import {
+  runtimeDisplayName,
+  runtimeExists,
+  runtimeRequiresWorktree,
+} from "../../core/bots/runtime-lookup.js";
 import {
   ensureWorktreeForBot,
   readExecutionConfig,
@@ -14,7 +19,6 @@ import {
 } from "../../core/assignment/worktree.js";
 import {
   RISK_CONFIRMATION_REQUIRED,
-  requiresWorktree,
   worktreeRiskMessage,
 } from "../../core/permissions/worktree-guard.js";
 
@@ -68,6 +72,8 @@ interface PatchBoundaryBody {
   runtimeId?: unknown;
   /** 内置引擎：模型供应商绑定（null / 空串 = 用默认供应商）。 */
   providerId?: unknown;
+  /** 管理员角色切换（R6）：admin | member。 */
+  role?: unknown;
   /**
    * 人格（P0-03「编辑人格后下一条消息即生效」）。
    *
@@ -93,7 +99,8 @@ interface FieldError {
     | "allowNetwork"
     | "autoApproveWrite"
     | "executionLocation"
-    | "repoPath";
+    | "repoPath"
+    | "role";
   index?: number;
   code: string;
   message: string;
@@ -117,44 +124,6 @@ interface BotRow {
   allow_network: number;
   auto_approve_write: number;
   updated_at: number;
-}
-
-interface RuntimeRow {
-  id: string;
-  display_name: string;
-  capabilities: string;
-}
-
-/**
- * 读运行时的权限通道（从探测缓存的 `_probe.permissionChannel` 取）。
- *
- * 为什么从缓存取而不是读声明文件：HTTP 层不该碰 adapters 的加载细节，
- * 而且缓存与 `/api/runtimes` 用的是同一份数据 —— 两处判定不会漂移。
- */
-function runtimeRequiresWorktree(db: ServerContext["db"], runtimeId: string | null): boolean {
-  if (!runtimeId) return false;
-  const row = db
-    .prepare("SELECT capabilities FROM runtime_definitions WHERE id = ?")
-    .get(runtimeId) as { capabilities: string } | undefined;
-  if (!row) return false;
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse(row.capabilities) as Record<string, unknown>;
-  } catch {
-    return false;
-  }
-  const probe = (parsed["_probe"] ?? {}) as Record<string, unknown>;
-  return requiresWorktree({
-    permission: { channel: typeof probe["permissionChannel"] === "string" ? probe["permissionChannel"] : undefined },
-  });
-}
-
-function runtimeDisplayName(db: ServerContext["db"], runtimeId: string | null): string {
-  if (!runtimeId) return "该运行时";
-  const row = db
-    .prepare("SELECT display_name FROM runtime_definitions WHERE id = ?")
-    .get(runtimeId) as { display_name: string } | undefined;
-  return row?.display_name ?? "该运行时";
 }
 
 function boundaryDto(botId: string, ctx: ServerContext): unknown {
@@ -208,141 +177,37 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
    */
   app.post<{ Body: CreateBotBody }>("/api/bots", async (req, reply: FastifyReply) => {
     const body = req.body ?? {};
-    const fields: FieldError[] = [];
 
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (name.length === 0) {
-      fields.push({ field: "name", code: "required", message: "名称不能为空" });
-    } else if (name.length > 32) {
-      fields.push({ field: "name", code: "too_long", message: "名称最多 32 个字符" });
-    } else {
-      const dup = ctx.db.prepare("SELECT id FROM bots WHERE name = ?").get(name) as
-        | { id: string }
-        | undefined;
-      if (dup) fields.push({ field: "name", code: "duplicate", message: `名称已被占用：${name}` });
+    // 创建逻辑与管理员工具 `create_bot` 共用 `core/bots/create.ts`，
+    // 这里只负责把 HTTP 字段翻译成输入、把字段级错误回给前端。
+    const result = createBot(
+      ctx.db,
+      {
+        name: body.name,
+        persona: body.persona,
+        avatar: body.avatar,
+        runtimeId: body.runtimeId,
+        providerId: body.providerId,
+        executionLocation: body.executionLocation,
+        workspacePath: body.repoPath,
+      },
+      {
+        runtimeExists: (id) =>
+          ctx.db.prepare("SELECT id FROM runtime_definitions WHERE id = ?").get(id) !== undefined,
+        runtimeRequiresWorktree: (id) => runtimeRequiresWorktree(ctx.db, id),
+        runtimeDisplayName: (id) => runtimeDisplayName(ctx.db, id),
+        providerExists: (id) => getProvider(id) !== null,
+      },
+    );
+
+    if (!result.outcome.ok) {
+      return json(reply, 400, { error: "invalid_bot", fields: result.outcome.fields });
+    }
+    if (result.worktreeError !== undefined) {
+      console.warn(`[http] 新建 Bot ${result.outcome.botId} 的 worktree 未就绪：${result.worktreeError}`);
     }
 
-    const persona = typeof body.persona === "string" ? body.persona : "";
-    if (persona.length > 4000) {
-      fields.push({ field: "persona", code: "too_long", message: "人格最多 4000 个字符" });
-    }
-
-    let runtimeId: string | null = null;
-    if (typeof body.runtimeId === "string" && body.runtimeId.length > 0) {
-      const rt = ctx.db
-        .prepare("SELECT id FROM runtime_definitions WHERE id = ?")
-        .get(body.runtimeId) as { id: string } | undefined;
-      if (!rt) {
-        fields.push({ field: "runtimeId", code: "not_found", message: "运行时不存在" });
-      } else {
-        runtimeId = rt.id;
-      }
-    }
-
-    let providerId: string | null = null;
-    if (body.providerId !== undefined && body.providerId !== null && body.providerId !== "") {
-      if (typeof body.providerId !== "string") {
-        fields.push({ field: "providerId", code: "invalid_value", message: "供应商 id 无效" });
-      } else if (!getProvider(body.providerId)) {
-        fields.push({ field: "providerId", code: "not_found", message: "模型供应商不存在" });
-      } else {
-        providerId = body.providerId;
-      }
-    }
-
-    let requestedLocation: "local" | "worktree" = "local";
-    if (body.executionLocation !== undefined) {
-      if (body.executionLocation !== "local" && body.executionLocation !== "worktree") {
-        fields.push({
-          field: "executionLocation",
-          code: "invalid_value",
-          message: "执行位置只能是 local 或 worktree",
-        });
-      } else {
-        requestedLocation = body.executionLocation;
-      }
-    }
-
-    let repoPath = typeof body.repoPath === "string" ? body.repoPath.trim() : "";
-
-    // 安全底线：没有权限通道的运行时强制 worktree
-    const mustWorktree = runtimeRequiresWorktree(ctx.db, runtimeId);
-    const executionLocation: "local" | "worktree" =
-      mustWorktree || requestedLocation === "worktree" ? "worktree" : "local";
-
-    if (executionLocation === "worktree") {
-      if (repoPath.length === 0) {
-        fields.push({
-          field: "repoPath",
-          code: "required",
-          message: mustWorktree
-            ? `该运行时（${runtimeDisplayName(ctx.db, runtimeId)}）不提供权限请求，必须使用 worktree，请填写仓库根路径`
-            : "选 worktree 时必须填仓库根路径",
-        });
-      } else {
-        const validation = validateRepoPath(repoPath);
-        if (!validation.ok) {
-          fields.push({
-            field: "repoPath",
-            code: validation.code ?? "invalid",
-            message: validation.message ?? "仓库路径不可用",
-          });
-        } else {
-          repoPath = validation.repoRoot ?? repoPath;
-        }
-      }
-    } else if (repoPath.length > 0) {
-      // local 也允许指定工作目录（内置引擎这类有权限通道的运行时用得上）。
-      // 只要求「是个能用的目录」，不要求 git —— 需要隔离与 diff 就用 worktree。
-      const validation = validateWorkingDir(repoPath);
-      if (!validation.ok) {
-        fields.push({
-          field: "repoPath",
-          code: validation.code ?? "invalid",
-          message: validation.message ?? "工作目录不可用",
-        });
-      } else {
-        repoPath = validation.dir ?? repoPath;
-      }
-    }
-
-    if (fields.length > 0) return json(reply, 400, { error: "invalid_bot", fields });
-
-    const id = `bot_${randomUUID()}`;
-    const now = Date.now();
-    const avatar = typeof body.avatar === "string" ? body.avatar : null;
-
-    ctx.db
-      .prepare(
-        `INSERT INTO bots
-           (id, name, persona, avatar, default_runtime_id, provider_id, execution_location, repo_path,
-            status, allow_dirs, allow_shell, allow_network, auto_approve_write,
-            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', '[]', 0, 0, 0, ?, ?)`,
-      )
-      .run(
-        id,
-        name,
-        persona,
-        avatar,
-        runtimeId,
-        providerId,
-        executionLocation,
-        repoPath.length > 0 ? repoPath : null,
-        now,
-        now,
-      );
-
-    // 保存后立刻尝试建 worktree（与 PATCH 一致）：失败不回滚保存，Bot 标「未就绪」
-    if (executionLocation === "worktree") {
-      const result = ensureWorktreeForBot(ctx.db, id);
-      if (!result.ok) {
-        console.warn(
-          `[http] 新建 Bot ${id} 的 worktree 未就绪：${result.code ?? "unknown"} ${result.message ?? ""}`,
-        );
-      }
-    }
-
+    const id = result.outcome.botId;
     const runtimeMap = new Map(listRuntimes(ctx.db).map((r) => [r.id, toRuntimeDto(r)]));
     const dto = listBots(ctx.db, runtimeMap).find((b) => b.id === id) ?? null;
     return json(reply, 201, {
@@ -451,6 +316,19 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
           fields.push({ field: "providerId", code: "not_found", message: "模型供应商不存在" });
         } else {
           providerId = body.providerId;
+        }
+      }
+
+      // ---- 管理员角色（R6）----
+      //
+      // 只改角色，不改边界：管理员只是多一个 create_bot 工具（G4），
+      // 不自动获得 full 权限。切换写一条控制台审计；权限模式本身仍按会话四档裁决。
+      let role: "member" | "admin" | null = null;
+      if (body.role !== undefined) {
+        if (body.role !== "member" && body.role !== "admin") {
+          fields.push({ field: "role", code: "invalid_value", message: "角色只能是 member 或 admin" });
+        } else {
+          role = body.role;
         }
       }
 
@@ -593,6 +471,10 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
           sets.push("provider_id = ?");
           params.push(providerId);
         }
+        if (role !== null) {
+          sets.push("role = ?");
+          params.push(role);
+        }
         params.push(bot.id);
         ctx.db.prepare(`UPDATE bots SET ${sets.join(", ")} WHERE id = ?`).run(...params);
       });
@@ -611,8 +493,22 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         worktree = readExecutionConfig(ctx.db, bot.id);
       }
 
+      if (role !== null) {
+        console.log(
+          `[audit] Bot ${bot.id}（${bot.name}）角色切换为 ${role}（decided_by=user）`,
+        );
+      }
+
       return {
         ok: true,
+        role:
+          role ??
+          (
+            ctx.db.prepare("SELECT role FROM bots WHERE id = ?").get(bot.id) as
+              | { role: string }
+              | undefined
+          )?.role ??
+          "member",
         boundary: boundaryDto(bot.id, ctx),
         execution: worktree,
         // 前端据此在详情页继续显示「此运行时不提供权限请求」的提示

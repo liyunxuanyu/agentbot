@@ -3,7 +3,7 @@ import type { DB } from "../db/db.js";
 import type { EventBus } from "../events/bus.js";
 import { createIngest } from "../events/ingest.js";
 import type { PermissionDecision, RuntimePermissionRequest } from "../../adapters/contract.js";
-import type { BoundaryVerdict, PermissionAction } from "../../../shared/events.js";
+import type { BoundaryVerdict, PermissionAction, PermissionMode } from "../../../shared/events.js";
 import { checkBoundary, readBoundary, type BoundarySnapshot } from "./boundary.js";
 import * as grants from "./grants.js";
 import {
@@ -65,8 +65,8 @@ export interface PermissionResolverDeps {
   bus?: EventBus;
   /** 会话进程是否还活着（hold 失效判定）。 */
   isSessionAlive(sessionId: string): boolean;
-  /** 相对路径的解析基准（Bot 的 repoPath / worktreePath）。 */
-  sessionCwdOf(botId: string): string;
+  /** 相对路径的解析基准（会话工作区优先，其次 Bot 的 repoPath / worktreePath）。 */
+  sessionCwdOf(botId: string, sessionId?: string | null): string;
   /** 回传运行时；进程已不在返回 false。 */
   respond(sessionId: string, requestId: string, decision: PermissionDecision): Promise<boolean>;
   /** 挂起保活：hold 期间禁止空闲回收。 */
@@ -127,6 +127,11 @@ export interface PermissionResolver {
   get(requestId: string): PermissionRow | null;
   /** 进程退出：把该会话所有 pending 转「请求已失效」。 */
   invalidateSession(sessionId: string, reason: string): number;
+  /**
+   * 切到计划模式时，把该会话挂起的写类请求直接置为 rejected（G3）。
+   * 返回被拒绝的条数；读类请求不动。
+   */
+  rejectPendingWrites(sessionId: string, reason: string): number;
   /** 扫一次过期（启动序 + 定时器）。 */
   sweep(): SweepResult;
   /** 清定时器（关服）。 */
@@ -178,7 +183,12 @@ function parseSnapshot(json: string): SnapshotPayload {
 function toRow(raw: RawRow): PermissionRow {
   const snap = parseSnapshot(raw.boundary_snapshot);
   const action: PermissionAction =
-    raw.action === "write" || raw.action === "exec" || raw.action === "network" ? raw.action : "read";
+    raw.action === "write" ||
+    raw.action === "exec" ||
+    raw.action === "network" ||
+    raw.action === "admin"
+      ? raw.action
+      : "read";
   const policy: TimeoutPolicy =
     raw.timeout_policy === "hold" ? "hold" : raw.timeout_policy === "preauth" ? "preauth" : "reject";
   return {
@@ -427,6 +437,21 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     return null;
   }
 
+  /** 会话级权限模式：`sessions.permission_mode` 是权威（创建时已从 Bot 默认值继承）。 */
+  function permissionModeOf(sessionId: string): PermissionMode {
+    const row = deps.db
+      .prepare(
+        `SELECT s.permission_mode AS session_mode, b.permission_mode AS bot_mode
+           FROM sessions s LEFT JOIN bots b ON b.id = s.bot_id
+          WHERE s.id = ?`,
+      )
+      .get(sessionId) as
+      | { session_mode: string | null; bot_mode: string | null }
+      | undefined;
+    const mode = row?.session_mode ?? row?.bot_mode ?? "confirm";
+    return mode === "auto" || mode === "plan" || mode === "full" ? mode : "confirm";
+  }
+
   // -------------------------------------------------------------------------
   // 主流程
   // -------------------------------------------------------------------------
@@ -472,8 +497,61 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     }
 
     // ① 归一化 + ② 边界判定
-    const cwd = deps.sessionCwdOf(botId);
+    //
+    // 四档权限模式在边界之前裁决（R5 / Q17）：
+    //   plan  → 写类动作直接拒绝（工具已被裁掉，这里兜底）
+    //   full  → 绕过边界，全部批准并写审计
+    //   auto  → 边界内写自动批，shell/network 仍问
+    //   confirm → 既有「边界 → 授权 → 用户」流程
+    const mode = permissionModeOf(sessionId);
+
+    if (mode === "plan") {
+      if (request.action === "read") {
+        // 只读模式：读请求不该挂起等用户（挂起会让会话卡死，而读本来就不改变磁盘）
+        autoApprove(
+          { sessionId, botId, turnId, request },
+          rowId,
+          { ...boundary, verdict: "allowed", reason: "计划模式：只读请求自动批准", runtimeRequestId: request.requestId },
+          "preauth",
+          "mode:plan",
+          now,
+          "mode:plan",
+        );
+        return;
+      }
+      denyByMode(
+        input,
+        rowId,
+        boundary,
+        "计划模式（只读）：写操作已被拒绝",
+        "mode:plan",
+        now,
+      );
+      return;
+    }
+
+    const cwd = deps.sessionCwdOf(botId, sessionId);
     const check = checkBoundary(boundary, request.action, request.target, cwd);
+
+    if (mode === "full") {
+      const snapshot: SnapshotPayload = {
+        ...boundary,
+        verdict: "allowed",
+        reason: "完全访问模式：绕过边界，自动批准并记审计",
+        runtimeRequestId: request.requestId,
+      };
+      autoApprove(
+        { sessionId, botId, turnId, request: { ...request, target: check.target } },
+        rowId,
+        snapshot,
+        "preauth",
+        "mode:full",
+        now,
+        "mode:full",
+      );
+      return;
+    }
+
     const snapshot: SnapshotPayload = {
       ...boundary,
       verdict: check.verdict,
@@ -489,6 +567,24 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
         check.reason ?? "超出 Bot 边界",
         now,
         check.target,
+      );
+      return;
+    }
+
+    // 自动模式：只自动批「边界内的写」；shell/network/admin 仍然弹卡（R5/G4）
+    if (mode === "auto" && request.action === "write" && check.verdict === "allowed") {
+      const autoSnapshot: SnapshotPayload = {
+        ...snapshot,
+        reason: "自动模式：边界内写操作自动批准",
+      };
+      autoApprove(
+        { sessionId, botId, turnId, request: { ...request, target: check.target } },
+        rowId,
+        autoSnapshot,
+        "preauth",
+        "mode:auto",
+        now,
+        "mode:auto",
       );
       return;
     }
@@ -603,6 +699,54 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     }
   }
 
+  /** 权限模式拒绝（plan）：落审计、回传拒绝、推事件，不弹卡。 */
+  function denyByMode(
+    input: HandlePermissionInput,
+    rowId: string,
+    boundary: BoundarySnapshot,
+    reason: string,
+    decidedBy: string,
+    now: number,
+  ): void {
+    const snapshot: SnapshotPayload = {
+      ...boundary,
+      verdict: "denied",
+      reason,
+      runtimeRequestId: input.request.requestId,
+    };
+    insertRow({
+      id: rowId,
+      sessionId: input.sessionId,
+      botId: input.botId,
+      turnId: input.turnId,
+      action: input.request.action,
+      target: input.request.target,
+      snapshot,
+      policy: "reject",
+      status: "denied_mode",
+      heldSince: null,
+      expiresAt: null,
+      decision: "reject",
+      decidedBy,
+      decidedAt: now,
+      now,
+    });
+    void deps
+      .respond(input.sessionId, input.request.requestId, { kind: "deny" })
+      .catch(() => undefined);
+    emitEvent(
+      {
+        id: rowId,
+        sessionId: input.sessionId,
+        turnId: input.turnId,
+        action: input.request.action,
+        target: input.request.target,
+      },
+      "denied",
+    );
+    log(`请求 ${rowId} 被权限模式拒绝（${reason}）`);
+  }
+
   /** 越界：直接拒绝，不弹卡、不占 120s、不转发运行时。 */
   function rejectOutOfBoundary(
     input: HandlePermissionInput,
@@ -663,7 +807,7 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     log(`请求 ${rowId} 超出边界（${reason}），已直接拒绝`);
   }
 
-  /** 自动批准（grant / preauth）：只写审计，不弹卡。 */
+  /** 自动批准（grant / preauth / 权限模式）：只写审计，不弹卡。 */
   function autoApprove(
     input: {
       sessionId: string;
@@ -676,6 +820,7 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     policy: TimeoutPolicy,
     by: string,
     now: number,
+    decidedBy = "system",
   ): void {
     insertRow({
       id: rowId,
@@ -690,7 +835,7 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
       heldSince: null,
       expiresAt: null,
       decision: "approve",
-      decidedBy: "system",
+      decidedBy,
       decidedAt: now,
       now,
     });
@@ -796,6 +941,62 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     return rows.map(toRow);
   }
 
+  /**
+   * 切到 plan：挂起的写类请求直接拒绝（G3）。
+   *
+   * 为什么不是「等用户点拒绝」：计划模式的语义是「不能写」。挂着一张写权限卡
+   * 会让用户以为批准后还能写，与胶囊显示的只读状态矛盾。
+   */
+  function rejectPendingWrites(sessionId: string, reason: string): number {
+    const rows = deps.db
+      .prepare(
+        `SELECT id, session_id, turn_id, action, target FROM permission_requests
+          WHERE session_id = ? AND status = 'pending'
+            AND action IN ('write','exec','network','admin')`,
+      )
+      .all(sessionId) as {
+      id: string;
+      session_id: string;
+      turn_id: string;
+      action: string;
+      target: string;
+    }[];
+
+    if (rows.length === 0) return 0;
+    const now = Date.now();
+    const update = deps.db.prepare(
+      `UPDATE permission_requests
+          SET status = 'denied_mode', decision = 'reject',
+              decided_by = 'mode:plan', decided_at = ?
+        WHERE id = ? AND status = 'pending'`,
+    );
+    let changed = 0;
+    for (const row of rows) {
+      if (update.run(now, row.id).changes === 0) continue;
+      changed += 1;
+      clearTimer(row.id);
+      void deps
+        .respond(sessionId, runtimeRequestIdOf(row.id), { kind: "deny" })
+        .catch(() => undefined);
+      emitEvent(
+        {
+          id: row.id,
+          sessionId,
+          turnId: row.turn_id,
+          action: row.action as PermissionAction,
+          target: row.target,
+        },
+        "denied",
+      );
+    }
+    if (changed > 0) {
+      log(`会话 ${sessionId} 切到计划模式：${changed} 个挂起写请求已拒绝（${reason}）`);
+      pendingBySession.set(sessionId, countPending(sessionId));
+      syncHold(sessionId);
+    }
+    return changed;
+  }
+
   function invalidateSession(sessionId: string, reason: string): number {
     const rows = deps.db
       .prepare(
@@ -872,6 +1073,7 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     listBySession,
     get,
     invalidateSession,
+    rejectPendingWrites,
     sweep,
     dispose() {
       disposed = true;

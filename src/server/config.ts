@@ -8,6 +8,13 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function envFloat(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 /**
  * 所有可变状态都落在 ~/.agentbot，便于用户备份/删除，也避免污染安装目录。
  */
@@ -64,6 +71,15 @@ export const config = {
      * 默认 20s，可用 `AGENTBOT_GROUP_DECISION_MS` 调整。
      */
     groupDecisionMs: envInt("AGENTBOT_GROUP_DECISION_MS", 20_000),
+    /**
+     * 上下文压缩阈值：上下文窗口占用比达到该值时自动压缩（R7 / G5）。
+     * 可用 `AGENTBOT_COMPACTION_RATIO` 调整（0–1）。
+     */
+    compactionRatio: envFloat("AGENTBOT_COMPACTION_RATIO", 0.7),
+    /** 压缩时保留的最近消息条数（从最近的 user 消息处切开）。 */
+    compactionKeepRecent: envInt("AGENTBOT_COMPACTION_KEEP_RECENT", 12),
+    /** 供应商没上报 contextWindow 时的兜底窗口（token）。 */
+    defaultContextWindow: envInt("AGENTBOT_CONTEXT_WINDOW", 128_000),
   },
 
   timeouts: {

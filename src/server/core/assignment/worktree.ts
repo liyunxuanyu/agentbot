@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { config } from "../../config.js";
 import type { DB } from "../db/db.js";
@@ -470,7 +470,7 @@ export function listChangedFiles(cwd: string, run: GitRunner = defaultGitRunner)
 export function validateWorkingDir(input: string): {
   ok: boolean;
   dir?: string;
-  code?: "not_absolute" | "not_found" | "not_directory";
+  code?: "not_absolute" | "not_found" | "not_directory" | "not_writable";
   message?: string;
 } {
   const trimmed = input.trim();
@@ -484,6 +484,12 @@ export function validateWorkingDir(input: string): {
     return { ok: false, code: "not_found", message: "目录无法访问" };
   }
   if (!stat.isDirectory()) return { ok: false, code: "not_directory", message: "不是目录" };
+  // 工作区必须可写（G8）：工具要在里面落文件，不可写会在第一次写操作才失败
+  try {
+    accessSync(trimmed, constants.W_OK);
+  } catch {
+    return { ok: false, code: "not_writable", message: "目录不可写" };
+  }
   // 归一化到真实路径：符号链接与大小写差异会让「同一目录」看起来不同
   let real = trimmed;
   try {

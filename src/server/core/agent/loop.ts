@@ -5,6 +5,7 @@ import {
   type ToolCall,
 } from "./provider.js";
 import { AGENT_LIMITS } from "./limits.js";
+import type { PermissionMode } from "../../../shared/events.js";
 import type { ToolContext, ToolDefinition, ToolRegistry, ToolResult } from "./tools/registry.js";
 
 /**
@@ -30,7 +31,11 @@ export interface AgentLoopCallbacks {
   onToolCall(call: ToolCall, tool: ToolDefinition | null): void;
   onToolResult(call: ToolCall, result: ToolResult): void;
   onUsage(sample: LoopUsageSample): void;
-  askPermission(req: { action: "write" | "exec" | "network"; target: string; detail?: unknown }): Promise<boolean>;
+  askPermission(req: {
+    action: "write" | "exec" | "network" | "admin";
+    target: string;
+    detail?: unknown;
+  }): Promise<boolean>;
 }
 
 export interface AgentLoopOptions {
@@ -40,6 +45,10 @@ export interface AgentLoopOptions {
   messages: ChatMessage[];
   cwd: string;
   signal: AbortSignal;
+  /** 会话级权限模式（计划模式下写类工具已被裁掉，这里只用于拒绝文案）。 */
+  permissionMode?: PermissionMode;
+  /** 调用者角色（管理员才有 create_bot）。 */
+  botRole?: "member" | "admin";
   callbacks: AgentLoopCallbacks;
   maxIterations?: number;
   maxToolCalls?: number;
@@ -86,6 +95,8 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
   const toolCtx: ToolContext = {
     cwd: opts.cwd,
     signal: opts.signal,
+    permissionMode: opts.permissionMode ?? "confirm",
+    botRole: opts.botRole ?? "member",
     askPermission: (req) => opts.callbacks.askPermission(req),
   };
 
@@ -260,7 +271,12 @@ export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentLoopRes
 
       const tool = opts.registry.get(call.name);
       if (!tool) {
-        const result = errorResult(`未知工具：${call.name}。可用工具见系统提示。`, started);
+        const result = errorResult(
+          opts.permissionMode === "plan"
+            ? `当前是计划模式（只读），工具 ${call.name} 不可用。先给出方案，等用户切换模式后再执行。`
+            : `未知工具：${call.name}。可用工具见系统提示。`,
+          started,
+        );
         opts.callbacks.onToolCall(call, null);
         opts.callbacks.onToolResult(call, result);
         opts.messages.push({ role: "tool", toolCallId: call.id, content: `错误：${result.error}` });

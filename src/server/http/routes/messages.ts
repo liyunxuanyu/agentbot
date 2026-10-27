@@ -96,10 +96,13 @@ export function registerMessageRoutes(app: FastifyInstance, ctx: ServerContext):
     } catch (err) {
       if (err instanceof TurnError) {
         const status = err.code === "session_not_found" ? 404 : 409;
-        // worktree_not_ready 必须带 message：前端要显示「为什么不能发」+ 重试入口
+        // worktree_not_ready / workspace_invalid 必须带 message：
+        // 前端要显示「为什么不能发」+ 去哪改（R2 明确要求不静默降级）
         return json(reply, status, {
           error: err.code,
-          ...(err.code === "worktree_not_ready" ? { message: err.message } : {}),
+          ...(err.code === "worktree_not_ready" || err.code === "workspace_invalid"
+            ? { message: err.message }
+            : {}),
         });
       }
       req.log.error?.(err);

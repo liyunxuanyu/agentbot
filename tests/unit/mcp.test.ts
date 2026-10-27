@@ -102,7 +102,13 @@ describe("MCP 管理器", () => {
     expect(tools[0]?.mcp).toEqual({ server: "fake", tool: "echo" });
 
     const result = await tools[0]!.execute(
-      { cwd: dir, signal: new AbortController().signal, askPermission: async () => true },
+      {
+        cwd: dir,
+        signal: new AbortController().signal,
+        permissionMode: "confirm",
+        botRole: "member",
+        askPermission: async () => true,
+      },
       { text: "manager" },
     );
     expect(result.ok).toBe(true);

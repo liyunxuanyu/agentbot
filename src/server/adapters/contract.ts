@@ -180,6 +180,11 @@ export interface ChannelDriver {
   cancel(h: SessionHandle): Promise<void>;
   respondPermission(h: SessionHandle, requestId: string, decision: PermissionDecision): Promise<void>;
   /**
+   * 生成中更新会话控制项（内置引擎）。切权限模式 / 换模型时立即生效，
+   * 只影响尚未裁决的工具调用与后续轮次；已在执行的调用不回滚（G3）。
+   */
+  setControls?(h: SessionHandle, controls: PromptControls): void;
+  /**
    * 压缩上下文（内置引擎）。其它通道不实现 —— 返回 undefined 表示不支持。
    * `force=false` 时只在超过阈值时压缩；手动端点传 true。
    */

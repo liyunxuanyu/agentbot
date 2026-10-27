@@ -9,7 +9,7 @@ import type { PermissionResolver } from "../core/permissions/resolver.js";
 import type { AssignmentRunner } from "../core/assignment/runner.js";
 import type { Scheduler } from "../core/scheduling/scheduler.js";
 import type { Summarizer } from "../core/memory/summarizer.js";
-import type { AdapterDeclaration } from "../adapters/contract.js";
+import type { AdapterDeclaration, CompactionResult, PromptControls } from "../adapters/contract.js";
 import type { McpManager } from "../adapters/mcp/manager.js";
 import {
   authLockRemainingMs,
@@ -122,6 +122,15 @@ export interface ServerContext {
   orchestrator: TurnOrchestrator;
   /** 权限裁决：卡片状态读取与用户决策的唯一入口。 */
   permissions: PermissionResolver;
+  /**
+   * 生成中更新会话控制项（内置引擎）。缺省时只落库、下次 spawn 生效。
+   * 由装配层从 Supervisor 注入 —— http 层不持有进程表。
+   */
+  setSessionControls?: (sessionId: string, controls: PromptControls) => void;
+  /**
+   * 手动压缩上下文（内置引擎）。进程不在 / 通道不支持时返回 null。
+   */
+  compactSession?: (sessionId: string, opts: { force?: boolean }) => Promise<CompactionResult | null>;
   /** Assignment 队列与执行（M11）。 */
   assignments: AssignmentRunner;
   /**

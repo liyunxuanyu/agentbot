@@ -1,18 +1,22 @@
 import type {
   AdapterDeclaration,
   ChannelDriver,
+  CompactionResult,
   ExitInfo,
   PermissionDecision,
   ProbeResult,
+  PromptControls,
   RuntimePermissionRequest,
   SessionHandle,
   SpawnContext,
 } from "../../contract.js";
-import type { CanonicalEvent } from "../../../../shared/events.js";
+import type { CanonicalEvent, PermissionMode } from "../../../../shared/events.js";
+import { config } from "../../../config.js";
 import { getTurnContext } from "../../turn-context.js";
 import {
   ProviderError,
   type ChatMessage,
+  type ProviderClient,
   type ProviderConfig,
 } from "../../../core/agent/provider.js";
 import { createProviderClient } from "../../providers/index.js";
@@ -20,7 +24,10 @@ import { resolveProvider } from "../../providers/store.js";
 import { runAgentLoop, type AgentLoopResult } from "../../../core/agent/loop.js";
 import { buildSystemPrompt } from "../../../core/agent/prompt.js";
 import { scanSkills } from "../../../core/agent/skills.js";
-import { createBuiltinTools } from "../../../core/agent/tools/builtin/index.js";
+import {
+  createBuiltinTools,
+  type CreateBotHandler,
+} from "../../../core/agent/tools/builtin/index.js";
 import {
   createToolRegistry,
   type ToolDefinition,
@@ -51,6 +58,11 @@ export interface BuiltinDriverOptions {
   createClient?: (cfg: ProviderConfig) => import("../../../core/agent/provider.js").ProviderClient;
   /** 便于单测注入；生产用内置工具全集。 */
   tools?: ToolDefinition[];
+  /**
+   * 管理员 Bot 的 `create_bot` 实现（M3）。装配层注入，工具本身不碰数据库。
+   * 不注入时不提供该工具 —— 普通 Bot 的模型根本看不到它。
+   */
+  createBot?: CreateBotHandler;
   log?: (message: string) => void;
 }
 
@@ -64,6 +76,14 @@ interface SessionState {
   cwd: string;
   botId: string | null;
   providerId: string | null;
+  /** 会话级模型覆盖（R4）；null = 用供应商默认模型。 */
+  model: string | null;
+  /** 四档权限模式（R5）；每轮从 PromptControls 更新。 */
+  permissionMode: PermissionMode;
+  /** 管理员多一个 create_bot 工具（M3）。 */
+  botRole: "member" | "admin";
+  /** 编排层给的人格 + 记忆；每轮据此重建系统提示（cwd / 模式可能变）。 */
+  baseSystemPrompt: string;
   systemPrompt: string;
   history: ChatMessage[];
   eventCb: ((event: CanonicalEvent) => void) | null;
@@ -72,6 +92,37 @@ interface SessionState {
   pending: Map<string, PendingPermission>;
   controller: AbortController | null;
   disposed: boolean;
+}
+
+/** 写类动作：计划模式下这些工具直接从工具表里裁掉。 */
+function isWriteLike(permission: ToolDefinition["permission"]): boolean {
+  return permission === "write" || permission === "exec" || permission === "network" || permission === "admin";
+}
+
+/** 估算 token：与编排层同一口径（2 字符 ≈ 1 token，保守高估）。 */
+function estimateTokens(messages: readonly ChatMessage[]): number {
+  let chars = 0;
+  for (const m of messages) {
+    chars += m.content.length;
+    if (m.toolCalls) {
+      for (const call of m.toolCalls) chars += call.rawArguments.length;
+    }
+  }
+  return Math.ceil(chars / 2);
+}
+
+/** 计划模式 / 自动模式 / 完全访问的运行时提示（写在系统提示末尾）。 */
+function modeNote(mode: PermissionMode): string {
+  switch (mode) {
+    case "plan":
+      return "## 当前权限模式：计划模式（只读）\n你只能读取和分析，不能写文件、执行命令或访问网络。先给出方案，等用户切换模式后再动手。";
+    case "auto":
+      return "## 当前权限模式：自动模式\n边界内的写操作会自动批准；执行命令与访问网络仍需用户确认。";
+    case "full":
+      return "## 当前权限模式：完全访问\n所有动作直接执行并记审计；仍需遵守工作目录约束之外的常识性安全。";
+    default:
+      return "";
+  }
 }
 
 let permissionCounter = 0;
@@ -88,7 +139,11 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
   const states = new Map<string, SessionState>();
   const resolveCfg = opts.resolveProvider ?? ((id: string | null) => resolveProvider(id));
   const makeClient = opts.createClient ?? createProviderClient;
-  const baseTools = opts.tools ?? createBuiltinTools();
+  const baseTools =
+    opts.tools ??
+    createBuiltinTools({
+      ...(opts.createBot === undefined ? {} : { createBot: opts.createBot }),
+    });
   const log = opts.log ?? ((msg: string) => console.warn(`[builtin] ${msg}`));
 
   function stateOf(h: SessionHandle): SessionState | null {
@@ -156,6 +211,187 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     });
   }
 
+  /** 重建系统提示：cwd / 供应商 / 权限模式都可能在会话内变化。 */
+  function systemPromptOf(state: SessionState): string {
+    const providerName = resolveCfg(state.providerId)?.name;
+    const base = buildSystemPrompt({
+      ...(state.baseSystemPrompt.length > 0 ? { baseSystemPrompt: state.baseSystemPrompt } : {}),
+      cwd: state.cwd,
+      skills: scanSkills(opts.skillsDir),
+      ...(providerName === undefined ? {} : { providerName }),
+    });
+    const note = modeNote(state.permissionMode);
+    return note.length > 0 ? `${base}\n\n${note}` : base;
+  }
+
+  /**
+   * 本轮暴露给模型的工具：
+   *   - 普通 Bot 看不到 `create_bot`（管理员专属，M3）；
+   *   - 计划模式下写类工具直接从列表裁掉（不是调用时才拒，R5/G3）。
+   */
+  function toolsFor(state: SessionState): ToolDefinition[] {
+    return baseTools.filter((tool) => {
+      if (tool.name === "create_bot" && state.botRole !== "admin") return false;
+      if (state.permissionMode === "plan" && isWriteLike(tool.permission)) return false;
+      return true;
+    });
+  }
+
+  function clipText(text: string, max: number): string {
+    if (text.length <= max) return text;
+    return `${text.slice(0, Math.max(0, max - 1))}…`;
+  }
+
+  /** 把待压缩的消息渲染成一段纯文本，供摘要器阅读。 */
+  function renderTranscript(messages: readonly ChatMessage[]): string {
+    const parts: string[] = [];
+    for (const m of messages) {
+      if (m.role === "system") continue;
+      const label = m.role === "user" ? "用户" : m.role === "assistant" ? "助手" : "工具";
+      const body = m.content.trim();
+      const calls =
+        m.toolCalls
+          ?.map((c) => `[调用 ${c.name} ${clipText(c.rawArguments, 200)}]`)
+          .join(" ") ?? "";
+      if (body.length === 0 && calls.length === 0) continue;
+      parts.push(`${label}：${clipText(body, 1500)}${calls.length > 0 ? ` ${calls}` : ""}`);
+    }
+    return parts.join("\n\n");
+  }
+
+  /** 抽取式兜底摘要：模型不可用 / 超时时也能压，绝不阻塞对话。 */
+  function extractiveSummary(messages: readonly ChatMessage[]): string {
+    const tail = messages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(-8)
+      .map((m) => `${m.role === "user" ? "用户" : "助手"}：${clipText(m.content.trim(), 200)}`)
+      .filter((line) => !line.endsWith("："));
+    return clipText(`此前对话要点（自动压缩）：\n${tail.join("\n")}`, 2000);
+  }
+
+  async function summarizeWithModel(
+    client: ProviderClient,
+    transcript: string,
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    try {
+      const completion = await client.complete({
+        messages: [
+          {
+            role: "system",
+            content:
+              "你是对话压缩器。把下面的对话压成要点，保留：用户目标、已达成的结论、关键文件路径与命令、未完成事项。不要编造。只输出摘要正文，不超过 1200 字。",
+          },
+          { role: "user", content: transcript },
+        ],
+        tools: [],
+        signal,
+      });
+      const text = completion.text.trim();
+      return text.length > 0 ? clipText(text, 4000) : null;
+    } catch (err) {
+      log(`摘要模型调用失败，改用抽取式摘要：${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * 压缩内存历史（R7 / G5）。
+   *
+   * 结构：[system 提示, system 摘要, ...最近 keepRecent 条]
+   * 切点向前对齐到 user 消息，避免把 assistant 的 tool_calls 与 tool 结果拆开。
+   * 摘要优先用当前会话模型；模型不可用时退化为抽取式摘要（永远有结果）。
+   */
+  async function compactHistory(
+    state: SessionState,
+    trigger: "auto" | "manual",
+    client: ProviderClient,
+    signal: AbortSignal,
+  ): Promise<CompactionResult> {
+    const beforeTokens = estimateTokens(state.history);
+    const keep = Math.max(2, config.limits.compactionKeepRecent);
+    const system = state.history[0]?.role === "system" ? state.history[0] : null;
+    const rest = system ? state.history.slice(1) : [...state.history];
+
+    if (rest.length <= keep + 1) {
+      return {
+        ok: false,
+        removedMessages: 0,
+        summaryChars: 0,
+        beforeTokens,
+        afterTokens: beforeTokens,
+        trigger,
+        reason: `消息太少（${rest.length} 条），不需要压缩`,
+      };
+    }
+
+    let cut = Math.max(0, rest.length - keep);
+    while (cut < rest.length && rest[cut]?.role !== "user") cut += 1;
+    if (cut >= rest.length) cut = Math.max(0, rest.length - keep);
+    const old = rest.slice(0, cut);
+    const recent = rest.slice(cut);
+    if (old.length === 0) {
+      return {
+        ok: false,
+        removedMessages: 0,
+        summaryChars: 0,
+        beforeTokens,
+        afterTokens: beforeTokens,
+        trigger,
+        reason: "没有可压缩的历史",
+      };
+    }
+
+    const transcript = renderTranscript(old);
+    const summary =
+      (await summarizeWithModel(client, transcript, signal)) ?? extractiveSummary(old);
+    const summaryMessage: ChatMessage = {
+      role: "system",
+      content: `## 此前对话摘要（已压缩 ${old.length} 条原始消息）\n${summary}\n\n原文仍保存在事件记录里，但不再注入上下文。`,
+    };
+    const next: ChatMessage[] = [...(system ? [system] : []), summaryMessage, ...recent];
+    state.history.splice(0, state.history.length, ...next);
+
+    return {
+      ok: true,
+      removedMessages: old.length,
+      summaryChars: summary.length,
+      beforeTokens,
+      afterTokens: estimateTokens(state.history),
+      trigger,
+    };
+  }
+
+  /** 自动压缩：占用超过阈值才动手（默认 70%）。 */
+  async function maybeCompact(
+    state: SessionState,
+    client: ProviderClient,
+    provider: ProviderConfig,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const window = provider.contextWindow ?? config.limits.defaultContextWindow;
+    if (!Number.isFinite(window) || window <= 0) return;
+    const before = estimateTokens(state.history);
+    if (before < Math.floor(window * config.limits.compactionRatio)) return;
+
+    const result = await compactHistory(state, "auto", client, signal);
+    if (!result.ok) return;
+    const turnId = getTurnContext(state.handle)?.turnId ?? `meta_${state.sessionId}`;
+    emit(
+      state,
+      makeEvent("meta", turnId, {
+        kind: "compaction",
+        data: {
+          removedMessages: result.removedMessages,
+          summaryChars: result.summaryChars,
+          beforeTokens: result.beforeTokens,
+          afterTokens: result.afterTokens,
+          trigger: result.trigger,
+        },
+      }),
+    );
+  }
+
   function trimHistory(history: ChatMessage[]): void {
     if (history.length <= 120) return;
     const system = history.filter((m) => m.role === "system");
@@ -164,6 +400,31 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     let start = Math.max(0, rest.length - 100);
     while (start < rest.length && rest[start]?.role !== "user") start += 1;
     history.splice(0, history.length, ...system, ...rest.slice(start));
+  }
+
+  /** 把本轮控制项写进会话状态（只影响后续轮次 / 未裁决调用）。 */
+  function applyControls(
+    state: SessionState,
+    controls: {
+      providerId?: string | null;
+      model?: string | null;
+      permissionMode?: PermissionMode;
+      workspacePath?: string | null;
+    },
+  ): void {
+    if (controls.providerId !== undefined) state.providerId = controls.providerId;
+    if (controls.model !== undefined) state.model = controls.model;
+    if (
+      controls.permissionMode === "confirm" ||
+      controls.permissionMode === "auto" ||
+      controls.permissionMode === "plan" ||
+      controls.permissionMode === "full"
+    ) {
+      state.permissionMode = controls.permissionMode;
+    }
+    if (typeof controls.workspacePath === "string" && controls.workspacePath.length > 0) {
+      state.cwd = controls.workspacePath;
+    }
   }
 
   async function runPrompt(state: SessionState, text: string): Promise<void> {
@@ -188,11 +449,32 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
       );
       return;
     }
+    // 会话级模型覆盖（R4）：只影响本轮及之后，不改供应商配置本身
+    const effective: ProviderConfig =
+      state.model !== null && state.model.length > 0 ? { ...provider, model: state.model } : provider;
 
     const controller = new AbortController();
     state.controller = controller;
+
+    // 系统提示每轮重建：工作区可能在会话内切换，权限模式也要写进提示
+    const prompt = systemPromptOf(state);
+    if (state.history[0]?.role === "system") {
+      state.history[0] = { role: "system", content: prompt };
+    } else {
+      state.history.unshift({ role: "system", content: prompt });
+    }
+    state.systemPrompt = prompt;
+
+    const client = makeClient(effective);
+    // 上下文压缩（R7）：阈值按上下文窗口占用比，压缩完再追加本轮用户消息
+    await maybeCompact(state, client, effective, controller.signal);
+    if (state.disposed || controller.signal.aborted) {
+      state.controller = null;
+      return;
+    }
+
     const registry = createToolRegistry([
-      ...baseTools,
+      ...toolsFor(state),
       ...(opts.mcp ? opts.mcp.tools() : []),
     ]);
 
@@ -202,12 +484,12 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     let reasoningOpen = false;
     let result: AgentLoopResult;
     try {
-      const client = makeClient(provider);
       result = await runAgentLoop({
         provider: client,
         registry,
         messages: state.history,
         cwd: state.cwd,
+        permissionMode: state.permissionMode,
         signal: controller.signal,
         callbacks: {
           onTextDelta: (delta) => emitDelta(state, turnId, "delta", delta, messageId),
@@ -328,9 +610,18 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
       const state: SessionState = {
         handle,
         sessionId: ctx.sessionId,
-        cwd: ctx.cwd,
+        cwd: ctx.workspacePath ?? ctx.cwd,
         botId: ctx.botId ?? null,
         providerId: ctx.providerId ?? null,
+        model: ctx.model ?? null,
+        permissionMode:
+          ctx.permissionMode === "auto" ||
+          ctx.permissionMode === "plan" ||
+          ctx.permissionMode === "full"
+            ? ctx.permissionMode
+            : "confirm",
+        botRole: ctx.botRole === "admin" ? "admin" : "member",
+        baseSystemPrompt: "",
         systemPrompt: "",
         history: [],
         eventCb: null,
@@ -364,13 +655,8 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
       const state = stateOf(h);
       if (!state) throw new Error(`内置引擎会话不存在：${h.sessionId}`);
       state.cwd = session.cwd;
-      const providerName = resolveCfg(state.providerId)?.name;
-      state.systemPrompt = buildSystemPrompt({
-        ...(session.systemPrompt === undefined ? {} : { baseSystemPrompt: session.systemPrompt }),
-        cwd: session.cwd,
-        skills: scanSkills(opts.skillsDir),
-        ...(providerName !== undefined ? { providerName } : {}),
-      });
+      state.baseSystemPrompt = session.systemPrompt ?? "";
+      state.systemPrompt = systemPromptOf(state);
       state.history = [{ role: "system", content: state.systemPrompt }];
       return { runtimeSessionId: `builtin_${h.sessionId}` };
     },
@@ -387,7 +673,72 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
     async prompt(h, input): Promise<void> {
       const state = stateOf(h);
       if (!state) throw new Error(`内置引擎会话不存在：${h.sessionId}`);
+      applyControls(state, input);
       await runPrompt(state, input.text);
+    },
+
+    /**
+     * 生成中切模式 / 换模型（G3）：只更新后续轮次与尚未裁决的工具调用，
+     * 已经在执行的调用不回滚。权限裁决由 resolver 每次读库决定。
+     */
+    setControls(h, controls): void {
+      const state = stateOf(h);
+      if (!state) return;
+      applyControls(state, controls);
+    },
+
+    async compact(h, compactOpts): Promise<CompactionResult | null> {
+      const state = stateOf(h);
+      if (!state) return null;
+      const provider = resolveCfg(state.providerId);
+      if (!provider) {
+        return {
+          ok: false,
+          removedMessages: 0,
+          summaryChars: 0,
+          beforeTokens: estimateTokens(state.history),
+          afterTokens: estimateTokens(state.history),
+          trigger: "manual",
+          reason: "未配置模型供应商，无法压缩",
+        };
+      }
+      const effective: ProviderConfig =
+        state.model !== null && state.model.length > 0 ? { ...provider, model: state.model } : provider;
+      const before = estimateTokens(state.history);
+      if (compactOpts.force !== true) {
+        const window = effective.contextWindow ?? config.limits.defaultContextWindow;
+        if (before < Math.floor(window * config.limits.compactionRatio)) {
+          return {
+            ok: false,
+            removedMessages: 0,
+            summaryChars: 0,
+            beforeTokens: before,
+            afterTokens: before,
+            trigger: "manual",
+            reason: "未达到压缩阈值",
+          };
+        }
+      }
+      const signal = state.controller?.signal ?? new AbortController().signal;
+      const result = await compactHistory(state, "manual", makeClient(effective), signal);
+      if (result.ok) {
+        // 手动压缩同样要在流内留标记（R7：流内可见）
+        const turnId = getTurnContext(state.handle)?.turnId ?? `meta_${state.sessionId}`;
+        emit(
+          state,
+          makeEvent("meta", turnId, {
+            kind: "compaction",
+            data: {
+              removedMessages: result.removedMessages,
+              summaryChars: result.summaryChars,
+              beforeTokens: result.beforeTokens,
+              afterTokens: result.afterTokens,
+              trigger: result.trigger,
+            },
+          }),
+        );
+      }
+      return result;
     },
 
     async cancel(h): Promise<void> {

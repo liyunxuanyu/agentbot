@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ServerContext } from "../server.js";
+import { validateWorkspacePath } from "../../core/process/session-cwd.js";
 import {
   getChannel,
   lastEventIdOfChannel,
@@ -13,9 +14,10 @@ import {
 /**
  * 渠道与会话首屏。
  *
- *   `GET  /api/channels`       渠道列表（前端 ChatsPage 用）
- *   `POST /api/channels`       新建渠道（私聊 / 群聊）
- *   `GET  /api/channels/:id`   渠道 + Session 列表 + 消息 + SSE 首连游标
+ *   `GET   /api/channels`       渠道列表（前端 ChatsPage 用）
+ *   `POST  /api/channels`       新建渠道（私聊 / 群聊）
+ *   `GET   /api/channels/:id`   渠道 + Session 列表 + 消息 + SSE 首连游标
+ *   `PATCH /api/channels/:id`   会话/群聊工作区（R2，群聊全员共用）
  *
  * 错误码约定（前端 `isMissingEndpoint` 依赖它）：
  *   - 路由未注册 → `404 {"error":"not_found"}`（由 server.ts 的 setNotFoundHandler 统一给）
@@ -36,6 +38,17 @@ interface CreateChannelBody {
   name?: unknown;
   participantBotIds?: unknown;
   hostBotId?: unknown;
+  /** 创建时直接指定工作区（可选；不填走回退链）。 */
+  workspacePath?: unknown;
+}
+
+interface PatchChannelBody {
+  /**
+   * 会话/群聊工作区。
+   *   - 字符串：校验后落库（存在、是目录、可写，不要求 git —— G8）
+   *   - null / 空串：清空，回到回退链（Bot 默认工作区 → 服务进程 cwd）
+   */
+  workspacePath?: unknown;
 }
 
 /** 群聊人数区间（UX F2：2–5 个 Bot）。 */
@@ -139,13 +152,36 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ServerContext):
       hostBotId = participantIds.includes(requested) ? requested : (participantIds[0] ?? null);
     }
 
+    // 可选工作区：创建时就校验（G8），避免建完才发现路径不可用
+    let workspacePath: string | null = null;
+    if (body.workspacePath !== undefined && body.workspacePath !== null && body.workspacePath !== "") {
+      if (typeof body.workspacePath !== "string") {
+        return json(reply, 400, {
+          error: "invalid_workspace",
+          field: "workspacePath",
+          message: "工作区路径必须是字符串",
+        });
+      }
+      const check = validateWorkspacePath(body.workspacePath);
+      if (!check.ok) {
+        return json(reply, 400, {
+          error: "invalid_workspace",
+          field: "workspacePath",
+          code: check.code ?? "invalid",
+          message: check.message ?? "工作区不可用",
+        });
+      }
+      workspacePath = check.path ?? body.workspacePath.trim();
+    }
+
     const id = `${type}_${randomUUID()}`;
     ctx.db
       .prepare(
-        `INSERT INTO channels (id, type, name, participant_bot_ids, host_bot_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO channels
+           (id, type, name, participant_bot_ids, host_bot_id, workspace_path, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, type, name, JSON.stringify(participantIds), hostBotId, Date.now());
+      .run(id, type, name, JSON.stringify(participantIds), hostBotId, workspacePath, Date.now());
 
     return json(reply, 201, { channel: getChannel(ctx.db, id) });
   });
@@ -171,4 +207,60 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ServerContext):
       lastEventIdBySession: lastEventIdsBySession(ctx.db, channelId),
     };
   });
+
+  /**
+   * 修改会话/群聊工作区（R2）。
+   *
+   * 只改 `channels.workspace_path`：群聊里所有 Bot 共用同一个工作区（G10），
+   * 会话级覆盖仍由 `sessions.workspace_path` 承担（会话设置里单独改）。
+   * 内置引擎下一轮 prompt 直接生效（没有进程 cwd 概念）；其它运行时本轮只落库，
+   * 前端对它们显示禁用态。
+   *
+   * 空串 / null = 清空，回到回退链 —— 不是「把工作区设成服务进程目录」。
+   */
+  app.patch<{ Params: { id: string }; Body: PatchChannelBody }>(
+    "/api/channels/:id",
+    async (req, reply: FastifyReply) => {
+      const channelId = req.params.id;
+      const existing = ctx.db
+        .prepare("SELECT id FROM channels WHERE id = ?")
+        .get(channelId) as { id: string } | undefined;
+      if (!existing) return json(reply, 404, { error: "channel_not_found" });
+
+      const body = req.body ?? {};
+      if (body.workspacePath === undefined) {
+        return json(reply, 400, {
+          error: "nothing_to_update",
+          message: "没有可更新的字段（workspacePath）",
+        });
+      }
+
+      let workspacePath: string | null = null;
+      if (body.workspacePath !== null && body.workspacePath !== "") {
+        if (typeof body.workspacePath !== "string") {
+          return json(reply, 400, {
+            error: "invalid_workspace",
+            field: "workspacePath",
+            message: "工作区路径必须是字符串",
+          });
+        }
+        const check = validateWorkspacePath(body.workspacePath);
+        if (!check.ok) {
+          return json(reply, 400, {
+            error: "invalid_workspace",
+            field: "workspacePath",
+            code: check.code ?? "invalid",
+            message: check.message ?? "工作区不可用",
+          });
+        }
+        workspacePath = check.path ?? body.workspacePath.trim();
+      }
+
+      ctx.db
+        .prepare("UPDATE channels SET workspace_path = ? WHERE id = ?")
+        .run(workspacePath, channelId);
+
+      return { ok: true, channel: getChannel(ctx.db, channelId) };
+    },
+  );
 }

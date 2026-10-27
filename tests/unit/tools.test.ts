@@ -31,7 +31,13 @@ afterEach(() => {
 });
 
 function ctx(cwd: string): ToolContext {
-  return { cwd, signal: new AbortController().signal, askPermission: async () => true };
+  return {
+    cwd,
+    signal: new AbortController().signal,
+    permissionMode: "confirm",
+    botRole: "member",
+    askPermission: async () => true,
+  };
 }
 
 describe("路径安全", () => {

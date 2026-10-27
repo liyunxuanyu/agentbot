@@ -273,7 +273,7 @@ function normalizePayload(type: StoredEventType, payload: unknown, adapterRaw: u
         requestId: asString(p["requestId"], "", "requestId", missing),
         action: asEnum(
           p["action"],
-          ["write", "read", "exec", "network"] as const,
+          ["write", "read", "exec", "network", "admin"] as const,
           "read",
           "action",
           missing,
@@ -296,6 +296,14 @@ function normalizePayload(type: StoredEventType, payload: unknown, adapterRaw: u
         // 缺上报标记时按「未上报」处理，UI 显示 — 而不是 0
         reported: asBoolean(p["reported"], false, "reported", missing),
         cumulative: typeof p["cumulative"] === "boolean" ? p["cumulative"] : undefined,
+        // 缓存口径与模型：缺省不填（不伪造 0），前端显示「未上报」
+        ...(typeof p["cachedInputTokens"] === "number"
+          ? { cachedInputTokens: p["cachedInputTokens"] }
+          : {}),
+        ...(typeof p["cacheWriteTokens"] === "number"
+          ? { cacheWriteTokens: p["cacheWriteTokens"] }
+          : {}),
+        ...(typeof p["model"] === "string" && p["model"].length > 0 ? { model: p["model"] } : {}),
       };
       break;
 
