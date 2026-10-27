@@ -611,17 +611,54 @@ function short(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n);
 }
 
-/** meta 事件 → Session 分隔条文案（UX §2.3：只在变化时显形）。 */
-export function dividerText(kind: MetaEventKind): string | null {
+/**
+ * meta 事件 → Session 分隔条文案（UX §2.3：只在变化时显形）。
+ *
+ * `data` 是 payload 里的原始数据（`payload.data`）。带数量时优先显示具体数字：
+ *   - compaction：后端已给 `removedMessages` / `summaryChars`（R7），
+ *     分隔条写「已压缩 N 条 → 摘要 M 字」，不再用固定串；
+ *   - config_update：切 plan 时后端在审计 meta 里带 `rejectedPending`（G3），
+ *     写「已按计划模式拒绝 N 个挂起请求」。
+ * 数据缺失（老事件 / 其它运行时）时退回固定文案，不显示「undefined」。
+ */
+export function dividerText(kind: MetaEventKind, data?: unknown): string | null {
   switch (kind) {
     case "session_rebuilt":
       return "新 Session · 已重建上下文（人格 + 记忆 + 最近 20 条）";
     case "session_resumed":
       return "续接上一 Session · 人格 + 记忆 + 最近 20 条";
-    case "compaction":
+    case "compaction": {
+      const d = asRecord(data);
+      const removed = numberField(d, "removedMessages");
+      const chars = numberField(d, "summaryChars");
+      if (removed !== null && chars !== null) {
+        return `已压缩 ${removed} 条 → 摘要 ${chars} 字`;
+      }
+      if (removed !== null) return `已压缩 ${removed} 条消息`;
       return "上下文已压缩 · 更早的对话被摘要替代";
+    }
+    case "config_update": {
+      const d = asRecord(data);
+      const rejected = numberField(d, "rejectedPending");
+      if (d?.["modeSwitchedTo"] === "plan" && rejected !== null && rejected > 0) {
+        return `已按计划模式拒绝 ${rejected} 个挂起请求`;
+      }
+      // 其它 config_update（模型/工作区变更）不产生分隔条
+      return null;
+    }
     default:
-      // commands_update / config_update / unknown_protocol 不产生分隔条
+      // commands_update / unknown_protocol 不产生分隔条
       return null;
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function numberField(data: Record<string, unknown> | null, key: string): number | null {
+  const v = data?.[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }

@@ -394,7 +394,15 @@ describe("上下文压缩（R7 / G5）", () => {
         (e) => e.type === "meta" && (e.payload as { kind?: string }).kind === "compaction",
       );
       expect(marker).toBeDefined();
-      expect((marker?.payload as { data?: { trigger?: string } }).data?.trigger).toBe("manual");
+      // R7：流内分隔条靠这两个数字（前端 dividerText 直接读 payload.data）
+      const markerData = (marker?.payload as {
+        data?: { trigger?: string; removedMessages?: number; summaryChars?: number };
+      }).data;
+      expect(markerData?.trigger).toBe("manual");
+      expect(markerData?.removedMessages).toBe(result?.removedMessages);
+      expect(markerData?.summaryChars).toBe(result?.summaryChars);
+      expect(markerData?.removedMessages).toBeGreaterThan(0);
+      expect(markerData?.summaryChars).toBeGreaterThan(0);
 
       // 下一轮发给模型的上下文里有摘要段，且原始消息已被裁掉
       fixture.provider.requests.splice(0);
@@ -685,6 +693,123 @@ describe("群聊记忆 HTTP 层（R3）", () => {
       const res3 = await fetch(`${base}/api/bots/b3/memory`);
       const body3 = (await res3.json()) as { entries: { id: string }[] };
       expect(body3.entries.find((e) => e.id === "m_shared")).toBeUndefined();
+    } finally {
+      await app.close();
+      permissions.dispose();
+      await orchestrator.dispose();
+      await supervisor.dispose();
+      db.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G3：切 plan 的「已拒绝 N 个」要落库（刷新后仍在）
+// ---------------------------------------------------------------------------
+
+describe("切 plan 的持久系统块（G3）", () => {
+  it("PATCH controls → 落一条 config_update meta，带 rejectedPending", async () => {
+    const { buildServer } = await import("../../src/server/http/server.js");
+    const { createEventBus } = await import("../../src/server/core/events/bus.js");
+    const { createSessionLock } = await import("../../src/server/core/orchestrator/session-lock.js");
+    const { createTurnOrchestrator } = await import("../../src/server/core/orchestrator/turn.js");
+    const { createSupervisor } = await import("../../src/server/core/process/supervisor.js");
+    const { createPermissionResolver } = await import(
+      "../../src/server/core/permissions/resolver.js"
+    );
+    const { listenEphemeral } = await import("./http-listen.js");
+
+    const db = openDb(":memory:");
+    const now = Date.now();
+    // allow_dirs 必须包含 dirA，否则写请求在边界判定阶段就被拒（落 denied_boundary），
+    // 根本不会进入 pending —— 测不到「切 plan 拒绝挂起」这条路径。
+    db.prepare(
+      `INSERT INTO bots (id, name, persona, allow_dirs, created_at, updated_at)
+       VALUES ('b1', '小助', '', ?, ?, ?)`,
+    ).run(JSON.stringify([dirA]), now, now);
+    db.prepare(
+      `INSERT INTO channels (id, type, name, participant_bot_ids, created_at)
+       VALUES ('ch1', 'dm', '私聊', '["b1"]', ?)`,
+    ).run(now);
+    db.prepare(
+      `INSERT INTO sessions (id, bot_id, channel_id, status, started_at)
+       VALUES ('s1', 'b1', 'ch1', 'ready', ?)`,
+    ).run(now);
+
+    const bus = createEventBus();
+    const resolveRuntime = () => null;
+    const supervisor = createSupervisor({ db, bus, resolveRuntime });
+    const permissions = createPermissionResolver({
+      db,
+      bus,
+      // 会话在跑：否则请求直接 invalidated，进不了 pending（G3 测的是 pending → rejected）
+      isSessionAlive: () => true,
+      sessionCwdOf: () => process.cwd(),
+      respond: async () => true,
+      setHeld: () => undefined,
+      setSessionStatus: () => undefined,
+      log: () => undefined,
+    });
+    const orchestrator = createTurnOrchestrator({
+      db,
+      bus,
+      lock: createSessionLock(),
+      resolveRuntime,
+      supervisor,
+    });
+    const app = buildServer(
+      {
+        db,
+        runtimes: [],
+        schemaVersion: 4,
+        startedAt: now,
+        resolveRuntime: () => null,
+        orchestrator,
+        permissions,
+        assignments: { stop: () => undefined } as never,
+      },
+      { authEnabled: false, webRoot: join(root, "no-web") },
+    );
+    const base = await listenEphemeral(app);
+    try {
+      // 先制造一个挂起的写类权限请求（切 plan 时会被拒）
+      // 等裁决完成再切档：handle 是异步的（边界判定 + 落库 + 回传）
+      await permissions.handle({
+        sessionId: "s1",
+        botId: "b1",
+        turnId: "t1",
+        source: "interactive",
+        request: {
+          requestId: "req_1",
+          action: "write",
+          target: join(dirA, "a.md"),
+        },
+      });
+
+      const res = await fetch(`${base}/api/sessions/s1/controls`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ permissionMode: "plan" }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; rejectedPending?: number };
+      expect(body.ok).toBe(true);
+
+      // 库里确实有一条 meta（不是前端本地插入的）
+      const row = db
+        .prepare(
+          `SELECT payload FROM events WHERE session_id = 's1' AND type = 'meta' ORDER BY id DESC LIMIT 1`,
+        )
+        .get() as { payload: string } | undefined;
+      expect(row).toBeDefined();
+      const payload = JSON.parse(row?.payload ?? "{}") as {
+        kind?: string;
+        data?: { rejectedPending?: number; modeSwitchedTo?: string };
+      };
+      expect(payload.kind).toBe("config_update");
+      // 有挂起写请求 → 拒绝数 > 0 才带 modeSwitchedTo（G3 分隔条的触发条件）
+      expect(payload.data?.modeSwitchedTo).toBe("plan");
+      expect(payload.data?.rejectedPending).toBe(1);
     } finally {
       await app.close();
       permissions.dispose();

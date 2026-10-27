@@ -274,6 +274,8 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: ServerContext):
         permissionMode: after.permission_mode,
         workspacePath: after.workspace_path,
         rejectedPending,
+        // G3：只有真的拒绝了才带上，0 不产生分隔条（避免每次切档都插一条噪音）
+        ...(rejectedPending > 0 ? { modeSwitchedTo: "plan" } : {}),
       });
 
       const dto =

@@ -96,27 +96,13 @@ export const useEventsStore = defineStore("events", () => {
     return true;
   }
 
-  /** 本地提示的合成 id：负数，永远不会和库里的正 id 撞。 */
-  let localNoteSeq = -1;
-
-  /**
-   * 插入一条本地系统提示（不改库，只在当前页面的分隔条位置显示）。
-   *
-   * 用途：手动压缩完成、切 plan 时批量拒绝挂起请求。这些动作后端已落审计，
-   * 但不会为 UI 补发一条 meta 帧；本地插一条能让用户看到「刚才发生了什么」。
-   */
-  function pushLocalNote(text: string, kind: MetaEventKind = "compaction"): void {
-    dividers.value = [
-      ...dividers.value,
-      { eventId: localNoteSeq--, kind, text, ts: Date.now(), turnId: "" },
-    ];
-  }
-
   /** 收一帧 meta：只生成分隔条，绝不进 Turn 渲染。 */
   function pushMeta(ev: RawEvent): void {
-    const payload = ev.payload as { kind?: unknown };
+    const payload = ev.payload as { kind?: unknown; data?: unknown };
     const kind = (typeof payload.kind === "string" ? payload.kind : "unknown_protocol") as MetaEventKind;
-    const text = dividerText(kind);
+    // G3 / R7：数量在 payload.data 里（压缩条数/字数、切 plan 拒绝数），
+    // 只传 kind 会让分隔条永远退回固定文案。
+    const text = dividerText(kind, payload.data);
     if (!text) return;
     if (dividers.value.some((d) => d.eventId === ev.id)) return;
     dividers.value = [
@@ -226,7 +212,6 @@ export const useEventsStore = defineStore("events", () => {
     lastFrameAt,
     pushEvent,
     pushMeta,
-    pushLocalNote,
     replaceMessages,
     upsertMessage,
     reset,

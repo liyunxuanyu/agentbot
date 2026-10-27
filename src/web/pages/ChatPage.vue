@@ -1952,7 +1952,9 @@ async function compactNow(): Promise<void> {
     const res = await api.compactSession(session.id, { force: true });
     const r = res.result;
     if (r?.ok) {
-      events.pushLocalNote(`上下文已压缩 · ${r.removedMessages} 条消息摘要为 ${r.summaryChars} 字`);
+      // R7：流内的分隔条由后端 meta 事件生成（带 removedMessages / summaryChars），
+      // 刷新后仍在、其它标签页也能看到。这里只留一个轻 toast，不再本地插块，
+      // 否则会出现「已压缩」两条。
       ui.toast(`已压缩 ${r.removedMessages} 条 → 摘要 ${r.summaryChars} 字`);
       if (pinnedToBottom.value) scrollToBottomSoon();
     } else {
@@ -1996,14 +1998,15 @@ async function changePermissionMode(mode: PermissionMode): Promise<void> {
     const res = await api.patchSessionControls(session.id, { permissionMode: mode });
     if (res.session) sessions.patchSession(res.session);
 
-    // 切到 plan：后端已把挂起写请求置 rejected；这里同步卡片与系统块（G3）
+    // 切到 plan：后端已把挂起写请求置 rejected，并落一条带 rejectedPending 的
+    // config_update meta（G3）。分隔条由这条 meta 生成 —— 刷新后仍在、其它标签页
+    // 也能看到。这里只同步本地卡片状态，不再本地插块（否则就是重复两条）。
     if (res.rejectedPending && res.rejectedPending > 0) {
       for (const p of permissions.pending) {
         if (p.sessionId === session.id && p.action !== "read") {
           permissions.markDecided(p.requestId, "已按计划模式拒绝");
         }
       }
-      events.pushLocalNote(`已按计划模式拒绝 ${res.rejectedPending} 个挂起请求`);
       if (pinnedToBottom.value) scrollToBottomSoon();
     }
     if (res.warning) ui.toast(res.warning);
@@ -2027,7 +2030,6 @@ async function applyPermissionModeAll(mode: PermissionMode): Promise<void> {
   permissionBusy.value = true;
   let ok = 0;
   let failed = 0;
-  let rejectedTotal = 0;
   try {
     for (const bot of targets) {
       const list = sessions.sessions.filter((s) => s.botId === bot.id);
@@ -2036,14 +2038,14 @@ async function applyPermissionModeAll(mode: PermissionMode): Promise<void> {
         if (session) {
           const res = await api.patchSessionControls(session.id, { permissionMode: mode });
           if (res.session) sessions.patchSession(res.session);
-          // 逐会话同步「切 plan 拒绝挂起写请求」：群聊里一次可能拒多个 Bot 的卡片（G3）
+          // 逐会话同步「切 plan 拒绝挂起写请求」：群聊里一次可能拒多个 Bot 的卡片（G3）。
+          // 每个会话的 config_update meta 各自生成一条分隔条，这里不聚合、不本地插块。
           if (res.rejectedPending && res.rejectedPending > 0) {
             for (const p of permissions.pending) {
               if (p.sessionId === session.id && p.action !== "read") {
                 permissions.markDecided(p.requestId, "已按计划模式拒绝");
               }
             }
-            rejectedTotal += res.rejectedPending;
           }
         } else {
           await api.patchBot(bot.id, { permissionMode: mode });
@@ -2052,10 +2054,6 @@ async function applyPermissionModeAll(mode: PermissionMode): Promise<void> {
       } catch {
         failed += 1;
       }
-    }
-    if (rejectedTotal > 0) {
-      events.pushLocalNote(`已按计划模式拒绝 ${rejectedTotal} 个挂起请求`);
-      if (pinnedToBottom.value) scrollToBottomSoon();
     }
     if (ok > 0) await bots.load();
     ui.toast(
