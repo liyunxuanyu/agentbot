@@ -18,6 +18,9 @@ import {
   fetchModels,
   ModelListError,
   readUserCatalog,
+  validateCatalogEntries,
+  writeUserCatalog,
+  type CatalogEntry,
 } from "../../adapters/providers/models.js";
 import builtinCatalog from "../../adapters/providers/model-catalog.json" with { type: "json" };
 import type { ProviderConfig, ProviderProtocol } from "../../core/agent/provider.js";
@@ -369,6 +372,88 @@ export function registerProviderRoutes(app: FastifyInstance, ctx: ServerContext)
       sources: (builtinCatalog as { sources?: string[] }).sources ?? [],
     };
   });
+
+  /**
+   * `PUT /api/providers/catalog` —— 整表替换用户覆盖表。
+   *
+   * 整表替换而不是逐条增删：前端就是一个可编辑列表，用户改完一次提交，
+   * 语义最直白，也避免「删到一半失败」留下半套规则。
+   * 校验失败整批不落盘，返回每条的错误。
+   */
+  app.put<{ Body: { models?: unknown } }>("/api/providers/catalog", async (req, reply) => {
+    const raw = req.body?.models;
+    if (!Array.isArray(raw)) {
+      return json(reply, 400, {
+        error: "invalid_catalog",
+        fields: [{ field: "models", code: "not_array", message: "models 必须是数组" }],
+      });
+    }
+    if (raw.length > 200) {
+      return json(reply, 400, {
+        error: "invalid_catalog",
+        fields: [{ field: "models", code: "too_many", message: "最多 200 条规则" }],
+      });
+    }
+
+    const entries: CatalogEntry[] = [];
+    const shapeErrors: string[] = [];
+    raw.forEach((item, i) => {
+      if (typeof item !== "object" || item === null) {
+        shapeErrors.push(`第 ${i + 1} 条：必须是对象`);
+        return;
+      }
+      const row = item as Record<string, unknown>;
+      const num = (v: unknown): number | null => {
+        if (v === null || v === undefined || v === "") return null;
+        const n = typeof v === "number" ? v : Number.parseInt(String(v), 10);
+        return Number.isFinite(n) ? Math.floor(n) : null;
+      };
+      entries.push({
+        match: typeof row["match"] === "string" ? row["match"].trim() : "",
+        contextWindow: num(row["contextWindow"]),
+        maxOutputTokens: num(row["maxOutputTokens"]),
+        ...(typeof row["note"] === "string" && row["note"].trim().length > 0
+          ? { note: row["note"].trim() }
+          : {}),
+      });
+    });
+
+    const errors = [...shapeErrors, ...validateCatalogEntries(entries)];
+    if (errors.length > 0) {
+      return json(reply, 400, { error: "invalid_catalog", fields: errors.map((m) => ({ field: "models", code: "invalid", message: m })) });
+    }
+
+    writeUserCatalog(entries);
+    return { ok: true, user: entries, userPath: CATALOG_PATH };
+  });
+
+  /**
+   * `POST /api/providers/catalog/test` —— 用某条规则试匹配一个模型 id。
+   * 让用户不必「保存后去拉一遍模型」才知道正则写对没有。
+   */
+  app.post<{ Body: { match?: unknown; modelId?: unknown } }>(
+    "/api/providers/catalog/test",
+    async (req, reply) => {
+      const match = typeof req.body?.match === "string" ? req.body.match : "";
+      const modelId = typeof req.body?.modelId === "string" ? req.body.modelId : "";
+      if (match.length === 0 || modelId.length === 0) {
+        return json(reply, 400, {
+          error: "invalid_test",
+          fields: [{ field: "match", code: "required", message: "需要 match 与 modelId" }],
+        });
+      }
+      let hit = false;
+      try {
+        hit = new RegExp(match, "i").test(modelId.toLowerCase());
+      } catch {
+        return json(reply, 400, {
+          error: "invalid_regex",
+          fields: [{ field: "match", code: "invalid", message: "正则无效" }],
+        });
+      }
+      return { ok: true, hit, modelId, match };
+    },
+  );
 
   /**
    * `POST /api/providers/models` —— 用「表单里正在填的」baseUrl / apiKey / protocol

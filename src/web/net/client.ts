@@ -148,7 +148,7 @@ function withToken(path: string): string {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   body?: unknown;
   /** 外部取消（切页/关面板时避免 setState 到已卸载组件）。 */
   signal?: AbortSignal;
@@ -247,6 +247,7 @@ import type {
   TidyResponse,
   TidyTarget,
   ModelCatalogResponse,
+  CatalogEntry,
   RuntimesResponse,
   ScheduleDto,
   SchedulesResponse,
@@ -423,6 +424,20 @@ export const api = {
   /** 模型能力对照表（内置 + 用户覆盖）。 */
   modelCatalog: (signal?: AbortSignal) =>
     request<ModelCatalogResponse>("/api/providers/catalog", { signal }),
+
+  /** 整表替换用户覆盖表。 */
+  saveModelCatalog: (models: CatalogEntry[]) =>
+    request<{ ok: boolean; user: CatalogEntry[]; userPath: string }>("/api/providers/catalog", {
+      method: "PUT",
+      body: { models },
+    }),
+
+  /** 试匹配一条规则（不落盘）。 */
+  testCatalogRule: (match: string, modelId: string) =>
+    request<{ ok: boolean; hit: boolean }>("/api/providers/catalog/test", {
+      method: "POST",
+      body: { match, modelId },
+    }),
 
   mcpServers: (signal?: AbortSignal) =>
     request<McpServersResponse>("/api/mcp", { signal }),

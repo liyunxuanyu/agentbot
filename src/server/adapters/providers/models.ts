@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { config } from "../../config.js";
 import type { ProviderConfig, ProviderProtocol } from "../../core/agent/provider.js";
 import builtinCatalog from "./model-catalog.json" with { type: "json" };
@@ -96,6 +96,64 @@ export function readUserCatalog(path: string = CATALOG_PATH): CatalogEntry[] {
 /** 内置表（只读，来自打包进产物的 JSON）。 */
 export function builtinEntries(): CatalogEntry[] {
   return normalizeEntries((builtinCatalog as { models?: unknown }).models);
+}
+
+/**
+ * 写用户覆盖表（整表替换）。
+ *
+ * 校验放在调用方之外：这里只负责「把已经合法的条目落盘」，
+ * 正则能否编译由 `validateCatalogEntries` 先判，避免把坏规则写进文件后
+ * 每次启动都打一堆警告。
+ */
+export function writeUserCatalog(entries: CatalogEntry[], path: string = CATALOG_PATH): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const file: CatalogFile = {
+    version: 1,
+    updatedAt: new Date().toISOString().slice(0, 10),
+    note: "用户覆盖表：优先于内置表命中。改完保存即生效。",
+    models: entries,
+  };
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+  renameSync(tmp, path);
+  // 内容变了，编译缓存必须立刻失效（否则本次进程内仍按旧表推断）
+  regexCache = null;
+}
+
+/** 校验一批条目；返回错误清单（空 = 全部合法）。 */
+export function validateCatalogEntries(
+  entries: { match: string; contextWindow: number | null; maxOutputTokens: number | null }[],
+): string[] {
+  const errors: string[] = [];
+  entries.forEach((e, i) => {
+    const label = `第 ${i + 1} 条`;
+    if (typeof e.match !== "string" || e.match.trim().length === 0) {
+      errors.push(`${label}：匹配规则不能为空`);
+      return;
+    }
+    try {
+      new RegExp(e.match, "i");
+    } catch {
+      errors.push(`${label}：正则无效（${e.match}）`);
+    }
+    if (e.contextWindow !== null && (!Number.isInteger(e.contextWindow) || e.contextWindow <= 0)) {
+      errors.push(`${label}：上下文窗口必须是正整数或留空`);
+    }
+    if (
+      e.maxOutputTokens !== null &&
+      (!Number.isInteger(e.maxOutputTokens) || e.maxOutputTokens <= 0)
+    ) {
+      errors.push(`${label}：最大输出必须是正整数或留空`);
+    }
+    if (
+      e.contextWindow !== null &&
+      e.maxOutputTokens !== null &&
+      e.maxOutputTokens > e.contextWindow
+    ) {
+      errors.push(`${label}：最大输出不能大于上下文窗口`);
+    }
+  });
+  return errors;
 }
 
 /**

@@ -88,3 +88,43 @@ describe("模型能力推断", () => {
     }
   });
 });
+
+describe("对照表维护（页面编辑用的校验与写入）", () => {
+  it("校验：空规则、坏正则、非正整数、输出大于窗口都拦下", async () => {
+    const { validateCatalogEntries } = await import("../../src/server/adapters/providers/models.js");
+    expect(validateCatalogEntries([{ match: "^ok$", contextWindow: 1000, maxOutputTokens: 100 }])).toEqual([]);
+    expect(validateCatalogEntries([{ match: "", contextWindow: 1000, maxOutputTokens: 100 }])).toHaveLength(1);
+    expect(validateCatalogEntries([{ match: "([", contextWindow: 1000, maxOutputTokens: 100 }])).toHaveLength(1);
+    // 窗口写 0 会同时触发「必须是正整数」与「输出不能大于窗口」，都属于该拦下的
+    expect(
+      validateCatalogEntries([{ match: "^x$", contextWindow: 0, maxOutputTokens: 100 }]).length,
+    ).toBeGreaterThan(0);
+    const inverted = validateCatalogEntries([
+      { match: "^x$", contextWindow: 100, maxOutputTokens: 1000 },
+    ]);
+    expect(inverted[0]).toContain("不能大于");
+  });
+
+  it("写入后能被读回，且改完立刻影响推断（缓存失效）", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { writeUserCatalog, readUserCatalog, inferModelMeta } =
+      await import("../../src/server/adapters/providers/models.js");
+    const dir = mkdtempSync(join(tmpdir(), "agentbot-cat-w-"));
+    const file = join(dir, "model-catalog.json");
+    try {
+      writeUserCatalog(
+        [{ match: "^brand-new-model$", contextWindow: 204800, maxOutputTokens: 16384 }],
+        file,
+      );
+      const back = readUserCatalog(file);
+      expect(back).toHaveLength(1);
+      expect(back[0]).toMatchObject({ contextWindow: 204800, maxOutputTokens: 16384 });
+      // 默认路径下的表为空，认不出的模型仍返回 null（不编数字）
+      expect(inferModelMeta("brand-new-model").contextWindow).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

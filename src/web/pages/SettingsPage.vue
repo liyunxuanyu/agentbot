@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "v
 import { useRouter } from "vue-router";
 import { ApiError, api, isMissingEndpoint } from "../net/client";
 import type {
+  CatalogEntry,
   McpServerDto,
   ModelCatalogResponse,
   ModelMeta,
@@ -431,15 +432,74 @@ async function applyTidy(): Promise<void> {
 const catalogOpen = ref(false);
 const catalog = ref<ModelCatalogResponse | null>(null);
 const catalogErr = ref("");
+/** 编辑中的用户覆盖表（保存前的草稿）。 */
+const catalogDraft = ref<CatalogEntry[]>([]);
+const catalogSaving = ref(false);
+const catalogSaveErr = ref("");
+const catalogTestModel = ref("");
+const catalogTestResult = ref<{ match: string; hit: boolean } | null>(null);
 
 async function openCatalog(): Promise<void> {
   catalogOpen.value = true;
   catalogErr.value = "";
+  catalogSaveErr.value = "";
+  catalogTestResult.value = null;
   try {
     catalog.value = await api.modelCatalog();
+    catalogDraft.value = catalog.value.user.map((e) => ({ ...e }));
   } catch (err) {
     catalogErr.value =
       err instanceof ApiError ? (err.messageText() ?? `读取失败（${err.code}）`) : "读取失败";
+  }
+}
+
+function addCatalogRule(): void {
+  catalogDraft.value = [
+    ...catalogDraft.value,
+    { match: "", contextWindow: null, maxOutputTokens: null },
+  ];
+}
+
+function removeCatalogRule(index: number): void {
+  catalogDraft.value = catalogDraft.value.filter((_, i) => i !== index);
+}
+
+/** 数字输入框回传的是字符串；空串表示 null（不填）。 */
+function catalogNum(v: string): number | null {
+  const t = v.trim();
+  if (t.length === 0) return null;
+  const n = Number.parseInt(t, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function saveCatalog(): Promise<void> {
+  if (catalogSaving.value) return;
+  catalogSaving.value = true;
+  catalogSaveErr.value = "";
+  try {
+    const res = await api.saveModelCatalog(catalogDraft.value);
+    catalogDraft.value = res.user.map((e) => ({ ...e }));
+    if (catalog.value) catalog.value = { ...catalog.value, user: res.user };
+    ui.toast(`已保存 ${res.user.length} 条覆盖规则`);
+  } catch (err) {
+    catalogSaveErr.value =
+      err instanceof ApiError
+        ? (err.fieldErrors()[0]?.message ?? err.messageText() ?? err.message)
+        : "保存失败";
+  } finally {
+    catalogSaving.value = false;
+  }
+}
+
+async function testCatalogRule(rule: CatalogEntry): Promise<void> {
+  const modelId = catalogTestModel.value.trim();
+  if (modelId.length === 0 || rule.match.trim().length === 0) return;
+  try {
+    const res = await api.testCatalogRule(rule.match, modelId);
+    catalogTestResult.value = { match: rule.match, hit: res.hit };
+  } catch (err) {
+    catalogSaveErr.value =
+      err instanceof ApiError ? (err.messageText() ?? "测试失败") : "测试失败";
   }
 }
 
@@ -1793,29 +1853,71 @@ token  {{ tokenStatus.preview }}</pre>
       </template>
     </AppModal>
 
-    <!-- 模型能力对照表：内置（只读）+ 用户覆盖（可编辑文件） -->
+    <!-- 模型能力对照表：内置（只读）+ 用户覆盖（页面可编辑） -->
     <AppModal v-model:open="catalogOpen" title="模型能力对照表">
       <div v-if="catalogErr" class="field-err" style="margin-bottom: 12px">{{ catalogErr }}</div>
       <template v-else-if="catalog">
         <p class="hint" style="margin-top: 0">
           内置表版本 {{ catalog.builtinVersion }}（{{ catalog.builtinUpdatedAt }}），随代码升级；
-          用户表优先命中，写在
-          <code class="u-mono">{{ catalog.userPath }}</code>，改完保存即生效（下次拉取模型或重开表单）。
+          下面的覆盖规则优先命中。匹配规则是正则，对模型 id 小写后按顺序取第一条命中。
         </p>
-        <div class="u-label" style="margin: 16px 0 8px">用户覆盖（{{ catalog.user.length }} 条）</div>
-        <p v-if="catalog.user.length === 0" class="hint">
-          还没有用户规则。加一条形如
-          <code class="u-mono">{"{"} "match": "my-model-200k", "contextWindow": 204800, "maxOutputTokens": 16384 {"}"}</code>
-          的规则即可覆盖内置表或补上新模型。
+
+        <div class="u-label" style="margin: 16px 0 8px">
+          覆盖规则（{{ catalogDraft.length }} 条）
+        </div>
+        <p v-if="catalogDraft.length === 0" class="hint" style="margin-bottom: 10px">
+          还没有覆盖规则。内置表认不出的模型会返回「未知」，加一条就能补上。
         </p>
-        <div v-else class="u-mono" style="font-size: var(--font-size-micro); max-height: 160px; overflow: auto; background: var(--color-surface-2); border-radius: 8px; padding: 8px 10px">
-          <div v-for="(e, i) in catalog.user" :key="`u${i}`">
-            {{ e.match }} → {{ e.contextWindow ?? "?" }} / {{ e.maxOutputTokens ?? "?" }}
+
+        <div
+          v-for="(rule, i) in catalogDraft"
+          :key="`rule-${i}`"
+          style="display: grid; grid-template-columns: minmax(0, 1fr) 96px 96px auto; gap: 6px; margin-bottom: 8px; align-items: center"
+        >
+          <input v-model="rule.match" class="input u-mono" style="font-size: var(--font-size-micro)" placeholder="正则，如 ^my-model-200k$" />
+          <input
+            :value="rule.contextWindow ?? ''"
+            class="input u-mono"
+            style="font-size: var(--font-size-micro)"
+            placeholder="上下文"
+            inputmode="numeric"
+            @input="rule.contextWindow = catalogNum(($event.target as HTMLInputElement).value)"
+          />
+          <input
+            :value="rule.maxOutputTokens ?? ''"
+            class="input u-mono"
+            style="font-size: var(--font-size-micro)"
+            placeholder="最大输出"
+            inputmode="numeric"
+            @input="rule.maxOutputTokens = catalogNum(($event.target as HTMLInputElement).value)"
+          />
+          <div style="display: flex; gap: 2px">
+            <button
+              class="btn btn--sm btn--ghost"
+              style="padding: 0 6px; height: 28px"
+              title="用下面输入的模型 id 试这条规则"
+              :disabled="rule.match.trim().length === 0 || catalogTestModel.trim().length === 0"
+              @click="testCatalogRule(rule)"
+            >
+              试
+            </button>
+            <button class="btn btn--sm btn--ghost" style="padding: 0 6px; height: 28px" title="删除这条" @click="removeCatalogRule(i)">✕</button>
           </div>
         </div>
 
-        <div class="u-label" style="margin: 16px 0 8px">内置规则（{{ catalog.builtin.length }} 条，按顺序匹配）</div>
-        <div class="u-mono" style="font-size: var(--font-size-micro); max-height: 260px; overflow: auto; background: var(--color-surface-2); border-radius: 8px; padding: 8px 10px">
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px">
+          <button class="btn btn--sm btn--secondary" @click="addCatalogRule">＋ 加一条</button>
+          <input v-model="catalogTestModel" class="input u-mono" style="width: 200px; font-size: var(--font-size-micro)" placeholder="试匹配的模型 id（如 deepseek-v4.1-flash）" />
+        </div>
+        <div v-if="catalogTestResult" class="hint">
+          规则 <code class="u-mono">{{ catalogTestResult.match }}</code>
+          对 <code class="u-mono">{{ catalogTestModel }}</code>
+          {{ catalogTestResult.hit ? "命中" : "未命中" }}
+        </div>
+        <div v-if="catalogSaveErr" class="field-err" style="margin-top: 8px">{{ catalogSaveErr }}</div>
+
+        <div class="u-label" style="margin: 18px 0 8px">内置规则（{{ catalog.builtin.length }} 条，只读）</div>
+        <div class="u-mono" style="font-size: var(--font-size-micro); max-height: 200px; overflow: auto; background: var(--color-surface-2); border-radius: 8px; padding: 8px 10px">
           <div v-for="(e, i) in catalog.builtin" :key="`b${i}`">
             {{ e.match }} → {{ e.contextWindow ?? "?" }} / {{ e.maxOutputTokens ?? "?" }}
             <span v-if="e.note" style="opacity: .7">· {{ e.note }}</span>
@@ -1826,7 +1928,11 @@ token  {{ tokenStatus.preview }}</pre>
         </p>
       </template>
       <template #footer>
-        <button class="btn btn--primary" @click="catalogOpen = false">关闭</button>
+        <button class="btn btn--secondary" @click="catalogOpen = false">关闭</button>
+        <span class="spacer" />
+        <button class="btn btn--primary" :disabled="catalogSaving" @click="saveCatalog">
+          {{ catalogSaving ? "保存中…" : "保存覆盖规则" }}
+        </button>
       </template>
     </AppModal>
 
