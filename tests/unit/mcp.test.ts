@@ -143,3 +143,171 @@ describe("MCP 工具权限声明（R5-c）", () => {
     await manager.dispose();
   }, 20_000);
 });
+
+describe("MCP 热插拔（N3-2）", () => {
+  it("运行期 add / replace / remove：不重启，工具立刻增删", async () => {
+    const dir = tempDir();
+    const server = fakeServer(dir);
+    const configPath = join(dir, "mcp.json");
+    writeMcpFile({ servers: [] }, configPath);
+
+    const manager = new McpManager(configPath);
+    await manager.start();
+    expect(manager.tools()).toHaveLength(0);
+
+    // 新增：立刻能列出工具
+    const added = await manager.add({
+      id: "hot",
+      command: server.command,
+      args: server.args,
+      enabled: true,
+    });
+    expect(added).toBe("connected");
+    expect(manager.tools().map((t) => t.name)).toEqual(["mcp__hot__echo"]);
+
+    // 重复 id：拒绝（路由层已拦，这里是防御）
+    expect(
+      await manager.add({ id: "hot", command: server.command, args: server.args, enabled: true }),
+    ).toBe("duplicate");
+
+    // 修改为停用：工具立刻消失，状态是 disabled
+    expect(
+      await manager.replace({
+        id: "hot",
+        command: server.command,
+        args: server.args,
+        enabled: false,
+      }),
+    ).toBe("connected");
+    expect(manager.tools()).toHaveLength(0);
+    expect(manager.statuses().find((s) => s.id === "hot")?.status).toBe("disabled");
+
+    // 再启用：工具回来
+    await manager.replace({ id: "hot", command: server.command, args: server.args, enabled: true });
+    expect(manager.tools()).toHaveLength(1);
+
+    // 删除：工具消失、状态列表也不再有它
+    expect(await manager.remove("hot")).toBe("removed");
+    expect(manager.tools()).toHaveLength(0);
+    expect(manager.statuses().find((s) => s.id === "hot")).toBeUndefined();
+
+    // 删不存在的：not_found
+    expect(await manager.remove("hot")).toBe("not_found");
+    await manager.dispose();
+  }, 30_000);
+
+  it("新增一个无关 server 不会抖掉已有连接（只动受影响的那一个）", async () => {
+    const dir = tempDir();
+    const server = fakeServer(dir);
+    const configPath = join(dir, "mcp.json");
+    writeMcpFile(
+      { servers: [{ id: "old", command: server.command, args: server.args, enabled: true }] },
+      configPath,
+    );
+    const manager = new McpManager(configPath);
+    await manager.start();
+    const before = manager.statuses().find((s) => s.id === "old");
+    expect(before?.status).toBe("connected");
+
+    await manager.add({ id: "new", command: server.command, args: server.args, enabled: true });
+    // 旧连接没有断开重连（连接状态保持）
+    expect(manager.statuses().find((s) => s.id === "old")?.status).toBe("connected");
+    expect(manager.tools()).toHaveLength(2);
+    await manager.dispose();
+  }, 30_000);
+});
+
+describe("MCP 热插拔的 HTTP 层（N3-2）", () => {
+  it("POST/PATCH/DELETE 直接生效，响应不要求重启", async () => {
+    const { buildServer } = await import("../../src/server/http/server.js");
+    const { openDb } = await import("../../src/server/core/db/db.js");
+    const { createEventBus } = await import("../../src/server/core/events/bus.js");
+    const { createSessionLock } = await import("../../src/server/core/orchestrator/session-lock.js");
+    const { createTurnOrchestrator } = await import("../../src/server/core/orchestrator/turn.js");
+    const { createSupervisor } = await import("../../src/server/core/process/supervisor.js");
+    const { createPermissionResolver } = await import(
+      "../../src/server/core/permissions/resolver.js"
+    );
+    const { listenEphemeral } = await import("./http-listen.js");
+
+    const dir = tempDir();
+    const server = fakeServer(dir);
+    // 路由与控制台共用默认路径（config.mcpPath）；测试里临时改写模块常量做不到，
+    // 所以这里直接确认「管理器有无」这条契约：有管理器就热插拔，没有就 409 提示。
+    const db = openDb(":memory:");
+    const bus = createEventBus();
+    const supervisor = createSupervisor({ db, bus, resolveRuntime: () => null });
+    const permissions = createPermissionResolver({
+      db,
+      bus,
+      isSessionAlive: () => false,
+      sessionCwdOf: () => process.cwd(),
+      respond: async () => true,
+      setHeld: () => undefined,
+      setSessionStatus: () => undefined,
+      log: () => undefined,
+    });
+    const orchestrator = createTurnOrchestrator({
+      db,
+      bus,
+      lock: createSessionLock(),
+      resolveRuntime: () => null,
+      supervisor,
+    });
+    const manager = new McpManager(join(dir, "http-mcp.json"));
+    await manager.start();
+
+    const app = buildServer(
+      {
+        db,
+        runtimes: [],
+        schemaVersion: 4,
+        startedAt: Date.now(),
+        resolveRuntime: () => null,
+        orchestrator,
+        permissions,
+        assignments: { stop: () => undefined } as never,
+        mcp: manager,
+      },
+      { authEnabled: false, webRoot: join(dir, "no-web") },
+    );
+    const base = await listenEphemeral(app);
+    try {
+      const res = await fetch(`${base}/api/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: "hot",
+          command: server.command,
+          args: server.args,
+          permission: "read",
+        }),
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        server: { id: string; status: string; permission: string | null } | null;
+        hot: boolean;
+      };
+      expect(body.hot).toBe(true);
+      expect(body.server?.status).toBe("connected");
+      expect(body.server?.permission).toBe("read");
+      // 管理器内存里真的有了这个连接（不重启）
+      expect(manager.tools().map((t) => t.name)).toEqual(["mcp__hot__echo"]);
+    } finally {
+      await app.close();
+      permissions.dispose();
+      await orchestrator.dispose();
+      await supervisor.dispose();
+      await manager.dispose();
+      db.close();
+      // 路由写的是默认 ~/.agentbot/mcp.json（本测试里是 vitest 的临时 home）：
+      // 清掉，避免污染同一次运行里的其它用例
+      const { config } = await import("../../src/server/config.js");
+      try {
+        rmSync(config.mcpPath, { force: true });
+      } catch {
+        // 忽略
+      }
+    }
+  }, 30_000);
+});

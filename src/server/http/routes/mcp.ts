@@ -11,7 +11,10 @@ import { readMcpFile, writeMcpFile, type McpServerConfig } from "../../adapters/
  *   DELETE /api/mcp/:id           → 删除
  *   POST   /api/mcp/:id/reconnect → 重连
  *
- * 配置写入 `~/.agentbot/mcp.json`；变更后立即 reload（失败只标状态，不 500）。
+ * 配置写入 `~/.agentbot/mcp.json`；变更后**只动受影响的那一个连接**（N3-2）：
+ * 新增走 `manager.add`、修改走 `manager.replace`、删除走 `manager.remove`，
+ * 其它 server 的连接保持不动。不需要重启服务，下一轮对话即可用/不可用新工具。
+ * 连接失败只标状态，不 500（配置本身是合法的）。
  */
 
 interface FieldError {
@@ -131,9 +134,10 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: ServerContext): voi
       ...(input.permission !== undefined ? { permission: input.permission } : {}),
     };
     writeMcpFile({ servers: [...file.servers, server] });
-    await ctx.mcp?.reload();
+    // N3-2：运行期直接连，不重启；全量 reload 会抖掉无关 server 的工具
+    const outcome = await ctx.mcp?.add(server);
     const status = ctx.mcp?.statuses().find((s) => s.id === server.id) ?? null;
-    return json(reply, 201, { server: status });
+    return json(reply, 201, { server: status, hot: outcome !== undefined });
   });
 
   app.patch<{ Params: { id: string }; Body: McpBody }>("/api/mcp/:id", async (req, reply) => {
@@ -152,7 +156,8 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: ServerContext): voi
       ...(input.permission !== undefined ? { permission: input.permission } : {}),
     };
     writeMcpFile({ servers: file.servers.map((s) => (s.id === current.id ? updated : s)) });
-    await ctx.mcp?.reload();
+    // N3-2：只重连这一个（改了 command/args/env 必须重起进程；只改 enabled 等价启停）
+    await ctx.mcp?.replace(updated);
     return { server: ctx.mcp?.statuses().find((s) => s.id === current.id) ?? null };
   });
 
@@ -162,7 +167,8 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: ServerContext): voi
       return json(reply, 404, { error: "mcp_server_not_found" });
     }
     writeMcpFile({ servers: file.servers.filter((s) => s.id !== req.params.id) });
-    await ctx.mcp?.reload();
+    // N3-2：断开并移除，工具立刻从下一轮注册表里消失（不残留）
+    await ctx.mcp?.remove(req.params.id);
     return reply.code(204).send();
   });
 

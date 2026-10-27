@@ -67,9 +67,83 @@ export class McpManager {
     );
   }
 
+  /**
+   * 重新读配置并全量重连。
+   *
+   * N3-2 的 CRUD 路径不再用它：POST/PATCH/DELETE 只动受影响的那一个 server
+   * （`add` / `replace` / `remove`），其它连接保持不动 —— 全量 reload 会让
+   * 无关 server 的工具短暂消失，正在跑的会话可能正好在调它。
+   * 保留给「配置文件被外部手改，用户点刷新」的场景。
+   */
   async reload(): Promise<void> {
     await this.disposeClients();
     if (!this.disposed) await this.start();
+  }
+
+  /**
+   * 运行期新增一个 server 并连接（N3-2）。
+   *
+   * 不需要重启服务：配置由路由层先写盘，这里只负责把新连接加进内存表。
+   * 同名已存在时视为失败（路由层已经拦过重复，这里是防御）。
+   */
+  async add(cfg: McpServerConfig): Promise<"connected" | "failed" | "duplicate"> {
+    if (this.disposed) return "failed";
+    if (this.clients.has(cfg.id)) return "duplicate";
+    this.configs = [...this.configs.filter((s) => s.id !== cfg.id), cfg];
+    const client = new McpClient(cfg);
+    this.clients.set(cfg.id, client);
+    if (!cfg.enabled) {
+      client.status = "disabled";
+      return "connected";
+    }
+    try {
+      await client.connect();
+      return client.status === "connected" ? "connected" : "failed";
+    } catch {
+      return "failed";
+    }
+  }
+
+  /**
+   * 运行期修改一个 server（N3-2）：先断旧连接，再按新配置连。
+   *
+   * 改了 command/args/env/permission 都必须重连（进程按旧参数起不来）；
+   * 只改 enabled 时等价于启/停。旧连接先 dispose，避免孤儿进程。
+   */
+  async replace(cfg: McpServerConfig): Promise<"connected" | "failed" | "not_found"> {
+    if (this.disposed) return "failed";
+    const existing = this.clients.get(cfg.id);
+    if (!existing && !this.configs.some((s) => s.id === cfg.id)) return "not_found";
+    if (existing) await existing.dispose().catch(() => undefined);
+    this.configs = this.configs.map((s) => (s.id === cfg.id ? cfg : s));
+    const client = new McpClient(cfg);
+    this.clients.set(cfg.id, client);
+    if (!cfg.enabled) {
+      client.status = "disabled";
+      return "connected";
+    }
+    try {
+      await client.connect();
+      return client.status === "connected" ? "connected" : "failed";
+    } catch {
+      return "failed";
+    }
+  }
+
+  /**
+   * 运行期删除一个 server（N3-2）：断开连接、从内存表移除。
+   *
+   * 删除后 `tools()` 立刻不再返回它的工具 —— 下一轮对话模型就看不到、
+   * 也调不到；不会残留（客户端实例与配置行同时移除）。
+   */
+  async remove(id: string): Promise<"removed" | "not_found"> {
+    const existed = this.clients.has(id) || this.configs.some((s) => s.id === id);
+    if (!existed) return "not_found";
+    const client = this.clients.get(id);
+    if (client) await client.dispose().catch(() => undefined);
+    this.clients.delete(id);
+    this.configs = this.configs.filter((s) => s.id !== id);
+    return "removed";
   }
 
   async reconnect(id: string): Promise<"not_found" | "connected" | "failed"> {

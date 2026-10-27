@@ -7,7 +7,8 @@ import type { McpServerDto, McpServerInput } from "../net/types";
  * MCP server 列表（内置引擎 N4/N6）。
  *
  * `running=false` 表示后端没有注入管理器（端点存在但未启动），
- * 页面据此提示「重启服务后生效」，不假装已连接。
+ * 页面据此提示「重启服务才会连接」，不假装已连接。
+ * 后端有管理器时，增删改都是热插拔（N3-2），不需要重启。
  */
 export type McpStatus = "idle" | "loading" | "ready" | "empty" | "error";
 

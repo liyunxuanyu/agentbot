@@ -1407,7 +1407,7 @@ onBeforeUnmount(() => {
 
           <div v-if="!mcp.running" class="banner" style="margin-bottom: 12px">
             <span class="state-dot" :style="{ '--s': 'var(--state-waiting)' }" />
-            <span>后端没有启动 MCP 管理器（可能是旧进程），保存后需重启服务才会连接。</span>
+            <span>后端没有启动 MCP 管理器（可能是旧进程），保存后需重启服务才会连接；说明服务的这个构建不支持 MCP 热插拔。</span>
           </div>
 
           <div v-if="mcp.status === 'loading' || mcp.status === 'idle'" style="display: grid; gap: 10px">
@@ -1467,8 +1467,10 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <p class="hint">
-              配置保存在 <code class="u-mono">~/.agentbot/mcp.json</code>。MCP 工具默认权限为「执行」，
-              每次调用都会弹权限卡片；拒绝后模型会换做法，不会自动重试。
+              配置保存在 <code class="u-mono">~/.agentbot/mcp.json</code>。新增 / 修改 / 删除后立即连接或断开，
+              <b>不需要重启服务</b>，下一轮对话就能用到（或看不到）这些工具。
+              权限按 server 声明：默认「执行」（每次调用都会弹权限卡片），声明为「只读」的在计划模式下仍可用。
+              拒绝后模型会换做法，不会自动重试。
             </p>
           </template>
         </template>
