@@ -88,6 +88,7 @@ export const useSessionsStore = defineStore("sessions", () => {
           name: "",
           participantBotIds: [],
           hostBotId: null,
+          workspacePath: null,
           lastMessagePreview: null,
           lastMessageAt: null,
           unread: 0,
@@ -147,6 +148,10 @@ export const useSessionsStore = defineStore("sessions", () => {
         runtimeId: null,
         resumeState: "fresh",
         status: "running",
+        workspacePath: null,
+        providerId: null,
+        model: null,
+        permissionMode: "confirm",
         startedAt: input.startedAt,
         endedAt: null,
         messageCount: 0,
@@ -154,6 +159,25 @@ export const useSessionsStore = defineStore("sessions", () => {
         tokensOut: null,
       },
     ];
+  }
+
+  /** 用控制端点的回包替换一条 Session（权限模式/模型/工作区改动后即时反映）。 */
+  function patchSession(row: SessionDto): void {
+    sessions.value = sessions.value.map((s) => (s.id === row.id ? row : s));
+  }
+
+  /**
+   * 渠道工作区变更后同步头部显示（群聊全员共用）。
+   *
+   * 服务端在渠道工作区变更时会清掉该渠道所有会话级覆盖（G10），本地也要同步；
+   * 否则其它 Bot 的旧覆盖仍会显示成「当前生效」，设置值与实际不一致。
+   */
+  function setChannelWorkspace(workspacePath: string | null): void {
+    if (!channel.value) return;
+    channel.value = { ...channel.value, workspacePath };
+    sessions.value = sessions.value.map((s) =>
+      s.workspacePath === null ? s : { ...s, workspacePath: null },
+    );
   }
 
   /** 用 REST 补拉后的最新消息整体替换（重连补齐缺口）。 */
@@ -192,6 +216,8 @@ export const useSessionsStore = defineStore("sessions", () => {
     setConnection,
     appendMessage,
     noteSession,
+    patchSession,
+    setChannelWorkspace,
     setMessages,
     turnOrder,
   };

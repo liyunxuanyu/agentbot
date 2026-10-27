@@ -96,6 +96,22 @@ export const useEventsStore = defineStore("events", () => {
     return true;
   }
 
+  /** 本地提示的合成 id：负数，永远不会和库里的正 id 撞。 */
+  let localNoteSeq = -1;
+
+  /**
+   * 插入一条本地系统提示（不改库，只在当前页面的分隔条位置显示）。
+   *
+   * 用途：手动压缩完成、切 plan 时批量拒绝挂起请求。这些动作后端已落审计，
+   * 但不会为 UI 补发一条 meta 帧；本地插一条能让用户看到「刚才发生了什么」。
+   */
+  function pushLocalNote(text: string, kind: MetaEventKind = "compaction"): void {
+    dividers.value = [
+      ...dividers.value,
+      { eventId: localNoteSeq--, kind, text, ts: Date.now(), turnId: "" },
+    ];
+  }
+
   /** 收一帧 meta：只生成分隔条，绝不进 Turn 渲染。 */
   function pushMeta(ev: RawEvent): void {
     const payload = ev.payload as { kind?: unknown };
@@ -210,6 +226,7 @@ export const useEventsStore = defineStore("events", () => {
     lastFrameAt,
     pushEvent,
     pushMeta,
+    pushLocalNote,
     replaceMessages,
     upsertMessage,
     reset,

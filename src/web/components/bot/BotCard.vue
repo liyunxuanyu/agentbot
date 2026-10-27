@@ -66,7 +66,9 @@ const sessionText = computed(() => {
 
 /** 路径中段省略：拆成「目录 + 尾段」，目录用 ellipsis 截断，尾段保持完整。 */
 const pathParts = computed(() => {
-  const p = props.bot.effectivePath ?? "—";
+  const p = props.bot.effectivePath;
+  // R1：内置引擎 Bot 可以不设默认工作区 —— 说清楚，不留一个空路径占位
+  if (!p) return { mid: "", tail: "未设置默认工作区" };
   const idx = p.lastIndexOf("/");
   if (idx <= 0) return { mid: "", tail: p };
   return { mid: p.slice(0, idx + 1), tail: p.slice(idx + 1) };
@@ -115,7 +117,10 @@ function onKeydown(e: KeyboardEvent): void {
         :state="bot.state"
       />
       <div class="bc-id">
-        <div class="bc-name">{{ bot.name }}</div>
+        <div class="bc-name">
+          {{ bot.name }}
+          <span v-if="bot.role === 'admin'" class="cap cap--scope" title="管理员：多一个 create_bot 工具">管理员</span>
+        </div>
         <BotStateChip :state="bot.state" decay />
       </div>
     </div>
@@ -136,7 +141,7 @@ function onKeydown(e: KeyboardEvent): void {
       </span>
       <span class="k">执行位置</span>
       <span class="v">
-        <span class="path">
+        <span class="path" :class="{ 'is-empty': !bot.effectivePath }">
           <span class="pre">{{ bot.executionLocation === "worktree" ? "worktree" : "local" }}</span>
           <span class="p-a">{{ pathParts.mid }}</span>
           <span class="p-b">{{ pathParts.tail }}</span>

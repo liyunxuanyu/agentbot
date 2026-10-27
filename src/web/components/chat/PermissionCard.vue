@@ -47,7 +47,13 @@ const tag = computed(() => {
 });
 
 const actionLabel = computed(() => {
-  const map = { write: "写文件 · Write", read: "读文件 · Read", exec: "执行命令 · Bash", network: "联网 · Fetch" };
+  const map = {
+    write: "写文件 · Write",
+    read: "读文件 · Read",
+    exec: "执行命令 · Bash",
+    network: "联网 · Fetch",
+    admin: "创建 Bot · Create Bot",
+  };
   return map[props.perm.action];
 });
 

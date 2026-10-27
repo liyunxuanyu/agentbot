@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { BotDto } from "../../net/types";
+import type { BotDto, PermissionMode } from "../../net/types";
 import AppIcon from "../common/AppIcon.vue";
 import BotAvatar from "../bot/BotAvatar.vue";
 
@@ -18,6 +18,12 @@ import BotAvatar from "../bot/BotAvatar.vue";
  *   选中项随消息以 `mentionBotIds` 提交；发送后清空选择。
  *
  * 快捷键：Enter 发送、Shift+Enter 换行、Esc 关闭选择器。
+ *
+ * 权限模式胶囊（R5 / §4.1）：输入区左侧、@ 按钮旁，常显当前档位。
+ *   - 四档带说明的下拉；切换立即生效，不二次确认；
+ *   - Shift+Tab 在四档间循环（与 ZCode 一致）；
+ *   - 非内置引擎禁用并说明「该运行时由 CLI 自身管理权限」；
+ *   - 群聊菜单第一项「应用到本群全部 Bot」。
  */
 const props = withDefaults(
   defineProps<{
@@ -37,6 +43,16 @@ const props = withDefaults(
     bots?: BotDto[];
     /** 是否允许 @ 指定（仅群聊；私聊 @ 不改变目标）。 */
     mentionEnabled?: boolean;
+    /** 当前权限模式（会话属性；群聊里是当前展开 Bot 的会话）。 */
+    permissionMode?: PermissionMode;
+    /** 非内置引擎：胶囊禁用（该运行时由 CLI 自身管理权限）。 */
+    permissionDisabled?: boolean;
+    /** 禁用原因（tooltip）。 */
+    permissionDisabledReason?: string;
+    /** 群聊：菜单第一项「应用到本群全部 Bot」。 */
+    permissionGroup?: boolean;
+    /** 切换请求进行中（避免连点重复提交）。 */
+    permissionBusy?: boolean;
   }>(),
   {
     streaming: false,
@@ -46,12 +62,19 @@ const props = withDefaults(
     metaLeft: "",
     bots: () => [],
     mentionEnabled: false,
+    permissionMode: "confirm",
+    permissionDisabled: false,
+    permissionDisabledReason: "该运行时由 CLI 自身管理权限",
+    permissionGroup: false,
+    permissionBusy: false,
   },
 );
 
 const emit = defineEmits<{
   send: [text: string, mentionBotIds: string[]];
   stop: [];
+  "change-permission-mode": [mode: PermissionMode];
+  "apply-permission-mode-all": [mode: PermissionMode];
 }>();
 
 const text = ref("");
@@ -75,6 +98,100 @@ function autoGrow(): void {
 }
 
 watch(text, () => nextTick(autoGrow));
+
+// ---------------------------------------------------------------------------
+// 权限模式胶囊（R5）
+// ---------------------------------------------------------------------------
+interface ModeOption {
+  key: PermissionMode;
+  label: string;
+  short: string;
+  desc: string;
+  /** CSS 变量名（点色）。 */
+  dot: string;
+}
+
+/** 顺序即 Shift+Tab 的循环顺序：只读 → 确认 → 自动 → 完全访问。 */
+const MODES: readonly ModeOption[] = [
+  {
+    key: "plan",
+    label: "计划模式",
+    short: "计划",
+    desc: "只读：不改文件、不跑命令，先出方案",
+    dot: "--color-info",
+  },
+  {
+    key: "confirm",
+    label: "变更前确认（默认）",
+    short: "确认",
+    desc: "写文件、跑命令前都问你",
+    dot: "--color-primary",
+  },
+  {
+    key: "auto",
+    label: "自动模式",
+    short: "自动",
+    desc: "边界内的写操作自动批准，越界才问你",
+    dot: "--color-warning",
+  },
+  {
+    key: "full",
+    label: "完全访问",
+    short: "完全",
+    desc: "不再询问，所有动作直接执行并记审计",
+    dot: "--color-danger",
+  },
+];
+
+const modeMenuOpen = ref(false);
+
+const currentMode = computed<ModeOption>(
+  () => MODES.find((m) => m.key === props.permissionMode) ?? MODES[1]!,
+);
+
+const modeTitle = computed(() =>
+  props.permissionDisabled
+    ? props.permissionDisabledReason
+    : `权限模式：${currentMode.value.label} · Shift+Tab 切换`,
+);
+
+function toggleModeMenu(): void {
+  if (props.permissionDisabled || props.permissionBusy) return;
+  modeMenuOpen.value = !modeMenuOpen.value;
+}
+
+function chooseMode(mode: PermissionMode): void {
+  modeMenuOpen.value = false;
+  if (mode === props.permissionMode) return;
+  emit("change-permission-mode", mode);
+}
+
+function applyModeToAll(): void {
+  modeMenuOpen.value = false;
+  emit("apply-permission-mode-all", props.permissionMode);
+}
+
+/** Shift+Tab 循环四档（与 ZCode 一致）；禁用时不劫持键盘。 */
+function cycleMode(backward: boolean): void {
+  if (props.permissionDisabled || props.permissionBusy) return;
+  const index = MODES.findIndex((m) => m.key === props.permissionMode);
+  const next = MODES[(index + (backward ? -1 : 1) + MODES.length) % MODES.length]!;
+  emit("change-permission-mode", next.key);
+}
+
+function onRootKeydown(e: KeyboardEvent): void {
+  if (e.key === "Escape") {
+    pickerOpen.value = false;
+    modeMenuOpen.value = false;
+    return;
+  }
+  if (e.key === "Tab" && e.shiftKey) {
+    // 只在权限控件可用时接管；否则保留浏览器默认的反向焦点切换
+    if (props.permissionDisabled) return;
+    e.preventDefault();
+    cycleMode(true);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // @ 选择器
@@ -123,9 +240,12 @@ function isSelected(botId: string): boolean {
 
 /** 点击外部关闭：只在打开时挂监听，避免每次点击都走一遍 contains。 */
 function onDocPointerDown(e: PointerEvent): void {
-  if (!pickerOpen.value) return;
+  if (!pickerOpen.value && !modeMenuOpen.value) return;
   const root = rootEl.value;
-  if (root && !root.contains(e.target as Node)) pickerOpen.value = false;
+  if (root && !root.contains(e.target as Node)) {
+    pickerOpen.value = false;
+    modeMenuOpen.value = false;
+  }
 }
 
 onMounted(() => document.addEventListener("pointerdown", onDocPointerDown, true));
@@ -139,6 +259,7 @@ function submit(): void {
   text.value = "";
   selected.value = [];
   pickerOpen.value = false;
+  modeMenuOpen.value = false;
   nextTick(autoGrow);
   emit("send", value, mentions);
 }
@@ -169,7 +290,7 @@ defineExpose({ fill, focus: () => textarea.value?.focus(), openBotPicker });
 </script>
 
 <template>
-  <div ref="rootEl" class="composer-wrap" @keydown.esc="pickerOpen = false">
+  <div ref="rootEl" class="composer-wrap" @keydown="onRootKeydown">
     <div class="composer" :class="{ 'is-locked': locked }">
       <!-- @ 指定 Bot（仅群聊）：选中项随消息提交，发送后清空 -->
       <button
@@ -211,6 +332,66 @@ defineExpose({ fill, focus: () => textarea.value?.focus(), openBotPicker });
           <span class="spacer" />
           <button class="btn btn--sm btn--ghost" @click="pickerOpen = false">完成</button>
         </div>
+      </div>
+
+      <!-- 权限模式胶囊（R5）：常显当前档位；点击弹出四档说明；Shift+Tab 循环。
+           禁用态用外层 title：disabled 的 <button> 在多数浏览器不触发鼠标事件，
+           直接挂 title 用户看不到「该运行时由 CLI 自身管理权限」的原因。 -->
+      <span
+        class="perm-capsule-wrap"
+        :title="permissionDisabled ? permissionDisabledReason : undefined"
+      >
+        <button
+          class="perm-capsule"
+          :class="{
+            'is-full': permissionMode === 'full',
+            'is-disabled': permissionDisabled,
+            'is-open': modeMenuOpen,
+          }"
+          :style="{ '--dot': `var(${currentMode.dot})` }"
+          :title="permissionDisabled ? undefined : modeTitle"
+          :aria-label="`权限模式：${currentMode.label}`"
+          :aria-expanded="modeMenuOpen"
+          :aria-haspopup="'menu'"
+          :disabled="permissionDisabled"
+          @click="toggleModeMenu"
+        >
+          <span class="perm-dot" aria-hidden="true" />
+          <span class="perm-label perm-label--long">{{ currentMode.label }}</span>
+          <span class="perm-label perm-label--short">{{ currentMode.short }}</span>
+          <AppIcon name="chev" :size="12" class="perm-chev" />
+        </button>
+      </span>
+
+      <div v-if="modeMenuOpen" class="perm-menu" role="menu" aria-label="选择权限模式">
+        <button
+          v-if="permissionGroup"
+          class="perm-menu-all"
+          role="menuitem"
+          @click="applyModeToAll"
+        >
+          <span class="perm-all-ico" aria-hidden="true">◎</span>
+          <span class="perm-item-body">
+            <span class="perm-item-name">应用到本群全部 Bot</span>
+            <span class="perm-item-desc">把「{{ currentMode.label }}」同步给群里每个 Bot 的会话</span>
+          </span>
+        </button>
+        <button
+          v-for="m in MODES"
+          :key="m.key"
+          class="perm-item"
+          :class="{ 'is-on': m.key === permissionMode }"
+          role="menuitemradio"
+          :aria-checked="m.key === permissionMode"
+          @click="chooseMode(m.key)"
+        >
+          <span class="perm-item-dot" :style="{ '--dot': `var(${m.dot})` }" aria-hidden="true" />
+          <span class="perm-item-body">
+            <span class="perm-item-name">{{ m.label }}</span>
+            <span class="perm-item-desc">{{ m.desc }}</span>
+          </span>
+          <span class="perm-item-check" aria-hidden="true">{{ m.key === permissionMode ? "✓" : "" }}</span>
+        </button>
       </div>
 
       <textarea

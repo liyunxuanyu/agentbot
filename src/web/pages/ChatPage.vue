@@ -3,13 +3,14 @@ import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { ApiError, api, isMissingEndpoint } from "../net/client";
-import type { GroupSendResponse, MessageDto, SseFrame } from "../net/types";
+import type { GroupSendResponse, MessageDto, PermissionMode, SseFrame } from "../net/types";
 import type { RawEvent } from "../lib/turnModel";
 import { buildPendingTurnView, buildTurnView, type TurnView } from "../lib/turnModel";
 import { useBotsStore } from "../stores/bots";
 import { useEventsStore } from "../stores/events";
 import { useSessionsStore } from "../stores/sessions";
 import { usePermissionsStore } from "../stores/permissions";
+import { useProvidersStore } from "../stores/providers";
 import { useUiStore } from "../stores/ui";
 import { useSseStream } from "../composables/useSseStream";
 import { openStream, type SseConnection } from "../net/stream";
@@ -49,6 +50,7 @@ const bots = useBotsStore();
 const sessions = useSessionsStore();
 const events = useEventsStore();
 const permissions = usePermissionsStore();
+const providers = useProvidersStore();
 const ui = useUiStore();
 
 const { channel, status, errorText, connection, endpointMissing, currentSession } =
@@ -476,7 +478,11 @@ function ingestFrame(frame: SseFrame, source: "live" | "history"): boolean {
         botId,
         turnId: frame.turnId,
         action:
-          p.action === "write" || p.action === "read" || p.action === "exec" || p.action === "network"
+          p.action === "write" ||
+          p.action === "read" ||
+          p.action === "exec" ||
+          p.action === "network" ||
+          p.action === "admin"
             ? p.action
             : "read",
         target: typeof p.target === "string" ? p.target : "",
@@ -1747,10 +1753,328 @@ function onToggleAside(): void {
 }
 
 // ---------------------------------------------------------------------------
+// 会话控制（R2 / R4 / R5 / R7）
+// ---------------------------------------------------------------------------
+/**
+ * 三条纪律（与后端 `routes/sessions.ts` 同口径）：
+ *   ① 控制项是**会话属性**，只影响后续轮次与尚未裁决的调用；
+ *   ② 群聊里胶囊作用于「当前展开/最近发言的 Bot」，菜单首项可应用到本群全部 Bot；
+ *   ③ 非内置引擎的模型与权限控件显示禁用态，并说明由 CLI 自身管理。
+ */
+const permissionBusy = ref(false);
+const settingsOpen = ref(false);
+const settingsBusy = ref(false);
+const settingsError = ref("");
+const compactBusy = ref(false);
+const wsDraft = ref("");
+const providerDraft = ref("");
+const modelDraft = ref("");
+const customModel = ref("");
+
+const MODE_LABEL: Record<PermissionMode, string> = {
+  plan: "计划模式",
+  confirm: "变更前确认",
+  auto: "自动模式",
+  full: "完全访问",
+};
+
+/** 四档的语义点颜色（与 Composer 胶囊同一套，设置面板复用）。 */
+const MODE_DOT: Record<PermissionMode, string> = {
+  plan: "--color-info",
+  confirm: "--color-primary",
+  auto: "--color-warning",
+  full: "--color-danger",
+};
+
+/** 当前展开（最近发言）的 Bot；群聊里胶囊与设置都以它为准。 */
+const activeBotId = computed<string | null>(() => {
+  const last = turnViews.value[turnViews.value.length - 1];
+  if (last) return last.botId;
+  return currentSession.value?.botId ?? hostBot.value?.id ?? primaryBot.value?.id ?? null;
+});
+
+const activeBot = computed(() => (activeBotId.value ? bots.findBot(activeBotId.value) : null));
+
+/** 该 Bot 在本渠道的最新 Session（权限模式 / 模型 / 工作区覆盖都是会话属性）。 */
+const activeSession = computed(() => {
+  const botId = activeBotId.value;
+  if (botId) {
+    const list = sessions.sessions.filter((s) => s.botId === botId);
+    return list[list.length - 1] ?? null;
+  }
+  // 群聊里「最近发言的 Bot 还没有会话」时不能拿别人的会话顶上：
+  // 那样切模型/权限会改到别的 Bot 的会话上，界面却显示成当前 Bot 的。
+  return currentSession.value;
+});
+
+const activeIsBuiltin = computed(() => activeBot.value?.runtime?.protocol === "builtin");
+
+const permissionMode = computed<PermissionMode>(
+  () => activeSession.value?.permissionMode ?? activeBot.value?.permissionMode ?? "confirm",
+);
+
+const permissionDisabledReason = computed(() => {
+  const rt = activeBot.value?.runtime;
+  return rt
+    ? `「${rt.displayName}」由 CLI 自身管理权限，当前产品层不能切换`
+    : "未绑定运行时，无法切换权限模式";
+});
+
+/** 生效工作区：内置引擎走回退链；其它运行时仍由 Bot 的 repo/worktree 决定（§0）。 */
+const workspaceDisplay = computed(() => {
+  if (!activeIsBuiltin.value) {
+    return activeBot.value?.effectivePath ?? "未设置默认工作区";
+  }
+  return (
+    activeSession.value?.workspacePath ??
+    channel.value?.workspacePath ??
+    activeBot.value?.defaultWorkspace ??
+    "服务进程当前目录"
+  );
+});
+
+/** Bot 的默认供应商：会话没覆盖时用它（再没有就是全局默认供应商）。 */
+const botProviderId = computed(() => activeBot.value?.providerId ?? providers.defaultId ?? "");
+
+const effectiveProviderId = computed(
+  () => activeSession.value?.providerId ?? botProviderId.value,
+);
+const providerDefaultModel = computed(() => providers.find(effectiveProviderId.value)?.model ?? "");
+const effectiveModel = computed(() => activeSession.value?.model ?? providerDefaultModel.value);
+const effectiveProviderName = computed(
+  () => providers.find(effectiveProviderId.value)?.name ?? "未配置供应商",
+);
+
+/** 设置面板里正在选的供应商（切换时模型下拉要跟着它走，而不是已保存的值）。 */
+const draftProvider = computed(
+  () => providers.find(providerDraft.value) ?? providers.find(botProviderId.value),
+);
+const draftDefaultModel = computed(() => draftProvider.value?.model ?? "");
+
+const CUSTOM_MODEL = "__custom__";
+const modelOptions = computed(() => {
+  const opts: { value: string; label: string }[] = [
+    {
+      value: "",
+      label: `跟随供应商默认${draftDefaultModel.value ? `（${draftDefaultModel.value}）` : ""}`,
+    },
+  ];
+  const current = modelDraft.value && modelDraft.value !== CUSTOM_MODEL
+    ? modelDraft.value
+    : (activeSession.value?.model ?? "");
+  if (current && current !== draftDefaultModel.value) opts.push({ value: current, label: current });
+  opts.push({ value: CUSTOM_MODEL, label: "自定义模型…" });
+  return opts;
+});
+const modelIsCustom = computed(() => modelDraft.value === CUSTOM_MODEL);
+
+/** 换供应商时清掉模型选择：旧供应商的模型名不能发给新供应商（后端也会清）。 */
+function onProviderDraftChange(): void {
+  modelDraft.value = "";
+  customModel.value = "";
+}
+
+function openSettings(): void {
+  wsDraft.value = channel.value?.workspacePath ?? "";
+  // 空 = 跟随 Bot 默认供应商；不要把 Bot 的默认 id 固化成会话覆盖
+  providerDraft.value = activeSession.value?.providerId ?? "";
+  // 会话模型为空 = 跟随供应商默认；不要把默认模型名固化成覆盖
+  modelDraft.value = activeSession.value?.model ?? "";
+  customModel.value = "";
+  settingsError.value = "";
+  settingsOpen.value = true;
+  if (providers.providers.length === 0) void providers.load();
+}
+
+function settingsErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const field = err.fieldErrors().find((f) => f.field === "workspacePath");
+    if (field?.message) return field.message;
+    return err.messageText() ?? `保存失败（${err.code}）`;
+  }
+  return err instanceof Error ? err.message : "保存失败";
+}
+
+/** 保存会话设置：工作区（渠道级，群聊共用）+ 会话级供应商 / 模型。 */
+async function saveSettings(): Promise<void> {
+  const ch = channel.value;
+  if (!ch || settingsBusy.value) return;
+  settingsBusy.value = true;
+  settingsError.value = "";
+  try {
+    let warning: string | undefined;
+    const session = activeSession.value;
+
+    // ---- 工作区：写渠道；若当前会话有自己的覆盖则清掉，让渠道值生效 ----
+    const ws = wsDraft.value.trim();
+    if (ws !== (ch.workspacePath ?? "")) {
+      const res = await api.patchChannel(ch.id, { workspacePath: ws.length > 0 ? ws : null });
+      sessions.setChannelWorkspace(res.channel.workspacePath);
+    }
+    // 会话级覆盖只是内部回退层（旧数据/接口写入）；用户保存设置后统一以渠道值为准，
+    // 否则会出现「设置里写 A、实际生效还是旧的 B」。
+    if (session && session.workspacePath !== null) {
+      const cleared = await api.patchSessionControls(session.id, { workspacePath: null });
+      if (cleared.session) sessions.patchSession(cleared.session);
+    }
+
+    // ---- 模型：供应商 → 模型两级；只影响后续轮次 ----
+    if (session && activeIsBuiltin.value) {
+      const body: { providerId?: string | null; model?: string | null } = {};
+      if (providerDraft.value !== (session.providerId ?? "")) {
+        body.providerId = providerDraft.value || null;
+      }
+      const requested = modelDraft.value === CUSTOM_MODEL ? customModel.value.trim() : modelDraft.value;
+      if (requested !== (session.model ?? "")) body.model = requested || null;
+
+      if (Object.keys(body).length > 0) {
+        const res = await api.patchSessionControls(session.id, body);
+        if (res.session) sessions.patchSession(res.session);
+        warning = res.warning;
+      }
+    }
+
+    settingsOpen.value = false;
+    ui.toast(warning ?? "会话设置已更新");
+  } catch (err) {
+    settingsError.value = settingsErrorMessage(err);
+  } finally {
+    settingsBusy.value = false;
+  }
+}
+
+/** 手动压缩上下文（R7）。只有内置引擎且会话在运行时可用。 */
+async function compactNow(): Promise<void> {
+  const session = activeSession.value;
+  if (!session || compactBusy.value) return;
+  compactBusy.value = true;
+  try {
+    const res = await api.compactSession(session.id, { force: true });
+    const r = res.result;
+    if (r?.ok) {
+      events.pushLocalNote(`上下文已压缩 · ${r.removedMessages} 条消息摘要为 ${r.summaryChars} 字`);
+      ui.toast(`已压缩 ${r.removedMessages} 条 → 摘要 ${r.summaryChars} 字`);
+      if (pinnedToBottom.value) scrollToBottomSoon();
+    } else {
+      ui.toast(r?.reason ?? "没有可压缩的历史");
+    }
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "compact_unavailable") {
+      ui.toast(err.bodyMessage ?? "会话未在运行，先发一条消息再压缩");
+    } else {
+      ui.toast("压缩失败，请稍后再试");
+    }
+  } finally {
+    compactBusy.value = false;
+  }
+}
+
+/** 切四档权限（胶囊 / 设置面板共用）：立即生效，不二次确认。 */
+async function changePermissionMode(mode: PermissionMode): Promise<void> {
+  if (!activeIsBuiltin.value) {
+    ui.toast(permissionDisabledReason.value);
+    return;
+  }
+  if (permissionBusy.value || mode === permissionMode.value) return;
+  permissionBusy.value = true;
+  try {
+    const session = activeSession.value;
+
+    // 还没有 Session（打开会话但没发消息）：改 Bot 默认值，新会话继承
+    if (!session) {
+      const bot = activeBot.value;
+      if (!bot) {
+        ui.toast("还没有可切换的 Bot");
+        return;
+      }
+      await api.patchBot(bot.id, { permissionMode: mode });
+      await bots.load();
+      ui.toast(`已设为「${MODE_LABEL[mode]}」，本条消息起生效`);
+      return;
+    }
+
+    const res = await api.patchSessionControls(session.id, { permissionMode: mode });
+    if (res.session) sessions.patchSession(res.session);
+
+    // 切到 plan：后端已把挂起写请求置 rejected；这里同步卡片与系统块（G3）
+    if (res.rejectedPending && res.rejectedPending > 0) {
+      for (const p of permissions.pending) {
+        if (p.sessionId === session.id && p.action !== "read") {
+          permissions.markDecided(p.requestId, "已按计划模式拒绝");
+        }
+      }
+      events.pushLocalNote(`已按计划模式拒绝 ${res.rejectedPending} 个挂起请求`);
+      if (pinnedToBottom.value) scrollToBottomSoon();
+    }
+    if (res.warning) ui.toast(res.warning);
+  } catch (err) {
+    ui.toast(
+      err instanceof ApiError ? (err.messageText() ?? `切换失败（${err.code}）`) : "切换权限模式失败",
+    );
+  } finally {
+    permissionBusy.value = false;
+  }
+}
+
+/** 群聊：把当前档位应用到本群全部内置引擎 Bot（有会话改会话，无会话改 Bot 默认）。 */
+async function applyPermissionModeAll(mode: PermissionMode): Promise<void> {
+  const targets = participants.value.filter((b) => b.runtime?.protocol === "builtin");
+  if (targets.length === 0) {
+    ui.toast("本群没有内置引擎 Bot，权限由各自 CLI 管理");
+    return;
+  }
+  if (permissionBusy.value) return;
+  permissionBusy.value = true;
+  let ok = 0;
+  let failed = 0;
+  let rejectedTotal = 0;
+  try {
+    for (const bot of targets) {
+      const list = sessions.sessions.filter((s) => s.botId === bot.id);
+      const session = list[list.length - 1];
+      try {
+        if (session) {
+          const res = await api.patchSessionControls(session.id, { permissionMode: mode });
+          if (res.session) sessions.patchSession(res.session);
+          // 逐会话同步「切 plan 拒绝挂起写请求」：群聊里一次可能拒多个 Bot 的卡片（G3）
+          if (res.rejectedPending && res.rejectedPending > 0) {
+            for (const p of permissions.pending) {
+              if (p.sessionId === session.id && p.action !== "read") {
+                permissions.markDecided(p.requestId, "已按计划模式拒绝");
+              }
+            }
+            rejectedTotal += res.rejectedPending;
+          }
+        } else {
+          await api.patchBot(bot.id, { permissionMode: mode });
+        }
+        ok += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    if (rejectedTotal > 0) {
+      events.pushLocalNote(`已按计划模式拒绝 ${rejectedTotal} 个挂起请求`);
+      if (pinnedToBottom.value) scrollToBottomSoon();
+    }
+    if (ok > 0) await bots.load();
+    ui.toast(
+      failed === 0
+        ? `已把「${MODE_LABEL[mode]}」应用到 ${ok} 个 Bot`
+        : `已应用 ${ok} 个，${failed} 个失败`,
+    );
+  } finally {
+    permissionBusy.value = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 生命周期
 // ---------------------------------------------------------------------------
 onMounted(async () => {
   ui.setCrumb([{ text: "会话", to: "/chats" }]);
+  // 会话设置里的供应商 → 模型两级下拉需要供应商列表（未配置时显示空态提示）
+  if (providers.providers.length === 0) void providers.load();
   await loadChannel();
   // 渠道名补到面包屑
   if (channel.value) {
@@ -1847,14 +2171,18 @@ void allPermissions;
               <span class="rt-chip">
                 {{ primaryBot.runtime?.displayName ?? "未绑定" }}<template v-if="primaryBot.runtime"> · {{ primaryBot.runtime.protocol }}</template>
               </span>
-              <span class="u-mono" style="color: var(--color-text-muted)">
-                {{ primaryBot.executionLocation }} {{ primaryBot.effectivePath ?? "—" }}
-              </span>
             </template>
+            <!-- 工作区（R2）：会话/群聊级，群聊全员共用；点击进入会话设置 -->
+            <button
+              class="chat-ws u-mono"
+              :title="`工作区：${workspaceDisplay}`"
+              @click="openSettings"
+            >工作区 {{ workspaceDisplay }}</button>
           </div>
         </div>
 
         <div class="spacer" />
+        <button class="btn btn--sm btn--ghost" @click="openSettings">会话设置</button>
         <button
           class="btn btn--sm btn--ghost"
           aria-controls="aside"
@@ -2043,10 +2371,17 @@ void allPermissions;
         :disabled="composerDisabled"
         :bots="participants"
         :mention-enabled="isGroup"
+        :permission-mode="permissionMode"
+        :permission-disabled="!activeIsBuiltin"
+        :permission-disabled-reason="permissionDisabledReason"
+        :permission-group="isGroup && participants.length > 1"
+        :permission-busy="permissionBusy"
         :meta-left="isGroup ? '主持人会先决定谁来说' : `运行时 ${runtimeName}`"
         :meta-right="`≈ ${num(memChars)} / ${num(memCap)} 字符注入`"
         @send="onSend"
         @stop="onStop"
+        @change-permission-mode="changePermissionMode"
+        @apply-permission-mode-all="applyPermissionModeAll"
       />
     </div>
 
@@ -2147,6 +2482,121 @@ void allPermissions;
         <button class="btn btn--primary" :disabled="assignBusy" @click="submitAssignment">
           {{ assignBusy ? "提交中…" : "提交" }}
         </button>
+      </template>
+    </AppModal>
+
+    <!-- 会话设置（R2 / R4 / R7）：工作区 + 模型两级 + 权限模式 + 手动压缩 -->
+    <AppModal v-model:open="settingsOpen" title="会话设置">
+      <div class="field">
+        <label class="u-label" for="cs-ws">工作区</label>
+        <input
+          id="cs-ws"
+          v-model="wsDraft"
+          class="input u-mono"
+          placeholder="留空 = Bot 默认工作区 → 服务进程当前目录"
+          :disabled="settingsBusy || !activeIsBuiltin"
+        />
+        <div v-if="!activeIsBuiltin" class="hint" style="color: var(--color-warning-ink)">
+          该运行时沿用 Bot 的执行位置（worktree / repoPath），会话工作区本轮只对内置引擎生效。
+          当前生效：<code class="u-mono">{{ workspaceDisplay }}</code>。
+        </div>
+        <div v-else class="hint">
+          当前生效：<code class="u-mono">{{ workspaceDisplay }}</code>。
+          群聊里所有 Bot 共用这个工作区；保存后从下一轮开始生效。
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="u-label" for="cs-provider">模型供应商</label>
+        <select
+          id="cs-provider"
+          v-model="providerDraft"
+          class="select"
+          :disabled="!activeIsBuiltin || !activeSession || settingsBusy"
+          @change="onProviderDraftChange"
+        >
+          <option value="">
+            跟随 Bot 默认{{ providers.find(botProviderId) ? `（${providers.find(botProviderId)?.name}）` : "" }}
+          </option>
+          <option v-for="p in providers.providers" :key="p.id" :value="p.id">
+            {{ p.name }} · {{ p.model }}
+          </option>
+        </select>
+        <div v-if="!activeSession" class="hint">发出第一条消息创建会话后，才能切换模型。</div>
+        <div v-else-if="!activeIsBuiltin" class="hint" style="color: var(--color-warning-ink)">
+          {{ permissionDisabledReason }}
+        </div>
+        <div
+          v-else-if="providers.providers.length === 0"
+          class="hint"
+          style="color: var(--color-warning-ink)"
+        >
+          还没有配置模型供应商。到「设置 › 模型供应商」添加后即可切换。
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="u-label" for="cs-model">模型</label>
+        <select
+          id="cs-model"
+          v-model="modelDraft"
+          class="select"
+          :disabled="!activeIsBuiltin || !activeSession || settingsBusy"
+        >
+          <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+          </option>
+        </select>
+        <input
+          v-if="modelIsCustom"
+          v-model="customModel"
+          class="input u-mono"
+          style="margin-top: 8px"
+          placeholder="模型名，例如 gpt-4o-mini"
+          :disabled="settingsBusy"
+        />
+        <div v-if="providers.providers.length === 0 && activeIsBuiltin" class="hint" style="color: var(--color-warning-ink)">
+          还没有配置模型供应商。到「设置 › 模型供应商」添加后即可切换。
+        </div>
+        <div v-else class="hint">
+          当前生效：{{ effectiveProviderName }} · {{ effectiveModel || "供应商默认" }}。
+          只影响后续轮次；跨协议切换（如 OpenAI ↔ Anthropic）建议新开会话。
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="u-label">权限模式</label>
+        <div class="settings-mode-row">
+          <span class="perm-dot" :style="{ '--dot': `var(${MODE_DOT[permissionMode]})` }" />
+          <span>{{ MODE_LABEL[permissionMode] }}</span>
+          <span class="spacer" />
+          <span class="hint">输入区左侧或 Shift+Tab 切换</span>
+        </div>
+      </div>
+
+      <div class="field" style="margin-bottom: 0">
+        <label class="u-label">上下文压缩</label>
+        <button
+          class="btn btn--secondary btn--sm"
+          :disabled="compactBusy || !activeSession"
+          @click="compactNow"
+        >{{ compactBusy ? "压缩中…" : "立即压缩" }}</button>
+        <div class="hint">
+          把较早的消息摘要成一条记忆，保留最近若干轮；只有运行中的内置引擎会话可用。
+        </div>
+      </div>
+
+      <div v-if="settingsError" class="field-err" role="alert">{{ settingsError }}</div>
+
+      <template #footer>
+        <button class="btn btn--secondary" @click="settingsOpen = false">取消</button>
+        <span class="spacer" />
+        <button
+          class="btn btn--primary"
+          :class="{ 'is-loading': settingsBusy }"
+          :disabled="settingsBusy"
+          @click="saveSettings"
+        >{{ settingsBusy ? "保存中" : "保存" }}</button>
       </template>
     </AppModal>
   </div>

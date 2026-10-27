@@ -26,7 +26,7 @@ export interface PermissionView {
   sessionId: string;
   botId: string;
   turnId: string;
-  action: "write" | "read" | "exec" | "network";
+  action: "write" | "read" | "exec" | "network" | "admin";
   target: string;
   kind: PermissionKind;
   /** 已决时的决定文案，如「已批准 · 你 · 14:32」。 */
@@ -128,7 +128,7 @@ export const usePermissionsStore = defineStore("permissions", () => {
     sessionId: string;
     botId: string;
     turnId: string;
-    action: "write" | "read" | "exec" | "network";
+    action: "write" | "read" | "exec" | "network" | "admin";
     target: string;
     boundaryVerdict: "allowed" | "denied" | "pending";
     createdAt: number;

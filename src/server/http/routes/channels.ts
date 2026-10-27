@@ -211,8 +211,9 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ServerContext):
   /**
    * 修改会话/群聊工作区（R2）。
    *
-   * 只改 `channels.workspace_path`：群聊里所有 Bot 共用同一个工作区（G10），
-   * 会话级覆盖仍由 `sessions.workspace_path` 承担（会话设置里单独改）。
+   * 改 `channels.workspace_path`：群聊里所有 Bot 共用同一个工作区（G10）。
+   * 同时清掉该渠道下会话级覆盖 —— 会话覆盖只是内部回退链的一层，渠道显式设置
+   * 后继续压着它会让人看到「设置值与实际生效值不一致」。
    * 内置引擎下一轮 prompt 直接生效（没有进程 cwd 概念）；其它运行时本轮只落库，
    * 前端对它们显示禁用态。
    *
@@ -256,9 +257,17 @@ export function registerChannelRoutes(app: FastifyInstance, ctx: ServerContext):
         workspacePath = check.path ?? body.workspacePath.trim();
       }
 
-      ctx.db
-        .prepare("UPDATE channels SET workspace_path = ? WHERE id = ?")
-        .run(workspacePath, channelId);
+      // G10：群聊/会话共用一个工作区。渠道值变更时清掉会话级覆盖，
+      // 否则旧覆盖会继续压过刚设的渠道值（用户看到的「当前生效」与设置不一致）。
+      const apply = ctx.db.transaction(() => {
+        ctx.db
+          .prepare("UPDATE channels SET workspace_path = ? WHERE id = ?")
+          .run(workspacePath, channelId);
+        ctx.db
+          .prepare("UPDATE sessions SET workspace_path = NULL WHERE channel_id = ?")
+          .run(channelId);
+      });
+      apply();
 
       return { ok: true, channel: getChannel(ctx.db, channelId) };
     },

@@ -75,6 +75,13 @@ interface PatchBoundaryBody {
   /** 管理员角色切换（R6）：admin | member。 */
   role?: unknown;
   /**
+   * 默认权限模式（R5 / G2）：新会话继承，已有会话不变。
+   *
+   * 会话内切换走 `PATCH /api/sessions/:id/controls`；这里是「还没开会话时
+   * 先定个默认值」的入口，也是群聊「应用到本群全部 Bot」对无会话 Bot 的落点。
+   */
+  permissionMode?: unknown;
+  /**
    * 人格（P0-03「编辑人格后下一条消息即生效」）。
    *
    * 生效路径不需要额外动作：每轮开始时 `memory/assembler` 重新读 `bots.persona`
@@ -100,7 +107,8 @@ interface FieldError {
     | "autoApproveWrite"
     | "executionLocation"
     | "repoPath"
-    | "role";
+    | "role"
+    | "permissionMode";
   index?: number;
   code: string;
   message: string;
@@ -332,6 +340,29 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
         }
       }
 
+      // ---- 默认权限模式（R5 / G2）----
+      //
+      // 只影响「之后新建的会话」：现有会话的 permission_mode 已经落库，
+      // 会话内切换必须走 `/api/sessions/:id/controls`（否则用户会以为
+      // 改 Bot 默认值能立刻改变正在跑的会话）。
+      let permissionMode: "confirm" | "auto" | "plan" | "full" | null = null;
+      if (body.permissionMode !== undefined) {
+        if (
+          body.permissionMode !== "confirm" &&
+          body.permissionMode !== "auto" &&
+          body.permissionMode !== "plan" &&
+          body.permissionMode !== "full"
+        ) {
+          fields.push({
+            field: "permissionMode",
+            code: "invalid_value",
+            message: "权限模式只能是 confirm / auto / plan / full",
+          });
+        } else {
+          permissionMode = body.permissionMode;
+        }
+      }
+
       // ---- 执行位置（P0-13）----
       //
       // 校验顺序：先看字段类型，再看「选 worktree 时仓库路径必须是 git 仓库」。
@@ -475,6 +506,10 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
           sets.push("role = ?");
           params.push(role);
         }
+        if (permissionMode !== null) {
+          sets.push("permission_mode = ?");
+          params.push(permissionMode);
+        }
         params.push(bot.id);
         ctx.db.prepare(`UPDATE bots SET ${sets.join(", ")} WHERE id = ?`).run(...params);
       });
@@ -498,6 +533,11 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
           `[audit] Bot ${bot.id}（${bot.name}）角色切换为 ${role}（decided_by=user）`,
         );
       }
+      if (permissionMode !== null) {
+        console.log(
+          `[audit] Bot ${bot.id}（${bot.name}）默认权限模式改为 ${permissionMode}（decided_by=user）`,
+        );
+      }
 
       return {
         ok: true,
@@ -509,6 +549,14 @@ export function registerBotRoutes(app: FastifyInstance, ctx: ServerContext): voi
               | undefined
           )?.role ??
           "member",
+        permissionMode:
+          permissionMode ??
+          (
+            ctx.db.prepare("SELECT permission_mode FROM bots WHERE id = ?").get(bot.id) as
+              | { permission_mode: string }
+              | undefined
+          )?.permission_mode ??
+          "confirm",
         boundary: boundaryDto(bot.id, ctx),
         execution: worktree,
         // 前端据此在详情页继续显示「此运行时不提供权限请求」的提示

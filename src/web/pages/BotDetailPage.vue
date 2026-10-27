@@ -8,6 +8,7 @@ import type {
   GrantDto,
   MemoryEntryDto,
   MemoryInjectionDto,
+  MemoryScope,
   RuntimeDetailDto,
   SessionDto,
 } from "../net/types";
@@ -183,8 +184,43 @@ const editingId = ref<string | null>(null);
 const editingText = ref("");
 const newOpen = ref(false);
 const newText = ref("");
+const newScope = ref<MemoryScope>("bot");
+const newScopeSessionId = ref("");
+const newScopeChannelId = ref("");
 const memBusy = ref(false);
 const summarizing = ref(false);
+
+/** 记忆作用域标签：全局 / 本群聊 / 本会话（R3）。 */
+function memoryScopeText(entry: MemoryEntryDto): string {
+  if (entry.scope === "session") return "本会话";
+  if (entry.scope === "channel") return "本群聊";
+  return "全局";
+}
+
+function memoryScopeTitle(entry: MemoryEntryDto): string {
+  if (entry.scope === "session") {
+    return `只注入来源会话${entry.sourceSessionId ? `（${shortSessionId(entry.sourceSessionId)}）` : ""}`;
+  }
+  if (entry.scope === "channel") return "本群聊里所有 Bot 共享，不进入其它会话";
+  return "该 Bot 的所有会话都会注入";
+}
+
+/** 可选的群聊（去重，来自该 Bot 的 Session 列表）。 */
+const memoryChannels = computed(() => {
+  const map = new Map<string, string>();
+  for (const s of botSessions.value) {
+    if (s.channelId && !map.has(s.channelId)) map.set(s.channelId, s.channelName);
+  }
+  return [...map.entries()].map(([id, name]) => ({ id, name }));
+});
+
+function openNewMemory(): void {
+  newText.value = "";
+  newScope.value = "bot";
+  newScopeSessionId.value = botSessions.value[0]?.id ?? "";
+  newScopeChannelId.value = memoryChannels.value[0]?.id ?? "";
+  newOpen.value = true;
+}
 
 async function loadMemory(): Promise<void> {
   memLoading.value = true;
@@ -276,9 +312,25 @@ async function addMemory(): Promise<void> {
     ui.toast("内容不能为空");
     return;
   }
+  if (newScope.value === "session" && !newScopeSessionId.value) {
+    ui.toast("选一个会话，或改为全局记忆");
+    return;
+  }
+  if (newScope.value === "channel" && !newScopeChannelId.value) {
+    ui.toast("选一个群聊，或改为全局记忆");
+    return;
+  }
   memBusy.value = true;
   try {
-    const res = await api.createMemory(props.id, { content: text });
+    const res = await api.createMemory(props.id, {
+      content: text,
+      ...(newScope.value === "session"
+        ? { scope: "session" as const, sourceSessionId: newScopeSessionId.value }
+        : {}),
+      ...(newScope.value === "channel"
+        ? { scope: "channel" as const, channelId: newScopeChannelId.value }
+        : {}),
+    });
     if (res.entry) memory.value = [...memory.value, res.entry];
     injection.value = res.injection;
     newText.value = "";
@@ -770,7 +822,12 @@ void grants;
           :size="48"
         />
         <div>
-          <h1 class="detail-title">{{ bot?.name ?? "读取中…" }}</h1>
+          <h1 class="detail-title">
+            {{ bot?.name ?? "读取中…" }}
+            <span v-if="bot?.role === 'admin'" class="cap cap--scope" title="管理员：多一个 create_bot 工具">
+              管理员
+            </span>
+          </h1>
           <p class="detail-sub">{{ bot?.persona || "还没有写人格。" }}</p>
           <div class="detail-meta">
             <span v-if="runtime" class="rt-chip">
@@ -782,7 +839,7 @@ void grants;
             </span>
             <BotStateChip v-if="bot" :state="bot.state" decay />
             <span v-if="bot" class="u-mono" style="color: var(--color-text-muted)">
-              {{ bot.executionLocation }} {{ bot.effectivePath ?? "—" }}
+              {{ bot.executionLocation }} · {{ bot.effectivePath ?? "未设置默认工作区" }}
             </span>
           </div>
         </div>
@@ -875,7 +932,7 @@ void grants;
           <div class="kv">
             <span class="k">执行位置</span>
             <span class="v">
-              {{ bot?.executionLocation ?? "—" }} {{ bot?.effectivePath ?? "" }}
+              {{ bot?.executionLocation ?? "—" }} · {{ bot?.effectivePath ?? "未设置默认工作区" }}
             </span>
           </div>
           <div class="kv">
@@ -1000,7 +1057,7 @@ void grants;
           <button class="btn btn--sm btn--secondary" :disabled="summarizing" @click="summarizeNow">
             {{ summarizing ? "摘要中…" : "立即摘要" }}
           </button>
-          <button class="btn btn--sm btn--primary" @click="newOpen = true">新增</button>
+          <button class="btn btn--sm btn--primary" @click="openNewMemory">新增</button>
         </div>
 
         <div v-if="memLoading" style="display: grid; gap: 10px; margin-top: 12px">
@@ -1024,7 +1081,7 @@ void grants;
           <EmptyState title="还没有记忆条目" description="记忆条目跨 Session 保留，换运行时不丢。">
             <template #icon><AppIcon name="bots" :size="24" /></template>
             <template #actions>
-              <button class="btn btn--primary" @click="newOpen = true">新增记忆</button>
+              <button class="btn btn--primary" @click="openNewMemory">新增记忆</button>
             </template>
           </EmptyState>
         </div>
@@ -1049,6 +1106,11 @@ void grants;
               <template v-else>
                 <div class="mem-text">{{ m.content }}</div>
                 <div class="mem-meta">
+                  <span
+                    class="cap"
+                    :class="m.scope === 'bot' ? 'cap--no' : 'cap--scope'"
+                    :title="memoryScopeTitle(m)"
+                  >{{ memoryScopeText(m) }}</span>
                   <span>来源 {{ m.source === "auto" ? "自动摘要" : "手写" }}</span>
                   <span>
                     来源会话
@@ -1149,7 +1211,7 @@ void grants;
           </div>
           <div class="field" style="margin-top: 12px">
             <label class="u-label" for="bd-repo">
-              {{ boundaryForm.location === "worktree" ? "仓库根路径" : "工作目录" }}
+              {{ boundaryForm.location === "worktree" ? "仓库根路径" : "默认工作区" }}
             </label>
             <input
               id="bd-repo"
@@ -1162,7 +1224,7 @@ void grants;
               {{
                 boundaryForm.location === "worktree"
                   ? "留空表示沿用当前仓库根路径（必须是 git 仓库根）。"
-                  : "留空表示沿用当前工作目录。绝对路径、必须是已存在的目录，不需要是 git 仓库。"
+                  : "会话没有单独指定工作区时用它。绝对路径、必须是已存在的目录，不需要是 git 仓库。"
               }}
             </div>
           </div>
@@ -1406,7 +1468,61 @@ void grants;
           rows="4"
           placeholder="例如：团队用 pnpm，不用 npm；发布分支是 release/*。"
         />
-        <div class="hint">保存后下一条消息即生效。条目会跨 Session 保留。</div>
+        <div class="hint">保存后下一条消息即生效。作用域决定哪些会话能看到它。</div>
+      </div>
+      <div class="field">
+        <label class="u-label">作用域</label>
+        <div class="radio-row">
+          <label class="radio">
+            <input v-model="newScope" type="radio" name="mem-scope" value="bot" />
+            全局（所有会话）
+          </label>
+          <label class="radio">
+            <input
+              v-model="newScope"
+              type="radio"
+              name="mem-scope"
+              value="channel"
+              :disabled="memoryChannels.length === 0"
+            />
+            本群聊
+          </label>
+          <label class="radio">
+            <input
+              v-model="newScope"
+              type="radio"
+              name="mem-scope"
+              value="session"
+              :disabled="botSessions.length === 0"
+            />
+            本会话
+          </label>
+        </div>
+        <select
+          v-if="newScope === 'channel'"
+          v-model="newScopeChannelId"
+          class="select"
+          style="margin-top: 8px"
+        >
+          <option v-for="c in memoryChannels" :key="c.id" :value="c.id">{{ c.name }}</option>
+        </select>
+        <select
+          v-if="newScope === 'session'"
+          v-model="newScopeSessionId"
+          class="select"
+          style="margin-top: 8px"
+        >
+          <option v-for="s in botSessions" :key="s.id" :value="s.id">
+            {{ s.channelName }} · {{ dateTimeText(s.startedAt) }}
+          </option>
+        </select>
+        <div v-if="newScope === 'bot'" class="hint">
+          这个 Bot 在所有会话里都会注入；想隔离到某个会话就选「本会话」。
+        </div>
+        <div v-else-if="newScope === 'channel'" class="hint">
+          只有所选群聊里的会话会注入，群内所有 Bot 共享。
+        </div>
+        <div v-else class="hint">只在所选会话里注入，同一个 Bot 的其它会话看不到。</div>
       </div>
       <template #footer>
         <button class="btn btn--secondary" @click="newOpen = false">取消</button>

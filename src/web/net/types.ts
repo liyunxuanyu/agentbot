@@ -166,6 +166,8 @@ export type BotState = "idle" | "thinking" | "working" | "waiting" | "blocked" |
 
 export type ExecutionLocation = "local" | "worktree";
 
+export type PermissionMode = "confirm" | "auto" | "plan" | "full";
+
 export interface BotDto {
   id: string;
   name: string;
@@ -178,7 +180,13 @@ export interface BotDto {
   runtime: RuntimeSummary | null;
   /** 内置引擎绑定的模型供应商 id；其它运行时为 null。 */
   providerId: string | null;
+  /** 管理员 Bot：多一个 create_bot 工具（不自动获得 full 权限）。 */
+  role: "member" | "admin";
+  /** Bot 默认权限模式；会话显式设置优先于它。 */
+  permissionMode: PermissionMode;
   executionLocation: ExecutionLocation;
+  /** 默认工作区（bots.repo_path）；未设置时显示「未设置默认工作区」。 */
+  defaultWorkspace: string | null;
   /** 实际生效的路径：worktree 时是 worktreePath，local 时是 repoPath。 */
   effectivePath: string | null;
   worktreeState: "ready" | "missing" | "failed" | null;
@@ -209,6 +217,8 @@ export interface ChannelDto {
   name: string;
   participantBotIds: string[];
   hostBotId: string | null;
+  /** 群聊/会话工作区；null 表示走回退链（Bot 默认工作区 → 服务进程 cwd）。 */
+  workspacePath: string | null;
   lastMessagePreview: string | null;
   lastMessageAt: number | null;
   unread: number;
@@ -229,6 +239,13 @@ export interface SessionDto {
   resumeState: ResumeState;
   /** created | starting | ready | running | waiting_permission | idle | reaped | crashed | ended | failed */
   status: string;
+  /** 会话级工作区覆盖；null 表示走回退链。 */
+  workspacePath: string | null;
+  /** 会话级供应商覆盖；null 表示用 Bot 默认供应商。 */
+  providerId: string | null;
+  /** 会话级模型覆盖；null 表示用供应商默认模型。 */
+  model: string | null;
+  permissionMode: PermissionMode;
   startedAt: number;
   endedAt: number | null;
   messageCount: number;
@@ -332,7 +349,7 @@ export interface PermissionDto {
   sessionId: string;
   botId: string;
   turnId: string;
-  action: "write" | "read" | "exec" | "network";
+  action: "write" | "read" | "exec" | "network" | "admin";
   target: string;
   /** allowed | denied | pending */
   boundaryVerdict: "allowed" | "denied" | "pending";
@@ -499,6 +516,10 @@ export interface BotDetailResponse {
 /** `PATCH /api/bots/:id` 的响应。 */
 export interface BotPatchResponse {
   ok: boolean;
+  /** 角色（R6）：PATCH 带 role 时回新值，不带时回当前值。 */
+  role?: "member" | "admin";
+  /** 默认权限模式：PATCH 带 permissionMode 时回新值，不带时回当前值。 */
+  permissionMode?: PermissionMode;
   boundary: BoundaryDto | null;
   execution: ExecutionConfigDto | null;
   requiresWorktree: boolean;
@@ -528,11 +549,16 @@ export interface FieldErrorDto {
 
 // ---- 记忆（P0-10）----
 
+/** 记忆作用域：bot = 全局；channel = 本群聊共享；session = 仅来源会话。 */
+export type MemoryScope = "bot" | "channel" | "session";
+
 export interface MemoryEntryDto {
   id: string;
   botId: string;
   content: string;
   sourceSessionId: string | null;
+  scope: MemoryScope;
+  channelId: string | null;
   /** summary → 'auto'（UI 标「自动摘要」）。 */
   source: "manual" | "auto";
   kind: "manual" | "summary";
@@ -664,6 +690,12 @@ export interface UsageRowDto {
   requests: number;
   inputTokens: number | null;
   outputTokens: number | null;
+  /** 缓存命中（读）token；该行没有任何缓存上报时为 null。 */
+  cachedInputTokens: number | null;
+  /** 缓存写入 token；该行没有任何缓存上报时为 null。 */
+  cacheWriteTokens: number | null;
+  /** 命中率 0–100（1 位小数）；未上报为 null。 */
+  cacheHitRate: number | null;
   unreportedRequests: number;
   share: number;
 }
@@ -677,8 +709,51 @@ export interface UsageResponseDto {
     requests: number;
     inputTokens: number;
     outputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
+    /** 合计命中率；没有任何缓存上报时为 null。 */
+    cacheHitRate: number | null;
     unreportedRequests: number;
   };
+}
+
+// ---- 会话控制（R2 / R4 / R5 / R7）----
+
+/** `PATCH /api/sessions/:id/controls` 的请求体。 */
+export interface SessionControlsInput {
+  providerId?: string | null;
+  model?: string | null;
+  permissionMode?: PermissionMode;
+  workspacePath?: string | null;
+}
+
+export interface SessionControlsResponse {
+  ok: boolean;
+  session: SessionDto | null;
+  /** 跨协议切换时的提示（建议新开会话）。 */
+  warning?: string;
+  /** 切到 plan 时被拒绝的挂起写请求数。 */
+  rejectedPending?: number;
+}
+
+/** `PATCH /api/channels/:id` 的响应。 */
+export interface ChannelPatchResponse {
+  ok: boolean;
+  channel: ChannelDto;
+}
+
+/** `POST /api/sessions/:id/compact` 的响应。 */
+export interface CompactResponse {
+  ok: boolean;
+  result: {
+    ok: boolean;
+    removedMessages: number;
+    summaryChars: number;
+    beforeTokens: number;
+    afterTokens: number;
+    trigger: "auto" | "manual";
+    reason?: string;
+  } | null;
 }
 
 // ---- 安全与数据（P0-14 / P0-12 边界）----

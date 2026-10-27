@@ -449,13 +449,13 @@ onMounted(() => {
       </div>
       <div class="field">
         <label class="u-label" for="nb-repo">
-          {{ newBotEffectiveLocation === "worktree" ? "仓库根路径" : "工作目录" }}
+          {{ newBotEffectiveLocation === "worktree" ? "仓库根路径" : "默认工作区（可选）" }}
         </label>
         <input
           id="nb-repo"
           v-model="newBotRepo"
           class="input u-mono"
-          placeholder="例如：D:/workspace/project"
+          placeholder="留空 = 服务进程当前目录"
           :aria-invalid="newBotRepoErr ? 'true' : 'false'"
           @input="newBotRepoErr = ''"
         />
@@ -464,7 +464,7 @@ onMounted(() => {
           {{
             newBotEffectiveLocation === "worktree"
               ? "必须是 git 仓库根目录，保存时会校验。Bot 会在独立 worktree 里改代码。"
-              : "绝对路径，必须是已存在的目录；留空则用服务进程当前目录。内置引擎可在此直接读写（写操作仍会先问你）。"
+              : "绝对路径，必须是已存在的目录；不填则回退到服务进程当前目录。每个会话还可以单独指定工作区，这里的值只是默认。"
           }}
         </div>
       </div>

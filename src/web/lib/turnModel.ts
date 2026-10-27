@@ -429,7 +429,11 @@ export function buildTurnView(input: BuildTurnInput): TurnView {
           ts: ev.createdAt,
           requestId: str(p["requestId"]) ?? "",
           action:
-            action === "write" || action === "read" || action === "exec" || action === "network"
+            action === "write" ||
+            action === "read" ||
+            action === "exec" ||
+            action === "network" ||
+            action === "admin"
               ? action
               : "read",
           target: str(p["target"]) ?? "",

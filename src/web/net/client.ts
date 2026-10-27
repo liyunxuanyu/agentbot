@@ -218,7 +218,9 @@ import type {
   BotsResponse,
   ChannelDetailDto,
   ChannelDto,
+  ChannelPatchResponse,
   ChannelsResponse,
+  CompactResponse,
   CreateRuntimeRequest,
   CreateRuntimeResponse,
   DeleteBotRequest,
@@ -226,11 +228,13 @@ import type {
   ExecutionLocation,
   MemoryMutateResponse,
   MemoryResponse,
+  MemoryScope,
   McpServerDto,
   McpServerInput,
   McpServersResponse,
   MetaDto,
   PermissionsResponse,
+  PermissionMode,
   ProbeRuntimeResponse,
   ProviderDto,
   ProviderInput,
@@ -242,6 +246,8 @@ import type {
   SchedulesResponse,
   SendMessageRequest,
   SendMessageResponse,
+  SessionControlsInput,
+  SessionControlsResponse,
   SessionEventsPageDto,
   SkillsResponse,
   SummarizeResponse,
@@ -265,6 +271,10 @@ export const api = {
 
   bots: (signal?: AbortSignal) => request<BotsResponse>("/api/bots", { signal }),
 
+  /** 管理员 Bot 列表（R6）：管理页/标识用，不另开一套模型。 */
+  adminBots: (signal?: AbortSignal) =>
+    request<{ bots: import("./types").BotDto[]; totalBots: number }>("/api/admin/bots", { signal }),
+
   channels: (signal?: AbortSignal) => request<ChannelsResponse>("/api/channels", { signal }),
 
   createChannel: (body: CreateChannelRequest) =>
@@ -273,6 +283,31 @@ export const api = {
   /** 会话首屏：渠道 + Session 列表 + 消息 + SSE 首连游标。 */
   channel: (channelId: string, signal?: AbortSignal) =>
     request<ChannelDetailDto>(`/api/channels/${encodeURIComponent(channelId)}`, { signal }),
+
+  /** 群聊/会话工作区（R2）：群聊里全员共用，不要求 git。 */
+  patchChannel: (channelId: string, body: { workspacePath: string | null }) =>
+    request<ChannelPatchResponse>(`/api/channels/${encodeURIComponent(channelId)}`, {
+      method: "PATCH",
+      body,
+    }),
+
+  /**
+   * 会话控制（R4/R5/R2）：供应商、模型、权限模式、工作区。
+   * 只影响后续轮次与尚未裁决的调用；切 plan 时后端会把挂起写请求置 rejected。
+   */
+  patchSessionControls: (sessionId: string, body: SessionControlsInput) =>
+    request<SessionControlsResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/controls`,
+      { method: "PATCH", body },
+    ),
+
+  /** 手动压缩上下文（R7）。force 缺省 true。 */
+  compactSession: (sessionId: string, body: { force?: boolean } = {}) =>
+    request<CompactResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/compact`, {
+      method: "POST",
+      body,
+      timeoutMs: 120_000,
+    }),
 
   /**
    * 历史事件回放（P0-04「刷新后从最后一条已落库事件继续」）。
@@ -429,6 +464,10 @@ export const api = {
       repoPath?: string;
       /** 人格（≤4000 字符）；保存后下一条消息即生效（P0-03）。 */
       persona?: string;
+      /** 管理员角色（R6）：admin 多一个 create_bot 工具。 */
+      role?: "member" | "admin";
+      /** Bot 默认权限模式（新会话继承；已有会话不受影响）。 */
+      permissionMode?: PermissionMode;
       confirmRisk?: boolean;
     },
   ) => request<BotPatchResponse>(`/api/bots/${encodeURIComponent(botId)}`, { method: "PATCH", body }),
@@ -449,7 +488,18 @@ export const api = {
   memory: (botId: string, signal?: AbortSignal) =>
     request<MemoryResponse>(`/api/bots/${encodeURIComponent(botId)}/memory`, { signal }),
 
-  createMemory: (botId: string, body: { content: string; injected?: boolean; kind?: "manual" | "summary" }) =>
+  createMemory: (
+    botId: string,
+    body: {
+      content: string;
+      injected?: boolean;
+      kind?: "manual" | "summary";
+      /** 缺省 bot（全局）；channel / session 需带对应归属。 */
+      scope?: MemoryScope;
+      sourceSessionId?: string;
+      channelId?: string;
+    },
+  ) =>
     request<MemoryMutateResponse>(`/api/bots/${encodeURIComponent(botId)}/memory`, {
       method: "POST",
       body,

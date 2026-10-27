@@ -125,6 +125,18 @@ function modeText(row: UsageRowDto): string {
   return `交互 ×${row.multiplier}`;
 }
 
+/** 缓存命中率：未上报（null）显示 —，不按 0 处理。 */
+function cacheRateText(rate: number | null): string {
+  if (rate === null) return "—";
+  return `${rate.toFixed(1).replace(/\.0$/, "")}%`;
+}
+
+/** 悬停给出口径：命中 token / 输入 token。 */
+function cacheTitle(row: UsageRowDto): string {
+  if (row.cacheHitRate === null) return "该行没有缓存上报";
+  return `命中 ${num(row.cachedInputTokens)} / 输入 ${num(row.inputTokens)} token`;
+}
+
 const totals = computed(() => data.value?.totals ?? null);
 
 /** 导出 CSV：直接跳转（带 token 的 URL），由浏览器下载。 */
@@ -226,7 +238,9 @@ onMounted(async () => {
       <div class="card" style="padding: 8px">
         <div class="grid-row is-head usage-head">
           <span>Bot</span><span>运行时</span>
-          <span class="usage-nums"><span>请求数</span><span>输入 token</span><span>输出 token</span></span>
+          <span class="usage-nums">
+            <span>请求数</span><span>输入 token</span><span>输出 token</span><span>缓存命中率</span>
+          </span>
           <span>占比 / 模式</span>
         </div>
         <div
@@ -254,6 +268,12 @@ onMounted(async () => {
             <span class="cell-num" data-label="请求数">{{ row.requests }}</span>
             <span class="cell-num" data-label="输入 token">{{ num(row.inputTokens) }}</span>
             <span class="cell-num" data-label="输出 token">{{ num(row.outputTokens) }}</span>
+            <span class="cell-num" data-label="缓存命中率" :title="cacheTitle(row)">
+              {{ cacheRateText(row.cacheHitRate) }}
+              <span v-if="row.cacheHitRate !== null" class="cell-sub" style="display: block">
+                {{ num(row.cachedInputTokens) }} / {{ num(row.inputTokens) }}
+              </span>
+            </span>
           </span>
           <span class="usage-bar-cell" :style="rowStyle(row)">
             <span class="bar-track"><span class="bar-fill" :style="{ width: `${pctOf(row)}%` }" /></span>
@@ -272,6 +292,12 @@ onMounted(async () => {
             <span class="cell-num" data-label="请求数" style="font-weight: var(--weight-bold); color: var(--color-text)">{{ totals.requests }}</span>
             <span class="cell-num" data-label="输入 token" style="font-weight: var(--weight-bold); color: var(--color-text)">{{ num(totals.inputTokens) }}</span>
             <span class="cell-num" data-label="输出 token" style="font-weight: var(--weight-bold); color: var(--color-text)">{{ num(totals.outputTokens) }}</span>
+            <span class="cell-num" data-label="缓存命中率" style="font-weight: var(--weight-bold); color: var(--color-text)">
+              {{ cacheRateText(totals.cacheHitRate) }}
+              <span v-if="totals.cacheHitRate !== null" class="cell-sub" style="display: block">
+                {{ num(totals.cachedInputTokens) }} / {{ num(totals.inputTokens) }}
+              </span>
+            </span>
           </span>
           <span />
         </div>
@@ -280,6 +306,7 @@ onMounted(async () => {
       <p class="hint">
         headless 模式按运行时声明的倍率标注；未上报 token 的运行时（例如 CLI 通道）聚合时不估算，
         单列显示 —。合计行的 token 只累计已上报部分。
+        缓存命中率 = 缓存读取 token / 输入 token；供应商没有上报缓存字段时显示 —。
         <template v-if="totals && totals.unreportedRequests > 0">
           当前有 {{ totals.unreportedRequests }} 次请求未上报。
         </template>

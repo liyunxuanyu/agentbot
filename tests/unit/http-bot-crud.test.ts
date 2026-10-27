@@ -518,6 +518,97 @@ describe("HTTP · Bot 编辑人格（P0-03）", () => {
   }, 30_000);
 });
 
+describe("HTTP · Bot 默认权限模式（R5 / G2）", () => {
+  it("PATCH {permissionMode} → 落库；已有会话的档位不被改写", async () => {
+    const ctx = await boot();
+    const { sessionId } = seedBot(ctx.db, { id: "bot_pm", name: "默认档位" });
+    // 会话已经在会话内切到 auto：Bot 默认值只影响之后新建的会话
+    ctx.db.prepare("UPDATE sessions SET permission_mode = 'auto' WHERE id = ?").run(sessionId);
+
+    const res = await postJson(
+      ctx.base,
+      "/api/bots/bot_pm",
+      { permissionMode: "plan" },
+      "PATCH",
+    );
+    expect(res.status).toBe(200);
+    expect(res.body["permissionMode"]).toBe("plan");
+
+    const bot = ctx.db
+      .prepare("SELECT permission_mode FROM bots WHERE id = 'bot_pm'")
+      .get() as { permission_mode: string };
+    expect(bot.permission_mode).toBe("plan");
+
+    const session = ctx.db
+      .prepare("SELECT permission_mode FROM sessions WHERE id = ?")
+      .get(sessionId) as { permission_mode: string };
+    expect(session.permission_mode).toBe("auto");
+
+    await ctx.close();
+  }, 30_000);
+
+  it("PATCH 非法档位 → 400 invalid_boundary + field=permissionMode，不落库", async () => {
+    const ctx = await boot();
+    seedBot(ctx.db, { id: "bot_pm2", name: "非法档位" });
+
+    const res = await postJson(
+      ctx.base,
+      "/api/bots/bot_pm2",
+      { permissionMode: "yolo" },
+      "PATCH",
+    );
+    expect(res.status).toBe(400);
+    expect(res.body["error"]).toBe("invalid_boundary");
+    const fields = res.body["fields"] as { field: string; code: string }[];
+    expect(fields).toContainEqual(
+      expect.objectContaining({ field: "permissionMode", code: "invalid_value" }),
+    );
+
+    const row = ctx.db
+      .prepare("SELECT permission_mode FROM bots WHERE id = 'bot_pm2'")
+      .get() as { permission_mode: string };
+    expect(row.permission_mode).toBe("confirm");
+    await ctx.close();
+  }, 30_000);
+});
+
+describe("HTTP · 新建 Bot 不要求项目地址（R1）", () => {
+  it("内置引擎：不填 repoPath → 201，默认工作区为空、执行位置 local", async () => {
+    const ctx = await boot();
+    // 内置引擎没有权限通道，但也不需要 worktree —— 工作区下沉到会话/群聊
+    ctx.db
+      .prepare(
+        `INSERT INTO runtime_definitions
+           (id, adapter_name, display_name, source, command, protocol, capabilities,
+            event_capabilities, health_status, created_at)
+         VALUES ('rt_builtin_http', 'rt_builtin_http', '内置引擎', 'builtin', 'builtin', 'builtin',
+                 '{}', '[]', 'ready', ?)`,
+      )
+      .run(NOW);
+
+    const res = await postJson(ctx.base, "/api/bots", {
+      name: "无路径 Bot",
+      runtimeId: "rt_builtin_http",
+    });
+    expect(res.status).toBe(201);
+    const bot = res.body["bot"] as {
+      defaultWorkspace: string | null;
+      effectivePath: string | null;
+      executionLocation: string;
+      permissionMode: string;
+      role: string;
+    };
+    expect(bot.executionLocation).toBe("local");
+    expect(bot.defaultWorkspace).toBeNull();
+    expect(bot.effectivePath).toBeNull();
+    // G2：新 Bot 默认 confirm；本接口不能顺手把角色提升成管理员
+    expect(bot.permissionMode).toBe("confirm");
+    expect(bot.role).toBe("member");
+
+    await ctx.close();
+  }, 30_000);
+});
+
 describe("HTTP · 删除 Bot（P0-03）", () => {
   it("名称不符 → 400 name_mismatch，什么都不删", async () => {
     const ctx = await boot();
@@ -964,6 +1055,29 @@ describe("HTTP · 渠道游标（P0-04 群聊不跳历史）", () => {
       await fetch(`${ctx.base}/api/sessions/sess_h/events?afterSeq=0`)
     ).json()) as { events: { seq: number }[] };
     expect(replay.events).toHaveLength(2);
+
+    await ctx.close();
+  }, 30_000);
+
+  it("PATCH /api/channels/:id 写渠道工作区，并清掉该渠道的会话级覆盖（R2/G10）", async () => {
+    const ctx = await boot();
+    const { channelId, sessionId } = seedBot(ctx.db, { id: "bot_ws", name: "工作区" });
+    ctx.db.prepare("UPDATE sessions SET workspace_path = ? WHERE id = ?").run(workDir, sessionId);
+
+    const res = await fetch(`${ctx.base}/api/channels/${channelId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspacePath: workDir }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { channel: { workspacePath: string | null } };
+    expect(body.channel.workspacePath).toBe(workDir);
+
+    // 渠道显式设置后，会话覆盖不能继续压着它 —— 否则设置值与实际生效值不一致
+    const row = ctx.db
+      .prepare("SELECT workspace_path FROM sessions WHERE id = ?")
+      .get(sessionId) as { workspace_path: string | null };
+    expect(row.workspace_path).toBeNull();
 
     await ctx.close();
   }, 30_000);
