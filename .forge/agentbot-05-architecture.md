@@ -485,3 +485,41 @@ pending ──approve/deny/remember──→ decided
 **cwd 解析**：`sessions.workspace_path` → `channels.workspace_path` → `bots.repo_path` → `process.cwd()`。内置引擎不使用 worktree；CLI 路径不变。
 
 **并发**：同 Bot 会话并发仍为 1；群聊共用 cwd，写类工具按主持人串行。
+
+## 迁移 v4 与新增能力（2026-10-28）
+
+**迁移 v4**（`core/db/migrate.ts`，合并了 18 号 R8 与 19 号 N4 的新列）：
+
+- `usage_records.cache_reported INTEGER NOT NULL DEFAULT 0` —— 缓存字段是否真的上报（历史行回填 0，显示 `—`）。
+- `bots.enabled_skills TEXT` —— 启用技能的 JSON 数组；NULL = 全部启用（迁移前的老 Bot 行为不变）、`[]` = 一个都不注入。
+
+**技能（N2 / N3-1 / N4）**
+
+```
+core/agent/
+  skills.ts             扫描 + mtime 签名缓存 + 按启用列表过滤 + 索引生成
+  skills/install.ts     内置技能包安装（幂等、不覆盖用户改动、删了会补装）
+  skills/builtin/*/SKILL.md   4 份随代码分发的基础技能
+  tools/builtin/list_skills.ts  长尾技能发现（只读，不进系统提示）
+```
+
+- 安装：`main.ts` 启动时把内置包写进 `~/.agentbot/skills/`；`POST /api/skills/rescan` 也补装。目录里写 `.agentbot-builtin` 标记，技能页显示「内置」。
+- 索引：系统提示只放启用的技能（≤800 字符、≤12 条）；超限或未启用时提示模型用 `list_skills` 发现、`read_skill` 读全文。
+- 热插拔：扫描结果按「目录 + 各 SKILL.md 的 mtime/size」签名缓存，文件一变即失效 —— 下一轮对话生效，不需要重启。
+- API：`GET /api/skills` 返回 `builtin` 标记；`POST /api/skills/rescan` 额外返回 `installed[]`；`PATCH /api/bots/:id` 接受 `enabledSkills`。
+
+**MCP 热插拔（N3-2）**
+
+`McpManager` 增加运行期 `add / replace / remove`，路由的 POST/PATCH/DELETE 只动受影响的那一个连接（不再全量 reload），其它 server 的工具在切换期间保持可用。`mcp.json` 的 server 支持 `permission: read|write|exec|network`（缺省 exec）；驱动在 plan 模式下按它裁剪 `mcp__*`（R5-c）。
+
+**初始化引导（N1）**
+
+`GET /api/setup/state` 返回 5 步完成度：运行时 / 供应商 / 管理员（必需）与工作区 / 技能（可选）。`needsSetup` 只看必需项；前端挂载后据此跳 `/setup`，每步可跳过，侧栏保留「初始化待完成 N」提示，设置页有常驻入口（可重入）。`POST /api/bots` 支持 `role`，引导可一键建管理员。
+
+**群聊记忆（R3 方案 A）**
+
+`scope='channel'` 的记忆只按 `channel_id` 过滤、不限 `bot_id`：同一群聊里 Bot A 写的群聊记忆，Bot B 也能注入；记忆页用 `sourceBotId/sourceBotName` 标明来源 Bot，同群 Bot 可停用/删除。
+
+**群聊写锁（G7）**
+
+`core/group/write-lock.ts` 按 `channelId` 串行化写类工具（write/exec/network/admin）；读类不排队。锁是进程级单例，通过 `SpawnContext.channelId` 传给内置引擎驱动。单渠道无竞争时只有一次 Map 查找，没有额外延迟。

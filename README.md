@@ -14,22 +14,22 @@ npm install
 npm run build && npm run start:local     # 控制台会打印带 token 的访问 URL
 ```
 
-**当前有两批待办**：
+**两批待办已于 2026-10-28 全部完成**（分支 `continue-dev`）：
 
-- [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— **7 条待修缺口**（审计发现，含开工前要拍板的两件事）。
-- [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— **4 条新需求**：初始化引导、基础技能包、热插拔、技能按需加载。
+- [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— 7 条待修缺口：R8 缓存未上报 / R3 群聊记忆共享 / G7 群聊写锁 / R5 auto 越界口径 / R5-c MCP 计划模式裁剪 / G3 切 plan 系统块落库 / R7 压缩条数进流。
+- [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— N1 初始化引导 / N2 基础技能包 / N3-1 技能热插拔 / N3-2 MCP 热插拔 / N4 技能按需加载。
 
-两批文件基本不重叠，唯一交集是 `migrate.ts` 的 v4 迁移，建议合并成一次做。
+两批唯一的文件交集 `migrate.ts` 的 v4 合并成一次：`usage_records.cache_reported` + `bots.enabled_skills`。
 
-首次在新机器上要做的两件事：
+首次在新机器上要做的两件事（现在有引导页，打开就会带你走）：
 
 1. **确认运行时**：`npm run start:local` 会自动把本机 ZCode 的路径填进 `AGENTBOT_BIN_ZCODE`（见 `scripts/start-local.mjs`，路径写死为 Windows 默认安装位置，换系统或换安装位置要改这个文件）。其它运行时（Codex / Claude Code / Gemini / DSH）靠 PATH 探测。
-2. **配模型供应商**：内置引擎需要至少一个 provider（OpenAI chat-completions 或 Anthropic messages）。在设置页「模型供应商」里加，或手写 `~/.agentbot/providers.json`。
+2. **配模型供应商**：内置引擎需要至少一个 provider（OpenAI chat-completions 或 Anthropic messages）。首次打开会自动进 `/setup` 五步引导；之后从设置页页头的「初始化引导」可随时回去。
 
 **先读这几处再动代码**：
 
-- [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— **待修**：7 条缺口，改哪个文件、怎么验收、哪两条要先拍板。依据是 [`.forge/agentbot-17-requirements-audit.md`](.forge/agentbot-17-requirements-audit.md)。
-- [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— **新需求**：N1 初始化引导 / N2 基础技能 / N3 热插拔 / N4 技能按需加载。
+- [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— 7 条缺口（已修完，留作验收口径）。依据是 [`.forge/agentbot-17-requirements-audit.md`](.forge/agentbot-17-requirements-audit.md)。
+- [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— N1 初始化引导 / N2 基础技能 / N3 热插拔 / N4 技能按需加载（已实现）。
 - [`.forge/agentbot-14-handoff.md`](.forge/agentbot-14-handoff.md) —— 上一轮的交接记录：迁移 v3 SQL、模块文件归属、验收门槛（已完成，留作参考）。口径源头是 [`.forge/agentbot-11-requirements-align.md`](.forge/agentbot-11-requirements-align.md)。
 - [`docs/memory/agentbot-project-state.md`](docs/memory/agentbot-project-state.md) —— 项目全貌 + 7 处真机踩过的坑（虚拟列表 transform 毁 sticky、CLI 人格注入、exit 0 误判 crashed、messages 同毫秒排序、pending Turn、最新轮不自动折叠…）。重复踩一遍要几个小时。
 - [`.forge/`](.forge/) —— 产品文档全在这里：`agentbot-00-brief` / `01-prd` / `02-ux` / `03-ui` / `tokens.css` / `05-architecture` / `06-builtin-engine`（内置引擎设计）/ `07-review`（验收报告），以及 `agentbot-prototype-v2/index.html`（视觉权威原型）。
@@ -179,7 +179,7 @@ src/web/
 | `token` | 本地访问 token，权限收紧为仅当前用户 |
 | `providers.json` | 内置引擎的模型供应商（含 apiKey，权限 0600；接口只回掩码） |
 | `mcp.json` | MCP stdio server 配置（命令、参数、env、enabled） |
-| `skills/` | 技能目录：`<name>/SKILL.md`，索引进系统提示、全文由 `read_skill` 按需读取 |
+| `skills/` | 技能目录：`<name>/SKILL.md`，索引进系统提示、全文由 `read_skill` 按需读取。首次启动自动装 4 个内置技能（`file/shell/search/web-basics`），带 `.agentbot-builtin` 标记 |
 | `secrets.json` | 自定义运行时 env（尚未落地） |
 | `wt/` | git worktree 根目录（`executionLocation=worktree` 的 Bot 在这里各有一个目录） |
 
@@ -471,7 +471,8 @@ src/server/
 | `POST /api/providers/:id/test` | 发一次最小请求，返回 `{ok,latencyMs,model,error?}` |
 | `POST /api/providers/:id/default` | 设为默认供应商 |
 | `GET/POST /api/mcp` · `PATCH/DELETE /api/mcp/:id` · `POST /api/mcp/:id/reconnect` | MCP 配置与连接状态 |
-| `GET /api/skills` · `POST /api/skills/rescan` | 技能索引与重扫 |
+| `GET /api/skills` · `POST /api/skills/rescan` | 技能索引（带 `builtin` 标记）与重扫（顺带补装被删的内置技能） |
+| `GET /api/setup/state` | 初始化引导 5 步完成度与 `needsSetup`（N1） |
 
 **Bot 绑定**：`POST/PATCH /api/bots` 接受 `providerId`（可空，空则用默认供应商）；`GET /api/bots` 的 DTO 带 `providerId`。设置页「模型供应商 / MCP / 技能」三个分区负责配置。
 

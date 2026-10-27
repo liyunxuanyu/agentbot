@@ -89,3 +89,31 @@ R1–R8 已实现并验收：迁移 v3、会话/渠道工作区、记忆作用�
 门禁：tsc / vue-tsc / boundaries 全绿，vitest 409 passed，`smoke-builtin.mjs` 全链路通过。
 
 本轮修掉两处 Windows 环境假失败：`%TEMP%` 落在祖先 git 仓库导致「无法统计」用例走错分支；8.3 短名（`LIYUNX~1`）与反斜杠导致路径比较不等（统一 `realpathSync.native` + `/` + 小写）。
+
+## 2026-10-28：18 号 7 条缺口 + 19 号四条需求全部落地
+
+**分支**：`continue-dev`（未合并 main）。迁移 v4（`usage_records.cache_reported` + `bots.enabled_skills`）。
+
+**18 号（7 条）**
+- R8：两协议缓存字段缺失留 undefined；`cache_reported` 落库；聚合命中率分母只算缓存已上报的请求
+- R3 方案 A：`scope='channel'` 只按 channel_id 过滤（跨 Bot 共享）；`listByBot` 用 `json_each` 带上本 Bot 参与的群聊；DTO 带 `sourceBotId/sourceBotName`，同群 Bot 可停用/删除
+- G7：`core/group/write-lock.ts` 按 channelId 串行化写类工具（进程级单例，经 `SpawnContext.channelId` 下发）；读不排队
+- R5 方案 B：auto 越界直接拒绝（代码本就如此，改需求与 UX 文案）
+- R5-c：`mcp.json` 支持 `permission`（缺省 exec）；驱动合并内置 + MCP 后统一按 plan 裁剪
+- G3：切 plan 时审计 meta 带 `rejectedPending + modeSwitchedTo`；前端不再本地插块
+- R7：`dividerText(kind, data)` 输出「已压缩 N 条 → 摘要 M 字」；`pushMeta` 传 `payload.data`
+
+**19 号（4 条）**
+- N1：`GET /api/setup/state`（5 步，必需项决定 needsSetup）；`/setup` 五步 + 第六步演练；App.vue 挂载后跳转一次；侧栏「初始化待完成 N」；设置页常驻入口；`POST /api/bots` 支持 role
+- N2：`core/agent/skills/builtin/*/SKILL.md` 4 份；`skills/install.ts` 启动安装（幂等、不覆盖、删了补装、`.agentbot-builtin` 标记）；tsup 复制到 `dist/skills/builtin`
+- N3-1：`scanSkills` 按 mtime/size 签名缓存；Bot 级 `enabled_skills` 过滤索引
+- N3-2：McpManager `add/replace/remove`；路由只动受影响的那一个连接
+- N4：新建 Bot 默认 4 个基础技能；`list_skills` 工具；索引 ≤800 字符 / ≤12 条并提示剩余
+
+**新增的坑**
+- `better-sqlite3` 里判断「JSON 数组包含某值」不要用 `LIKE '%id%'`（`bot_a` 会误中 `botX_a`），用 `json_each`
+- 权限测试造 pending 需要同时满足：`allow_dirs` 覆盖目标 + `isSessionAlive: true`，否则落 `denied_boundary` / `invalidated`
+- `buildSkillsIndex` 的「另有 M 个」提示行要预留预算，否则字符上限会超
+- 内置技能包是运行时资源，`tsup.config.ts` 的 `onSuccess` 必须复制，否则打包后找不到源目录
+
+**门禁**：tsc / vue-tsc / boundaries 全绿；vitest 484 passed / 1 skipped；`smoke:builtin` 全链路通过。
