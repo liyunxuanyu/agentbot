@@ -603,6 +603,12 @@ export interface MemoryEntryDto {
   /** 作用域：bot = 该 Bot 全局；session = 仅来源会话；channel = 群聊内共享。 */
   scope: "bot" | "channel" | "session";
   channelId: string | null;
+  /**
+   * 跨 Bot 可见的群聊记忆（R3）：这条不是本 Bot 写的时，标明来源 Bot。
+   * 本 Bot 自己的条目不带这两个字段。
+   */
+  sourceBotId?: string;
+  sourceBotName?: string | null;
   source: "manual" | "auto";
   kind: "manual" | "summary";
   /** 是否参与下一轮注入。 */

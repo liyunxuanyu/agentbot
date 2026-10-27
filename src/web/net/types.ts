@@ -582,6 +582,9 @@ export interface MemoryEntryDto {
   sourceSessionId: string | null;
   scope: MemoryScope;
   channelId: string | null;
+  /** 群聊记忆由别的 Bot 写入时标明来源（R3）；本 Bot 自己的条目没有。 */
+  sourceBotId?: string;
+  sourceBotName?: string | null;
   /** summary → 'auto'（UI 标「自动摘要」）。 */
   source: "manual" | "auto";
   kind: "manual" | "summary";

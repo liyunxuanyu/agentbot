@@ -36,6 +36,51 @@ function botExists(ctx: ServerContext, botId: string): boolean {
   return ctx.db.prepare("SELECT 1 AS ok FROM bots WHERE id = ?").get(botId) !== undefined;
 }
 
+/** 渠道参与者（`participant_bot_ids` 是 JSON 字符串数组）。 */
+function botInChannel(ctx: ServerContext, botId: string, channelId: string): boolean {
+  const row = ctx.db
+    .prepare("SELECT participant_bot_ids AS ids FROM channels WHERE id = ?")
+    .get(channelId) as { ids: string } | undefined;
+  if (!row) return false;
+  try {
+    const ids: unknown = JSON.parse(row.ids);
+    return Array.isArray(ids) && ids.includes(botId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 能否管理这条记忆（R3）。
+ *
+ * 自己的记忆当然能管；**同群聊里别的 Bot 写的 channel 记忆也能管** ——
+ * 它对本 Bot 同样生效（注入进本 Bot 的上下文），只读不可管会让用户
+ * 看到一条无法关闭的记忆。其它群聊的 channel 记忆仍然无权。
+ */
+function canManageEntry(
+  ctx: ServerContext,
+  botId: string,
+  entry: memoryRepo.MemoryEntryRow,
+): boolean {
+  if (entry.botId === botId) return true;
+  return (
+    entry.scope === "channel" &&
+    entry.channelId !== null &&
+    botInChannel(ctx, botId, entry.channelId)
+  );
+}
+
+/** 来源 Bot 名字（跨 Bot 的群聊记忆要标明是谁写的）。 */
+function botNames(ctx: ServerContext, ids: readonly string[]): Map<string, string> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return new Map();
+  const placeholders = unique.map(() => "?").join(",");
+  const rows = ctx.db
+    .prepare(`SELECT id, name FROM bots WHERE id IN (${placeholders})`)
+    .all(...unique) as { id: string; name: string }[];
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
 /**
  * 注入估算。
  *
@@ -94,10 +139,15 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
       if (!botExists(ctx, botId)) return json(reply, 404, { error: "bot_not_found" });
 
       // 待摘要标记是内部状态，不暴露（见文件头说明）
-      const entries = memoryRepo
-        .listByBot(ctx.db, botId)
-        .filter((e) => !memoryRepo.isPendingId(e.id))
-        .map(toMemoryDto);
+      const rows = memoryRepo.listByBot(ctx.db, botId).filter((e) => !memoryRepo.isPendingId(e.id));
+      // 群聊记忆跨 Bot 共享（R3）：别人写的条目要在页面上标明来源 Bot
+      const names = botNames(ctx, rows.map((r) => r.botId));
+      const entries = rows.map((row) => ({
+        ...toMemoryDto(row),
+        ...(row.botId === botId
+          ? {}
+          : { sourceBotId: row.botId, sourceBotName: names.get(row.botId) ?? null }),
+      }));
 
       // 注入估算按当前会话的作用域算；不传 sessionId 就只算 bot 全局记忆
       return {
@@ -187,7 +237,7 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
       if (memoryRepo.isPendingId(memId)) return json(reply, 404, { error: "memory_not_found" });
 
       const existing = memoryRepo.getById(ctx.db, memId);
-      if (!existing || existing.botId !== botId) {
+      if (!existing || !canManageEntry(ctx, botId, existing)) {
         return json(reply, 404, { error: "memory_not_found" });
       }
 
@@ -225,7 +275,7 @@ export function registerMemoryRoutes(app: FastifyInstance, ctx: ServerContext): 
       if (memoryRepo.isPendingId(memId)) return json(reply, 404, { error: "memory_not_found" });
 
       const existing = memoryRepo.getById(ctx.db, memId);
-      if (!existing || existing.botId !== botId) {
+      if (!existing || !canManageEntry(ctx, botId, existing)) {
         return json(reply, 404, { error: "memory_not_found" });
       }
 

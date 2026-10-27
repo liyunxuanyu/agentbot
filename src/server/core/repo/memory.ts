@@ -86,15 +86,31 @@ function toRow(raw: RawRow): MemoryEntryRow {
   };
 }
 
-/** 列表：注入开关状态无关，按更新时间倒序（与注入优先级一致）。 */
+/**
+ * 列表：注入开关状态无关，按更新时间倒序（与注入优先级一致）。
+ *
+ * 除本 Bot 自己的全部记忆外，**还要带上它所在群聊的 channel 记忆**（R3 方案 A）：
+ * 这类条目可能由别的 Bot 写入（`bot_id` 是别人），但本 Bot 会注入、也应该能在
+ * 记忆页看到并管理。不带上就会出现「注入里有、页面里没有」的鬼影。
+ *
+ * 只算本 Bot 实际参与的渠道（`participant_bot_ids` 含它），不是全库所有 channel 记忆。
+ */
 export function listByBot(db: DB, botId: string): MemoryEntryRow[] {
   const rows = db
     .prepare(
       `SELECT * FROM memory_entries
         WHERE bot_id = ?
+           OR (
+             scope = 'channel'
+             AND channel_id IS NOT NULL
+             AND channel_id IN (
+               SELECT c.id FROM channels c, json_each(c.participant_bot_ids) p
+                WHERE p.value = ?
+             )
+           )
         ORDER BY updated_at DESC, created_at DESC`,
     )
-    .all(botId) as RawRow[];
+    .all(botId, botId) as RawRow[];
   return rows.map(toRow);
 }
 
@@ -109,13 +125,18 @@ export interface InjectionScope {
 /**
  * 注入候选：`injected=1` 且不是待摘要标记，按 updated_at 倒序。
  *
- * 作用域规则（G1）：
- *   - `bot`     → 永远注入；
- *   - `channel` → 仅当 `channel_id` 与当前渠道相同；
- *   - `session` → 仅当 `source_session_id` 与当前会话相同。
+ * 作用域规则（R3 方案 A —— 群聊记忆真共享）：
+ *   - `bot`     → 永远注入（限本 Bot：记忆属于 Bot）；
+ *   - `channel` → **只按 channel_id 过滤，不限 bot_id**：同一群聊里 Bot A 写的
+ *                 群聊记忆，Bot B 下一轮也能读到（「一个群一个上下文」）；
+ *                 别的群聊的 channel 记忆读不到（channel_id 不同）；
+ *   - `session` → 仅当 `source_session_id` 与当前会话相同（仍限本 Bot）。
  *
  * 不传 `scope` 时只注入 `bot` 全局记忆 —— 这是历史行为（迁移后老数据全是 bot），
  * 也保证「拿不到会话上下文时宁少注入、不串记忆」。
+ *
+ * 实现上拆成两段 SQL 再合并：`OR` 在一个 WHERE 里会让 channel 分支的
+ * 「不限 bot_id」把 bot/session 分支也放开，写成同一个条件很容易漏掉限定。
  */
 export function listInjected(
   db: DB,
@@ -124,19 +145,35 @@ export function listInjected(
 ): MemoryEntryRow[] {
   const sessionId = scope.sessionId ?? null;
   const channelId = scope.channelId ?? null;
-  const rows = db
+
+  // ① 本 Bot 的 bot 全局记忆与（属于它的）session 记忆
+  const ownRows = db
     .prepare(
       `SELECT * FROM memory_entries
         WHERE bot_id = ? AND injected = 1 AND id NOT LIKE ?
           AND (
             scope = 'bot'
-            OR (scope = 'channel' AND channel_id IS NOT NULL AND channel_id = ?)
             OR (scope = 'session' AND source_session_id IS NOT NULL AND source_session_id = ?)
           )
         ORDER BY updated_at DESC, created_at DESC`,
     )
-    .all(botId, `${PENDING_PREFIX}%`, channelId, sessionId) as RawRow[];
-  return rows.map(toRow);
+    .all(botId, `${PENDING_PREFIX}%`, sessionId) as RawRow[];
+
+  // ② 当前渠道的群聊记忆：不限 bot_id（跨 Bot 共享），但必须属于同一 channel
+  const channelRows =
+    channelId === null
+      ? []
+      : (db
+          .prepare(
+            `SELECT * FROM memory_entries
+              WHERE scope = 'channel' AND channel_id = ? AND injected = 1 AND id NOT LIKE ?
+              ORDER BY updated_at DESC, created_at DESC`,
+          )
+          .all(channelId, `${PENDING_PREFIX}%`) as RawRow[]);
+
+  return [...ownRows, ...channelRows]
+    .map(toRow)
+    .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt);
 }
 
 export function getById(db: DB, id: string): MemoryEntryRow | null {

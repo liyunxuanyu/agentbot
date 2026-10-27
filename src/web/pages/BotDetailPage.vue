@@ -201,7 +201,12 @@ function memoryScopeTitle(entry: MemoryEntryDto): string {
   if (entry.scope === "session") {
     return `只注入来源会话${entry.sourceSessionId ? `（${shortSessionId(entry.sourceSessionId)}）` : ""}`;
   }
-  if (entry.scope === "channel") return "本群聊里所有 Bot 共享，不进入其它会话";
+  if (entry.scope === "channel") {
+    // R3 方案 A：群聊记忆真共享 —— 同群所有 Bot 都能读到，与写入者无关
+    return entry.sourceBotId
+      ? `由「${entry.sourceBotName ?? entry.sourceBotId}」写入；本群聊里所有 Bot 共享，不进入其它群聊`
+      : "本群聊里所有 Bot 共享，不进入其它群聊";
+  }
   return "该 Bot 的所有会话都会注入";
 }
 
@@ -1111,6 +1116,9 @@ void grants;
                     :class="m.scope === 'bot' ? 'cap--no' : 'cap--scope'"
                     :title="memoryScopeTitle(m)"
                   >{{ memoryScopeText(m) }}</span>
+                  <span v-if="m.sourceBotId" class="cap cap--scope" title="这条群聊记忆由同群的另一个 Bot 写入，本 Bot 同样会注入">
+                    来自 {{ m.sourceBotName ?? "同群 Bot" }}
+                  </span>
                   <span>来源 {{ m.source === "auto" ? "自动摘要" : "手写" }}</span>
                   <span>
                     来源会话

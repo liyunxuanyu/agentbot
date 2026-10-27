@@ -465,3 +465,232 @@ describe("会话列表过滤已归档 Bot（R1 附带）", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 群聊记忆跨 Bot 共享（R3 方案 A）
+// ---------------------------------------------------------------------------
+
+describe("群聊记忆跨 Bot 共享（R3）", () => {
+  let db: DB;
+
+  beforeEach(() => {
+    db = openDb(":memory:");
+    for (const id of ["b1", "b2", "b3"]) {
+      db.prepare(
+        `INSERT INTO bots (id, name, persona, created_at, updated_at)
+         VALUES (?, ?, '', ?, ?)`,
+      ).run(id, `Bot ${id}`, NOW, NOW);
+    }
+    // ch1：b1 + b2 都在；ch2：只有 b2 和 b3（b1 不在）
+    db.prepare(
+      `INSERT INTO channels (id, type, name, participant_bot_ids, created_at)
+       VALUES ('ch1', 'group', '群聊 A', '["b1","b2"]', ?)`,
+    ).run(NOW);
+    db.prepare(
+      `INSERT INTO channels (id, type, name, participant_bot_ids, created_at)
+       VALUES ('ch2', 'group', '群聊 B', '["b2","b3"]', ?)`,
+    ).run(NOW);
+    for (const [sid, bot, ch] of [
+      ["s1", "b1", "ch1"],
+      ["s2", "b2", "ch1"],
+      ["s3", "b2", "ch2"],
+    ] as const) {
+      db.prepare(
+        `INSERT INTO sessions (id, bot_id, channel_id, status, started_at)
+         VALUES (?, ?, ?, 'ready', ?)`,
+      ).run(sid, bot, ch, NOW);
+    }
+
+    // Bot A 在群聊 A 写一条 channel 记忆
+    memoryRepo.create(db, {
+      id: "m_a_ch1",
+      botId: "b1",
+      content: "群聊 A 的约定：先给结论",
+      scope: "channel",
+      channelId: "ch1",
+    });
+    // Bot B 在群聊 B 写一条 channel 记忆
+    memoryRepo.create(db, {
+      id: "m_b_ch2",
+      botId: "b2",
+      content: "群聊 B 的约定：用表格",
+      scope: "channel",
+      channelId: "ch2",
+    });
+    // Bot A 的私有记忆
+    memoryRepo.create(db, { id: "m_a_bot", botId: "b1", content: "Bot A 的全局记忆" });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("Bot A 在群聊 A 写的 channel 记忆，Bot B 的下一轮注入里出现", () => {
+    const b2Rows = memoryRepo.listInjected(db, "b2", { sessionId: "s2", channelId: "ch1" });
+    expect(b2Rows.map((m) => m.id)).toContain("m_a_ch1");
+    // 装配器走同一条 SQL：提示里真的能看到原文
+    const text = assemble(db, "b2", { sessionId: "s2", channelId: "ch1" }).text;
+    expect(text).toContain("群聊 A 的约定：先给结论");
+  });
+
+  it("Bot A 在别的群聊（B）写的 channel 记忆，Bot B 在群聊 A 读不到", () => {
+    const b2InCh1 = memoryRepo.listInjected(db, "b2", { sessionId: "s2", channelId: "ch1" });
+    expect(b2InCh1.map((m) => m.id)).not.toContain("m_b_ch2");
+
+    // 反过来：B 在群聊 B 能看到自己的，A 不在群聊 B → 不注入
+    const b2InCh2 = memoryRepo.listInjected(db, "b2", { sessionId: "s3", channelId: "ch2" });
+    expect(b2InCh2.map((m) => m.id)).toContain("m_b_ch2");
+  });
+
+  it("bot 全局记忆仍然只属于自己（共享只放开 channel）", () => {
+    const b2Rows = memoryRepo.listInjected(db, "b2", { sessionId: "s2", channelId: "ch1" });
+    expect(b2Rows.map((m) => m.id)).not.toContain("m_a_bot");
+  });
+
+  it("Bot B 的记忆页能看到群聊记忆，并标明来源 Bot", () => {
+    const rows = memoryRepo.listByBot(db, "b2");
+    expect(rows.map((m) => m.id)).toContain("m_a_ch1");
+    // 别的群聊的 channel 记忆不出现（b2 不在群聊 A 之外的 ch2 里？b2 在 ch2 里，
+    // 所以 ch2 的 m_b_ch2 也应该出现 —— 它本来就连在 b2 名下）
+    expect(rows.map((m) => m.id)).toContain("m_b_ch2");
+
+    // Bot A 的页面看不到群聊 B 的记忆（A 不在群聊 B）
+    const aRows = memoryRepo.listByBot(db, "b1");
+    expect(aRows.map((m) => m.id)).toContain("m_a_ch1");
+    expect(aRows.map((m) => m.id)).not.toContain("m_b_ch2");
+  });
+
+  it("同群 Bot 的 channel 记忆可被本 Bot 停用（注入开关生效）", () => {
+    // 场景：A 写了群聊记忆，B 觉得不合适 → 在 B 的记忆页关掉它
+    memoryRepo.update(db, "m_a_ch1", { injected: false });
+    const b2Rows = memoryRepo.listInjected(db, "b2", { sessionId: "s2", channelId: "ch1" });
+    expect(b2Rows.map((m) => m.id)).not.toContain("m_a_ch1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 群聊记忆的 HTTP 层（R3）：记忆页可见 + 来源 Bot 标注 + 同群可管理
+// ---------------------------------------------------------------------------
+
+describe("群聊记忆 HTTP 层（R3）", () => {
+  it("Bot B 的记忆页能看到同群 Bot A 写的条目，带 sourceBotName；别的群看不到", async () => {
+    const { buildServer } = await import("../../src/server/http/server.js");
+    const { createEventBus } = await import("../../src/server/core/events/bus.js");
+    const { createSessionLock } = await import("../../src/server/core/orchestrator/session-lock.js");
+    const { createTurnOrchestrator } = await import("../../src/server/core/orchestrator/turn.js");
+    const { createSupervisor } = await import("../../src/server/core/process/supervisor.js");
+    const { createPermissionResolver } = await import(
+      "../../src/server/core/permissions/resolver.js"
+    );
+    const { listenEphemeral } = await import("./http-listen.js");
+
+    const db = openDb(":memory:");
+    const now = Date.now();
+    for (const [id, name] of [
+      ["b1", "小助"],
+      ["b2", "小研"],
+      ["b3", "外人"],
+    ] as const) {
+      db.prepare(
+        `INSERT INTO bots (id, name, persona, created_at, updated_at) VALUES (?, ?, '', ?, ?)`,
+      ).run(id, name, now, now);
+    }
+    db.prepare(
+      `INSERT INTO channels (id, type, name, participant_bot_ids, created_at)
+       VALUES ('ch1', 'group', '群聊 A', '["b1","b2"]', ?)`,
+    ).run(now);
+    db.prepare(
+      `INSERT INTO channels (id, type, name, participant_bot_ids, created_at)
+       VALUES ('ch2', 'group', '群聊 B', '["b3"]', ?)`,
+    ).run(now);
+    memoryRepo.create(db, {
+      id: "m_shared",
+      botId: "b1",
+      content: "群聊 A 的共享记忆",
+      scope: "channel",
+      channelId: "ch1",
+    });
+    memoryRepo.create(db, {
+      id: "m_other",
+      botId: "b3",
+      content: "群聊 B 的记忆",
+      scope: "channel",
+      channelId: "ch2",
+    });
+
+    const bus = createEventBus();
+    const resolveRuntime = () => null;
+    const supervisor = createSupervisor({ db, bus, resolveRuntime });
+    const permissions = createPermissionResolver({
+      db,
+      bus,
+      isSessionAlive: () => false,
+      sessionCwdOf: () => process.cwd(),
+      respond: async () => true,
+      setHeld: () => undefined,
+      setSessionStatus: () => undefined,
+      log: () => undefined,
+    });
+    const orchestrator = createTurnOrchestrator({
+      db,
+      bus,
+      lock: createSessionLock(),
+      resolveRuntime,
+      supervisor,
+    });
+    const app = buildServer(
+      {
+        db,
+        runtimes: [],
+        schemaVersion: 4,
+        startedAt: now,
+        resolveRuntime: () => null,
+        orchestrator,
+        permissions,
+        assignments: { stop: () => undefined } as never,
+      },
+      { authEnabled: false, webRoot: join(root, "no-web") },
+    );
+    const base = await listenEphemeral(app);
+    try {
+      const res = await fetch(`${base}/api/bots/b2/memory`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        entries: { id: string; sourceBotId?: string; sourceBotName?: string | null }[];
+      };
+      const shared = body.entries.find((e) => e.id === "m_shared");
+      expect(shared).toBeDefined();
+      expect(shared?.sourceBotId).toBe("b1");
+      expect(shared?.sourceBotName).toBe("小助");
+      // 别的群聊的 channel 记忆不出现
+      expect(body.entries.find((e) => e.id === "m_other")).toBeUndefined();
+
+      // 同群 Bot 可以停用这条共享记忆（注入开关）
+      const patch = await fetch(`${base}/api/bots/b2/memory/m_shared`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ injected: false }),
+      });
+      expect(patch.status).toBe(200);
+      const after = (await patch.json()) as { entry?: { injected: boolean } | null };
+      expect(after.entry?.injected).toBe(false);
+
+      // 别的群聊的条目仍然不可管理
+      const denied = await fetch(`${base}/api/bots/b2/memory/m_other`, {
+        method: "DELETE",
+      });
+      expect(denied.status).toBe(404);
+
+      // b3 不在群聊 A → 看不到 m_shared
+      const res3 = await fetch(`${base}/api/bots/b3/memory`);
+      const body3 = (await res3.json()) as { entries: { id: string }[] };
+      expect(body3.entries.find((e) => e.id === "m_shared")).toBeUndefined();
+    } finally {
+      await app.close();
+      permissions.dispose();
+      await orchestrator.dispose();
+      await supervisor.dispose();
+      db.close();
+    }
+  });
+});
