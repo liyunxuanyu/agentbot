@@ -133,7 +133,7 @@ function modeNote(mode: PermissionMode): string {
     case "plan":
       return "## 当前权限模式：计划模式（只读）\n你只能读取和分析，不能写文件、执行命令或访问网络。先给出方案，等用户切换模式后再动手。";
     case "auto":
-      return "## 当前权限模式：自动模式\n边界内的写操作会自动批准；执行命令与访问网络仍需用户确认。";
+      return "## 当前权限模式：自动模式\n边界内的写操作会自动批准；超出 Bot 边界的写操作会被直接拒绝（不会弹卡），需要时请说明缺少哪个目录的权限。执行命令与访问网络仍需用户确认。";
     case "full":
       return "## 当前权限模式：完全访问\n所有动作直接执行并记审计；仍需遵守工作目录约束之外的常识性安全。";
     default:
@@ -245,10 +245,15 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
   /**
    * 本轮暴露给模型的工具：
    *   - 普通 Bot 看不到 `create_bot`（管理员专属，M3）；
-   *   - 计划模式下写类工具直接从列表裁掉（不是调用时才拒，R5/G3）。
+   *   - 计划模式下写类工具直接从列表裁掉（不是调用时才拒，R5/G3）；
+   *     MCP 工具同一规则（R5-c）—— 它的权限由 server 声明决定，缺省 exec。
+   *
+   * 过滤放在驱动侧而不是 `McpManager.tools()`：manager 只负责连接与工具发现，
+   * 不该知道「当前会话是什么权限模式」。
    */
   function toolsFor(state: SessionState): ToolDefinition[] {
-    return baseTools.filter((tool) => {
+    const mcpTools = opts.mcp ? opts.mcp.tools() : [];
+    return [...baseTools, ...mcpTools].filter((tool) => {
       if (tool.name === "create_bot" && state.botRole !== "admin") return false;
       if (state.permissionMode === "plan" && isWriteLike(tool.permission)) return false;
       return true;
@@ -497,10 +502,8 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
       return;
     }
 
-    const registry = createToolRegistry([
-      ...toolsFor(state),
-      ...(opts.mcp ? opts.mcp.tools() : []),
-    ]);
+    // 工具表每轮重建：MCP 工具与内置工具走同一套裁剪（R5-c）
+    const registry = createToolRegistry(toolsFor(state));
 
     state.history.push({ role: "user", content: text });
     emitDelta(state, turnId, "start", "", messageId);

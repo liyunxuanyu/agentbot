@@ -5,6 +5,7 @@ import { ApiError, api, isMissingEndpoint } from "../net/client";
 import type {
   CatalogEntry,
   McpServerDto,
+  McpServerPermission,
   ModelCatalogResponse,
   ModelMeta,
   PermissionDto,
@@ -891,7 +892,14 @@ const mcpOpen = ref(false);
 const editingMcpId = ref<string | null>(null);
 const mcpErr = ref("");
 const mcpSaving = ref(false);
-const mcpForm = reactive({ id: "", command: "", argsText: "", enabled: true });
+const mcpForm = reactive({
+  id: "",
+  command: "",
+  argsText: "",
+  enabled: true,
+  // R5-c：read 的 server 在计划模式下仍然可用；其它在计划模式下被裁掉
+  permission: "exec" as McpServerPermission,
+});
 
 function openAddMcp(): void {
   editingMcpId.value = null;
@@ -900,6 +908,7 @@ function openAddMcp(): void {
   mcpForm.command = "";
   mcpForm.argsText = "";
   mcpForm.enabled = true;
+  mcpForm.permission = "exec";
   mcpOpen.value = true;
 }
 
@@ -910,6 +919,7 @@ function openEditMcp(s: McpServerDto): void {
   mcpForm.command = s.command;
   mcpForm.argsText = s.args.join("\n");
   mcpForm.enabled = s.enabled;
+  mcpForm.permission = s.permission ?? "exec";
   mcpOpen.value = true;
 }
 
@@ -938,6 +948,7 @@ async function saveMcp(): Promise<void> {
         command: mcpForm.command.trim(),
         args: mcpArgs(),
         enabled: mcpForm.enabled,
+        permission: mcpForm.permission,
       });
       ui.toast("MCP server 已更新");
     } else {
@@ -946,6 +957,7 @@ async function saveMcp(): Promise<void> {
         command: mcpForm.command.trim(),
         args: mcpArgs(),
         enabled: mcpForm.enabled,
+        permission: mcpForm.permission,
       });
       ui.toast(
         created?.status === "connected"
@@ -993,6 +1005,20 @@ async function removeMcp(s: McpServerDto): Promise<void> {
     ui.toast(`已删除 ${s.id}`);
   } catch (err) {
     ui.toast(err instanceof Error ? err.message : "删除失败");
+  }
+}
+
+/** MCP 权限性质（R5-c）：未声明等价 exec。 */
+function mcpPermissionWord(p: McpServerDto["permission"]): string {
+  switch (p) {
+    case "read":
+      return "只读";
+    case "write":
+      return "写文件";
+    case "network":
+      return "联网";
+    default:
+      return "执行";
   }
 }
 
@@ -1414,6 +1440,9 @@ onBeforeUnmount(() => {
                     <span style="font-weight: var(--weight-semibold)">{{ s.id }}</span>
                     <BotStateChip :state="mcpState(s)" :label="mcpStatusWord(s)" />
                     <span class="chip" style="cursor: default">{{ s.toolCount }} 个工具</span>
+                    <span class="chip" style="cursor: default" :title="s.permission === 'read' ? '计划模式下仍可用' : '计划模式下会被裁掉'">
+                      {{ mcpPermissionWord(s.permission) }}
+                    </span>
                     <span v-if="!s.enabled" class="chip" style="cursor: default">已停用</span>
                   </div>
                   <div class="u-mono" style="font-size: var(--font-size-micro); color: var(--color-text-muted); margin-top: 4px; word-break: break-all">
@@ -2047,6 +2076,18 @@ token  {{ tokenStatus.preview }}</pre>
           placeholder="-y&#10;@modelcontextprotocol/server-filesystem&#10;D:/workspace"
         />
         <div class="hint">每行一个参数；含空格的参数整行保留为一个 argv 元素。</div>
+      </div>
+      <div class="field">
+        <label class="u-label" for="mcp-permission">工具权限</label>
+        <select id="mcp-permission" v-model="mcpForm.permission" class="select">
+          <option value="read">只读（计划模式下仍可用）</option>
+          <option value="write">写文件</option>
+          <option value="exec">执行（默认）</option>
+          <option value="network">联网</option>
+        </select>
+        <div class="hint">
+          非只读的 MCP 工具在计划模式下会从工具表里裁掉；每次调用都会走权限卡片。
+        </div>
       </div>
       <div class="field">
         <label class="radio">

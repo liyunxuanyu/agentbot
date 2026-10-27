@@ -18,6 +18,8 @@ export interface McpServerStatus {
   command: string;
   args: string[];
   enabled: boolean;
+  /** 工具权限性质（R5-c）；未声明时为 undefined，等价 exec。 */
+  permission: "read" | "write" | "exec" | "network" | null;
   status: McpConnectionStatus;
   error: string | null;
   toolCount: number;
@@ -97,6 +99,7 @@ export class McpManager {
         command: cfg.command,
         args: cfg.args,
         enabled: cfg.enabled,
+        permission: cfg.permission ?? null,
         status: client?.status ?? (cfg.enabled ? "unavailable" : "disabled"),
         error: client?.error ?? null,
         toolCount: client?.tools.length ?? 0,
@@ -111,13 +114,16 @@ export class McpManager {
     for (const cfg of this.configs) {
       const client = this.clients.get(cfg.id);
       if (!client || client.status !== "connected") continue;
+      // R5-c：权限取 server 的声明（缺省 exec —— 不猜「它大概是只读的」）。
+      // 计划模式下的裁剪放在驱动侧（manager 不感知权限模式）。
+      const permission = cfg.permission ?? "exec";
       for (const info of client.tools) {
         const exposed = toolNameOf(cfg.id, info.name);
         out.push({
           name: exposed,
           description: `[MCP ${cfg.id}] ${info.description || info.name}`,
           parameters: info.inputSchema,
-          permission: "exec",
+          permission,
           source: "mcp",
           mcp: { server: cfg.id, tool: info.name },
           async execute(_ctx, args): Promise<ToolResult> {

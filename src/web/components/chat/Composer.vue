@@ -131,7 +131,7 @@ const MODES: readonly ModeOption[] = [
     key: "auto",
     label: "自动模式",
     short: "自动",
-    desc: "边界内的写操作自动批准，越界才问你",
+    desc: "边界内的写操作自动批准；越界直接拒绝并说明原因",
     dot: "--color-warning",
   },
   {

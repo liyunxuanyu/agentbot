@@ -15,11 +15,21 @@ const serverSchema = z.object({
   args: z.array(z.string()).default([]),
   env: z.record(z.string()).optional(),
   enabled: z.boolean().default(true),
+  /**
+   * 该 server 的工具权限性质（R5-c）。
+   *
+   * 缺省按 `exec`（能做什么无法预判，每次要问）。声明为 `read` 的 server
+   * 其工具在计划模式下仍然可见可用；声明为 `write` / `exec` / `network`
+   * 的在计划模式下从工具表里裁掉（与内置写类工具同一规则）。
+   */
+  permission: z.enum(["read", "write", "exec", "network"]).optional(),
 });
 
 const fileSchema = z.object({
   servers: z.array(serverSchema).default([]),
 });
+
+export type McpServerPermission = "read" | "write" | "exec" | "network";
 
 export interface McpServerConfig {
   id: string;
@@ -27,6 +37,8 @@ export interface McpServerConfig {
   args: string[];
   env?: Record<string, string>;
   enabled: boolean;
+  /** 工具权限性质；缺省 `exec`（R5-c）。 */
+  permission?: McpServerPermission;
 }
 
 export interface McpFile {

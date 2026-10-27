@@ -32,7 +32,11 @@ interface McpBody {
   args?: unknown;
   env?: unknown;
   enabled?: unknown;
+  /** 工具权限性质（R5-c）：read 的 server 在计划模式下仍然可用。 */
+  permission?: unknown;
 }
+
+const MCP_PERMISSIONS = ["read", "write", "exec", "network"] as const;
 
 function readServerInput(
   body: McpBody,
@@ -85,6 +89,21 @@ function readServerInput(
       fields.push({ field: "enabled", code: "invalid_value", message: "enabled 必须是布尔值" });
     } else out.enabled = body.enabled;
   }
+
+  if (body.permission !== undefined) {
+    if (
+      typeof body.permission !== "string" ||
+      !(MCP_PERMISSIONS as readonly string[]).includes(body.permission)
+    ) {
+      fields.push({
+        field: "permission",
+        code: "invalid_value",
+        message: "permission 只能是 read / write / exec / network",
+      });
+    } else {
+      out.permission = body.permission as (typeof MCP_PERMISSIONS)[number];
+    }
+  }
   return out;
 }
 
@@ -109,6 +128,7 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: ServerContext): voi
       args: input.args ?? [],
       ...(input.env !== undefined ? { env: input.env } : {}),
       enabled: input.enabled ?? true,
+      ...(input.permission !== undefined ? { permission: input.permission } : {}),
     };
     writeMcpFile({ servers: [...file.servers, server] });
     await ctx.mcp?.reload();
@@ -129,6 +149,7 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: ServerContext): voi
       ...(input.args !== undefined ? { args: input.args } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+      ...(input.permission !== undefined ? { permission: input.permission } : {}),
     };
     writeMcpFile({ servers: file.servers.map((s) => (s.id === current.id ? updated : s)) });
     await ctx.mcp?.reload();

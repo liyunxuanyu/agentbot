@@ -116,3 +116,30 @@ describe("MCP 管理器", () => {
     await manager.dispose();
   }, 20_000);
 });
+
+describe("MCP 工具权限声明（R5-c）", () => {
+  it("server 声明 permission: read → 工具权限是 read；未声明 → exec", async () => {
+    const dir = tempDir();
+    const server = fakeServer(dir);
+    const configPath = join(dir, "mcp.json");
+    writeMcpFile(
+      {
+        servers: [
+          { id: "ro", command: server.command, args: server.args, enabled: true, permission: "read" },
+          { id: "rw", command: server.command, args: server.args, enabled: true },
+        ],
+      },
+      configPath,
+    );
+
+    const manager = new McpManager(configPath);
+    await manager.start();
+    const tools = manager.tools();
+    expect(tools.find((t) => t.name === "mcp__ro__echo")?.permission).toBe("read");
+    expect(tools.find((t) => t.name === "mcp__rw__echo")?.permission).toBe("exec");
+    // 状态里也带出来，设置页能显示「只读 / 执行」
+    expect(manager.statuses().find((s) => s.id === "ro")?.permission).toBe("read");
+    expect(manager.statuses().find((s) => s.id === "rw")?.permission).toBeNull();
+    await manager.dispose();
+  }, 20_000);
+});

@@ -431,3 +431,105 @@ describe("G7 写锁", () => {
     await hold;
   });
 });
+
+// ---------------------------------------------------------------------------
+// R5-c：计划模式下 MCP 写类工具被裁掉，读类保留
+// ---------------------------------------------------------------------------
+
+/** 最小 MCP 管理器桩：只实现驱动用到的 `tools()`。 */
+function fakeMcp(toolList: ToolDefinition[]): { tools: () => ToolDefinition[] } {
+  return { tools: () => toolList };
+}
+
+function mcpTool(name: string, permission: "read" | "exec" | "write" | "network"): ToolDefinition {
+  return {
+    name,
+    description: "mcp stub",
+    parameters: { type: "object", properties: {} },
+    permission,
+    source: "mcp",
+    mcp: { server: "stub", tool: name },
+    async execute() {
+      return { ok: true, output: "mcp-ok", durationMs: 1 };
+    },
+  };
+}
+
+/** 记录每轮交给模型的工具名。 */
+class CapturingToolsProvider implements ProviderClient {
+  readonly protocol = "openai-chat" as const;
+  toolNames: string[][] = [];
+  async *stream(req: ProviderRequest): AsyncGenerator<ProviderDelta> {
+    this.toolNames.push(req.tools.map((t) => t.name));
+    yield { kind: "finish", reason: "stop" };
+  }
+  async complete(): Promise<ProviderCompletion> {
+    throw new Error("测试不支持降级");
+  }
+}
+
+async function runWithMode(
+  mode: "plan" | "confirm",
+  mcpTools: ToolDefinition[],
+  opts: { builtin?: boolean } = {},
+): Promise<string[]> {
+  const provider = new CapturingToolsProvider();
+  const driver = createBuiltinDriver({
+    skillsDir: tempDir(),
+    resolveProvider: () => PROVIDER,
+    createClient: () => provider,
+    // builtin=true 时用真实内置工具全集，否则空表（只看 MCP）
+    ...(opts.builtin === true ? {} : { tools: [] as ToolDefinition[] }),
+    // 驱动只调 tools()，McpManager 的其余方法不需要
+    mcp: fakeMcp(mcpTools) as unknown as Parameters<
+      typeof createBuiltinDriver
+    >[0] extends { mcp?: infer M }
+      ? M
+      : never,
+  });
+  const h = await driver.start(BUILTIN_DECL_LOCAL, {
+    cwd: tempDir(),
+    sessionId: `s_${mode}`,
+    botId: "b1",
+    channelId: "ch1",
+    providerId: "p1",
+    permissionMode: mode,
+  });
+  await driver.newSession(h, { cwd: tempDir(), systemPrompt: "测试" });
+  setTurnContext(h, { turnId: `t_${mode}`, messageId: `m_${mode}`, botId: "b1" });
+  try {
+    await driver.prompt(h, { text: "hi" });
+  } finally {
+    clearTurnContext(h);
+  }
+  return provider.toolNames[0] ?? [];
+}
+
+describe("R5-c MCP 工具的计划模式裁剪", () => {
+  const tools = [
+    mcpTool("mcp__stub__read_thing", "read"),
+    mcpTool("mcp__stub__write_thing", "exec"),
+    mcpTool("mcp__stub__net_thing", "network"),
+    mcpTool("mcp__stub__file_thing", "write"),
+  ];
+
+  it("plan：发给模型的 tools 列表不含任何 MCP 写类工具，读类仍在", async () => {
+    const names = await runWithMode("plan", tools);
+    expect(names).toContain("mcp__stub__read_thing");
+    expect(names).not.toContain("mcp__stub__write_thing");
+    expect(names).not.toContain("mcp__stub__net_thing");
+    expect(names).not.toContain("mcp__stub__file_thing");
+  });
+
+  it("confirm：所有 MCP 工具都在（与计划模式对比）", async () => {
+    const names = await runWithMode("confirm", tools);
+    for (const t of tools) expect(names).toContain(t.name);
+  });
+
+  it("plan 下内置写类工具也已裁掉（回归保护）", async () => {
+    const names = await runWithMode("plan", [], { builtin: true });
+    expect(names).not.toContain("write_file");
+    expect(names).not.toContain("run_shell");
+    expect(names).toContain("read_file");
+  });
+});

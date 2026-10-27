@@ -571,7 +571,9 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
       return;
     }
 
-    // 自动模式：只自动批「边界内的写」；shell/network/admin 仍然弹卡（R5/G4）
+    // 自动模式（R5 口径 B，2026-10-28 定稿）：只自动批「边界内的写」；
+    // shell/network/admin 仍然弹卡。越界写在上面的 check.verdict==='denied'
+    // 分支就已被直接拒绝（不弹卡）—— auto 的语义是「别烦我」，越界弹卡等于退回 confirm。
     if (mode === "auto" && request.action === "write" && check.verdict === "allowed") {
       const autoSnapshot: SnapshotPayload = {
         ...snapshot,

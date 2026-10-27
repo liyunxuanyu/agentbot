@@ -149,6 +149,8 @@ export interface McpServerDto {
   command: string;
   args: string[];
   enabled: boolean;
+  /** 工具权限性质（R5-c）：read 的 server 在计划模式下仍然可用；null = 未声明（exec）。 */
+  permission: McpServerPermission | null;
   status: McpConnectionStatus;
   error: string | null;
   toolCount: number;
@@ -160,12 +162,15 @@ export interface McpServersResponse {
   running: boolean;
 }
 
+export type McpServerPermission = "read" | "write" | "exec" | "network";
+
 export interface McpServerInput {
   id?: string;
   command: string;
   args?: string[];
   env?: Record<string, string>;
   enabled?: boolean;
+  permission?: McpServerPermission;
 }
 
 export interface SkillDto {
