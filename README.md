@@ -14,16 +14,22 @@ npm install
 npm run build && npm run start:local     # 控制台会打印带 token 的访问 URL
 ```
 
-**当前有 7 条待修**：见 [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— 每条写了改哪个文件、怎么验收，以及开工前需要拍板的两件事。审计依据是 [`.forge/agentbot-17-requirements-audit.md`](.forge/agentbot-17-requirements-audit.md)。
+**当前有两批待办**：
+
+- [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— **7 条待修缺口**（审计发现，含开工前要拍板的两件事）。
+- [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— **4 条新需求**：初始化引导、基础技能包、热插拔、技能按需加载。
+
+两批文件基本不重叠，唯一交集是 `migrate.ts` 的 v4 迁移，建议合并成一次做。
 
 首次在新机器上要做的两件事：
 
 1. **确认运行时**：`npm run start:local` 会自动把本机 ZCode 的路径填进 `AGENTBOT_BIN_ZCODE`（见 `scripts/start-local.mjs`，路径写死为 Windows 默认安装位置，换系统或换安装位置要改这个文件）。其它运行时（Codex / Claude Code / Gemini / DSH）靠 PATH 探测。
 2. **配模型供应商**：内置引擎需要至少一个 provider（OpenAI chat-completions 或 Anthropic messages）。在设置页「模型供应商」里加，或手写 `~/.agentbot/providers.json`。
 
-**先读这两处再动代码**：
+**先读这几处再动代码**：
 
-- [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— **当前待办**：7 条待修需求，改哪个文件、怎么验收、哪两条要先拍板。
+- [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— **待修**：7 条缺口，改哪个文件、怎么验收、哪两条要先拍板。依据是 [`.forge/agentbot-17-requirements-audit.md`](.forge/agentbot-17-requirements-audit.md)。
+- [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— **新需求**：N1 初始化引导 / N2 基础技能 / N3 热插拔 / N4 技能按需加载。
 - [`.forge/agentbot-14-handoff.md`](.forge/agentbot-14-handoff.md) —— 上一轮的交接记录：迁移 v3 SQL、模块文件归属、验收门槛（已完成，留作参考）。口径源头是 [`.forge/agentbot-11-requirements-align.md`](.forge/agentbot-11-requirements-align.md)。
 - [`docs/memory/agentbot-project-state.md`](docs/memory/agentbot-project-state.md) —— 项目全貌 + 7 处真机踩过的坑（虚拟列表 transform 毁 sticky、CLI 人格注入、exit 0 误判 crashed、messages 同毫秒排序、pending Turn、最新轮不自动折叠…）。重复踩一遍要几个小时。
 - [`.forge/`](.forge/) —— 产品文档全在这里：`agentbot-00-brief` / `01-prd` / `02-ux` / `03-ui` / `tokens.css` / `05-architecture` / `06-builtin-engine`（内置引擎设计）/ `07-review`（验收报告），以及 `agentbot-prototype-v2/index.html`（视觉权威原型）。

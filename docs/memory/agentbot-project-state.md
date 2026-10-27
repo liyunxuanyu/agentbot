@@ -63,6 +63,17 @@ metadata:
 
 **验收**：365 passed / 7 failed（7 个与基线同一批 Windows 环境假设）；tsc/vue-tsc/boundaries/build 通过；`smoke:builtin` 通过。报告：`.forge/agentbot-07-review-builtin-engine.md`；变更日志：`.forge/agentbot-10-change-log.md`。
 
+## 新需求：初始化引导 / 基础技能 / 热插拔 / 技能按需加载（2026-10-28）
+
+四条新需求整理在 [.forge/agentbot-19-new-requirements.md](../../.forge/agentbot-19-new-requirements.md)，全部未开工。
+
+- N1 初始化引导：现有 /setup 只有 3 步（探测运行时→建 Bot→发消息），缺供应商、管理员、工作区、技能；需扩到 5 步 + 首启判定 + 可重入
+- N2 基础技能：8 个内置工具已存在，缺的是做成 4 份 SKILL.md 并首次安装到 ~/.agentbot/skills/
+- N3 热插拔：供应商已能热插拔，MCP 需重启，运行时不能；建议先做技能 + MCP
+- N4 技能按需加载：索引已只放 name+描述（≤800 字符），建议默认只装基础 4 个 + list_skills 发现其余
+
+建议顺序 N2 → N4 → N1 → N3。与 agentbot-18 的唯一文件交集是 migrate.ts 的 v4，合并一次做。
+
 ## 待修：7 条部分落地的需求（2026-10-28）
 
 需求审计完成（24 条：17 对齐 / 7 部分 / 0 未做）。待修清单在 [.forge/agentbot-18-fix-list.md](../../.forge/agentbot-18-fix-list.md)，每条有文件位置与验收标准。

@@ -20,7 +20,7 @@
 | `src/server/adapters/providers/openai-chat.ts:140-152` | `prompt_tokens_details.cached_tokens` 缺失时不要 `?? 0`，改为 `undefined` |
 | `src/server/adapters/providers/anthropic.ts:199-200, 266-271` | `cache_read_input_tokens` / `cache_creation_input_tokens` 缺失时同上，不要补 0 |
 | `src/server/core/db/schema.sql:234-237` | 加列 `cache_reported INTEGER NOT NULL DEFAULT 0` |
-| `src/server/core/db/migrate.ts` | v4 迁移加该列；老数据回填 `cache_reported = 0`（历史行确实不知道有没有上报） |
+| `src/server/core/db/migrate.ts` | v4 迁移加该列；老数据回填 `cache_reported = 0`（历史行确实不知道有没有上报）<br>**注意**：`agentbot-19` 的 N4 也要加列（`bots.enabled_skills`），两轮合并成一次 v4 |
 | `src/server/core/usage/recorder.ts:229-249` | 写入时按「缓存字段是否真的出现过」置 `cache_reported`，不再靠 `model IS NOT NULL` 推断 |
 | `src/server/core/usage/aggregate.ts:202, 233, 263` | `cache_reported_requests` 改用 `SUM(cache_reported)`，去掉 `model IS NOT NULL` |
 
