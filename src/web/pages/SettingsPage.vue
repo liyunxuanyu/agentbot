@@ -49,10 +49,11 @@ const providers = useProvidersStore();
 const mcp = useMcpStore();
 const skills = useSkillsStore();
 
-type TabKey = "runtimes" | "providers" | "mcp" | "skills" | "security" | "data" | "audit";
+type TabKey = "runtimes" | "providers" | "catalog" | "mcp" | "skills" | "security" | "data" | "audit";
 const TABS: { key: TabKey; label: string }[] = [
   { key: "runtimes", label: "运行时" },
   { key: "providers", label: "模型供应商" },
+  { key: "catalog", label: "模型映射表" },
   { key: "mcp", label: "MCP" },
   { key: "skills", label: "技能" },
   { key: "security", label: "安全与 token" },
@@ -428,10 +429,10 @@ async function applyTidy(): Promise<void> {
   }
 }
 
-// ---- 模型能力对照表（可维护）----
-const catalogOpen = ref(false);
+// ---- 模型能力对照表（可维护，独立分区）----
 const catalog = ref<ModelCatalogResponse | null>(null);
 const catalogErr = ref("");
+const catalogLoading = ref(false);
 /** 编辑中的用户覆盖表（保存前的草稿）。 */
 const catalogDraft = ref<CatalogEntry[]>([]);
 const catalogSaving = ref(false);
@@ -439,18 +440,27 @@ const catalogSaveErr = ref("");
 const catalogTestModel = ref("");
 const catalogTestResult = ref<{ match: string; hit: boolean } | null>(null);
 
-async function openCatalog(): Promise<void> {
-  catalogOpen.value = true;
+async function loadCatalog(): Promise<void> {
+  if (catalogLoading.value) return;
+  catalogLoading.value = true;
   catalogErr.value = "";
-  catalogSaveErr.value = "";
-  catalogTestResult.value = null;
   try {
     catalog.value = await api.modelCatalog();
     catalogDraft.value = catalog.value.user.map((e) => ({ ...e }));
   } catch (err) {
     catalogErr.value =
       err instanceof ApiError ? (err.messageText() ?? `读取失败（${err.code}）`) : "读取失败";
+  } finally {
+    catalogLoading.value = false;
   }
+}
+
+/** 从供应商表单跳过来时把模型表读一次。 */
+function openCatalog(): void {
+  tab.value = "catalog";
+  catalogTestResult.value = null;
+  catalogSaveErr.value = "";
+  void loadCatalog();
 }
 
 function addCatalogRule(): void {
@@ -1029,6 +1039,7 @@ onMounted(async () => {
   void skills.load();
   void loadToken();
   void loadAudit();
+  void loadCatalog();
 });
 
 onBeforeUnmount(() => {
@@ -1162,6 +1173,9 @@ onBeforeUnmount(() => {
             <button class="btn btn--sm btn--secondary" :disabled="providers.status === 'loading'" @click="providers.load()">
               刷新
             </button>
+            <button class="btn btn--sm btn--secondary" @click="openCatalog">
+              模型映射表
+            </button>
             <button class="btn btn--sm btn--primary" @click="openAddProvider">添加供应商</button>
           </div>
 
@@ -1217,6 +1231,121 @@ onBeforeUnmount(() => {
               apiKey 只保存在本机 <code class="u-mono">~/.agentbot/providers.json</code>（权限 0600），
               接口只回掩码。「测试」会发一次最小请求，不消耗工具调用。绑定供应商在 Bot 表单里选。
             </p>
+          </template>
+        </template>
+
+        <!-- ================= 模型映射表 ================= -->
+        <template v-else-if="tab === 'catalog'">
+          <div class="filters" style="min-height: auto">
+            <span class="u-label">生效规则</span>
+            <span class="u-mono" style="color: var(--color-text-secondary)">
+              覆盖 {{ catalogDraft.length }} 条 · 内置 {{ catalog?.builtin.length ?? 0 }} 条
+            </span>
+            <span class="spacer" />
+            <button class="btn btn--sm btn--secondary" :disabled="catalogLoading" @click="loadCatalog">
+              {{ catalogLoading ? "读取中…" : "重新读取" }}
+            </button>
+            <button class="btn btn--sm btn--primary" :disabled="catalogSaving" @click="saveCatalog">
+              {{ catalogSaving ? "保存中…" : "保存覆盖规则" }}
+            </button>
+          </div>
+
+          <div v-if="catalogErr" class="banner">
+            <span class="state-dot" :style="{ '--s': 'var(--state-blocked)' }" />
+            <span>读取模型映射表失败：{{ catalogErr }}</span>
+            <span class="spacer" />
+            <button class="btn btn--sm" @click="loadCatalog">重试</button>
+          </div>
+
+          <div v-else-if="catalogLoading && !catalog" style="display: grid; gap: 10px">
+            <div v-for="i in 3" :key="i" class="sk" style="height: 56px" />
+          </div>
+
+          <template v-else>
+            <section class="card card-pad" style="margin-bottom: 14px">
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px">
+                <div class="u-label" style="margin: 0">覆盖规则</div>
+                <span class="chip" style="cursor: default">优先于内置表</span>
+              </div>
+              <p class="hint" style="margin-top: 0">
+                匹配规则是正则，对模型 id 小写后按顺序取第一条命中。内置表认不出的模型会返回「未知」，
+                在这里加一条就能补上；想改内置的某个值，加一条同 match 的规则顶掉即可。
+              </p>
+
+              <p v-if="catalogDraft.length === 0" class="hint">
+                还没有覆盖规则。点下面「加一条」开始。
+              </p>
+
+              <div
+                v-for="(rule, i) in catalogDraft"
+                :key="`rule-${i}`"
+                style="display: grid; grid-template-columns: minmax(0, 1fr) 110px 110px auto; gap: 8px; margin-bottom: 8px; align-items: center"
+              >
+                <input v-model="rule.match" class="input u-mono" style="font-size: var(--font-size-caption)" placeholder="正则，如 ^my-model-200k$" />
+                <input
+                  :value="rule.contextWindow ?? ''"
+                  class="input u-mono"
+                  style="font-size: var(--font-size-caption)"
+                  placeholder="上下文窗口"
+                  inputmode="numeric"
+                  @input="rule.contextWindow = catalogNum(($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  :value="rule.maxOutputTokens ?? ''"
+                  class="input u-mono"
+                  style="font-size: var(--font-size-caption)"
+                  placeholder="最大输出"
+                  inputmode="numeric"
+                  @input="rule.maxOutputTokens = catalogNum(($event.target as HTMLInputElement).value)"
+                />
+                <div style="display: flex; gap: 4px">
+                  <button
+                    class="btn btn--sm btn--ghost"
+                    :disabled="rule.match.trim().length === 0 || catalogTestModel.trim().length === 0"
+                    :title="'用下面输入的模型 id 试这条规则'"
+                    @click="testCatalogRule(rule)"
+                  >试</button>
+                  <button class="btn btn--sm btn--ghost" title="删除这条" @click="removeCatalogRule(i)">✕</button>
+                </div>
+              </div>
+
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 12px">
+                <button class="btn btn--sm btn--secondary" @click="addCatalogRule">＋ 加一条</button>
+                <input
+                  v-model="catalogTestModel"
+                  class="input u-mono"
+                  style="width: 240px; font-size: var(--font-size-caption)"
+                  placeholder="试匹配的模型 id，如 deepseek-v4.1-flash"
+                />
+              </div>
+              <div v-if="catalogTestResult" class="hint">
+                规则 <code class="u-mono">{{ catalogTestResult.match }}</code>
+                对 <code class="u-mono">{{ catalogTestModel }}</code>
+                {{ catalogTestResult.hit ? "命中" : "未命中" }}
+              </div>
+              <div v-if="catalogSaveErr" class="field-err" style="margin-top: 10px">{{ catalogSaveErr }}</div>
+            </section>
+
+            <section class="card card-pad">
+              <div class="u-label" style="margin-bottom: 6px">
+                内置规则 · {{ catalog?.builtinVersion }} 版（{{ catalog?.builtinUpdatedAt }}）
+              </div>
+              <p class="hint" style="margin-top: 0">
+                只读，随代码升级。按顺序匹配，第一条命中即用。
+              </p>
+              <div
+                class="u-mono"
+                style="font-size: var(--font-size-micro); max-height: 320px; overflow: auto; background: var(--color-surface-2); border-radius: var(--radius-md); padding: 10px 12px"
+              >
+                <div v-for="(e, i) in catalog?.builtin ?? []" :key="`b${i}`" style="padding: 2px 0">
+                  {{ e.match }} → {{ e.contextWindow ?? "?" }} / {{ e.maxOutputTokens ?? "?" }}
+                  <span v-if="e.note" style="opacity: .7">· {{ e.note }}</span>
+                </div>
+              </div>
+              <p v-if="(catalog?.sources.length ?? 0) > 0" class="hint" style="margin-top: 12px">
+                来源：{{ catalog?.sources.join("；") }}
+              </p>
+            </section>
           </template>
         </template>
 
@@ -1828,11 +1957,29 @@ token  {{ tokenStatus.preview }}</pre>
         <input id="pv-out" v-model="providerForm.maxOutputTokens" class="input u-mono" placeholder="留空表示不限制，由供应商默认" inputmode="numeric" />
         <div class="hint">这是单次回复的上限，不是上下文窗口。留空时请求里不发送该参数。</div>
       </div>
-      <div class="hint" style="margin-top: -4px">
-        上面两个默认值来自
-        <button class="btn btn--sm btn--ghost" style="height: 20px; padding: 0 4px; vertical-align: baseline" @click="openCatalog">模型能力对照表</button>
-        ，认不出的模型不填。表可自己维护。
+
+      <!-- 模型能力对照表入口：单独一块，不做成提示文字里的链接 -->
+      <div
+        style="
+          display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+          padding: 10px 12px; margin-bottom: 14px;
+          background: var(--color-surface-2); border: 1px solid var(--color-border);
+          border-radius: var(--radius-md);
+        "
+      >
+        <div style="flex: 1; min-width: 180px">
+          <div style="font-size: var(--font-size-caption); font-weight: var(--weight-semibold)">
+            上下文窗口与最大输出从哪来
+          </div>
+          <div style="font-size: var(--font-size-micro); color: var(--color-text-muted); margin-top: 2px">
+            按模型名自动带出；认不出的模型留空，不猜。
+          </div>
+        </div>
+        <button class="btn btn--sm btn--secondary" @click="openCatalog">
+          维护模型映射表
+        </button>
       </div>
+
       <div class="field">
         <label class="radio">
           <input v-model="providerForm.supportsTools" type="checkbox" />
@@ -1853,88 +2000,6 @@ token  {{ tokenStatus.preview }}</pre>
       </template>
     </AppModal>
 
-    <!-- 模型能力对照表：内置（只读）+ 用户覆盖（页面可编辑） -->
-    <AppModal v-model:open="catalogOpen" title="模型能力对照表">
-      <div v-if="catalogErr" class="field-err" style="margin-bottom: 12px">{{ catalogErr }}</div>
-      <template v-else-if="catalog">
-        <p class="hint" style="margin-top: 0">
-          内置表版本 {{ catalog.builtinVersion }}（{{ catalog.builtinUpdatedAt }}），随代码升级；
-          下面的覆盖规则优先命中。匹配规则是正则，对模型 id 小写后按顺序取第一条命中。
-        </p>
-
-        <div class="u-label" style="margin: 16px 0 8px">
-          覆盖规则（{{ catalogDraft.length }} 条）
-        </div>
-        <p v-if="catalogDraft.length === 0" class="hint" style="margin-bottom: 10px">
-          还没有覆盖规则。内置表认不出的模型会返回「未知」，加一条就能补上。
-        </p>
-
-        <div
-          v-for="(rule, i) in catalogDraft"
-          :key="`rule-${i}`"
-          style="display: grid; grid-template-columns: minmax(0, 1fr) 96px 96px auto; gap: 6px; margin-bottom: 8px; align-items: center"
-        >
-          <input v-model="rule.match" class="input u-mono" style="font-size: var(--font-size-micro)" placeholder="正则，如 ^my-model-200k$" />
-          <input
-            :value="rule.contextWindow ?? ''"
-            class="input u-mono"
-            style="font-size: var(--font-size-micro)"
-            placeholder="上下文"
-            inputmode="numeric"
-            @input="rule.contextWindow = catalogNum(($event.target as HTMLInputElement).value)"
-          />
-          <input
-            :value="rule.maxOutputTokens ?? ''"
-            class="input u-mono"
-            style="font-size: var(--font-size-micro)"
-            placeholder="最大输出"
-            inputmode="numeric"
-            @input="rule.maxOutputTokens = catalogNum(($event.target as HTMLInputElement).value)"
-          />
-          <div style="display: flex; gap: 2px">
-            <button
-              class="btn btn--sm btn--ghost"
-              style="padding: 0 6px; height: 28px"
-              title="用下面输入的模型 id 试这条规则"
-              :disabled="rule.match.trim().length === 0 || catalogTestModel.trim().length === 0"
-              @click="testCatalogRule(rule)"
-            >
-              试
-            </button>
-            <button class="btn btn--sm btn--ghost" style="padding: 0 6px; height: 28px" title="删除这条" @click="removeCatalogRule(i)">✕</button>
-          </div>
-        </div>
-
-        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px">
-          <button class="btn btn--sm btn--secondary" @click="addCatalogRule">＋ 加一条</button>
-          <input v-model="catalogTestModel" class="input u-mono" style="width: 200px; font-size: var(--font-size-micro)" placeholder="试匹配的模型 id（如 deepseek-v4.1-flash）" />
-        </div>
-        <div v-if="catalogTestResult" class="hint">
-          规则 <code class="u-mono">{{ catalogTestResult.match }}</code>
-          对 <code class="u-mono">{{ catalogTestModel }}</code>
-          {{ catalogTestResult.hit ? "命中" : "未命中" }}
-        </div>
-        <div v-if="catalogSaveErr" class="field-err" style="margin-top: 8px">{{ catalogSaveErr }}</div>
-
-        <div class="u-label" style="margin: 18px 0 8px">内置规则（{{ catalog.builtin.length }} 条，只读）</div>
-        <div class="u-mono" style="font-size: var(--font-size-micro); max-height: 200px; overflow: auto; background: var(--color-surface-2); border-radius: 8px; padding: 8px 10px">
-          <div v-for="(e, i) in catalog.builtin" :key="`b${i}`">
-            {{ e.match }} → {{ e.contextWindow ?? "?" }} / {{ e.maxOutputTokens ?? "?" }}
-            <span v-if="e.note" style="opacity: .7">· {{ e.note }}</span>
-          </div>
-        </div>
-        <p v-if="catalog.sources.length > 0" class="hint" style="margin-top: 12px">
-          来源：{{ catalog.sources.join("；") }}
-        </p>
-      </template>
-      <template #footer>
-        <button class="btn btn--secondary" @click="catalogOpen = false">关闭</button>
-        <span class="spacer" />
-        <button class="btn btn--primary" :disabled="catalogSaving" @click="saveCatalog">
-          {{ catalogSaving ? "保存中…" : "保存覆盖规则" }}
-        </button>
-      </template>
-    </AppModal>
 
     <!-- 添加 / 编辑 MCP server -->
     <AppModal v-model:open="mcpOpen" :title="editingMcpId ? '编辑 MCP server' : '添加 MCP server'">
