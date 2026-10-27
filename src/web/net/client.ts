@@ -244,6 +244,9 @@ import type {
   ProviderTestResponse,
   PurgeResponse,
   TidyPreview,
+  TidyResponse,
+  TidyTarget,
+  ModelCatalogResponse,
   RuntimesResponse,
   ScheduleDto,
   SchedulesResponse,
@@ -407,14 +410,19 @@ export const api = {
 
   /** 数据整理预览（只统计）。 */
   tidyPreview: (signal?: AbortSignal) =>
-    request<{ preview: TidyPreview }>("/api/admin/tidy", { signal }),
+    request<{ preview: TidyPreview; targets: TidyTarget[] }>("/api/admin/tidy", { signal }),
 
-  /** 执行数据整理（不可逆，需 confirm）。 */
-  tidyApply: () =>
-    request<{ ok: boolean; preview: TidyPreview; deleted: Record<string, number> }>(
-      "/api/admin/tidy",
-      { method: "POST", body: { confirm: true }, timeoutMs: 60_000 },
-    ),
+  /** 执行数据整理（不可逆，需 confirm + 勾选的类别）。 */
+  tidyApply: (targets: TidyTarget[]) =>
+    request<TidyResponse>("/api/admin/tidy", {
+      method: "POST",
+      body: { confirm: true, targets },
+      timeoutMs: 60_000,
+    }),
+
+  /** 模型能力对照表（内置 + 用户覆盖）。 */
+  modelCatalog: (signal?: AbortSignal) =>
+    request<ModelCatalogResponse>("/api/providers/catalog", { signal }),
 
   mcpServers: (signal?: AbortSignal) =>
     request<McpServersResponse>("/api/mcp", { signal }),

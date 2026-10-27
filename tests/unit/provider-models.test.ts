@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inferModelMeta, defaultWindowFor } from "../../src/server/adapters/providers/models.js";
+import { inferModelMeta, defaultWindowFor, builtinEntries } from "../../src/server/adapters/providers/models.js";
 
 /**
  * 模型能力推断（供应商表单「带出上下文窗口 / 最大输出」的数据来源）。
@@ -45,5 +45,46 @@ describe("模型能力推断", () => {
 
   it("协议兜底窗口：Anthropic 比 [OI] 大", () => {
     expect(defaultWindowFor("anthropic-messages")).toBeGreaterThan(defaultWindowFor("openai-chat"));
+  });
+
+  it("对照表可维护：内置表非空，且每条规则都能编译成正则", () => {
+    const entries = builtinEntries();
+    expect(entries.length).toBeGreaterThan(10);
+    for (const e of entries) {
+      expect(() => new RegExp(e.match, "i"), `规则无效：${e.match}`).not.toThrow();
+      expect(e.contextWindow, `${e.match} 应有窗口`).not.toBeNull();
+      expect(e.maxOutputTokens, `${e.match} 应有输出上限`).not.toBeNull();
+    }
+  });
+
+  it("用户覆盖表能解析，且优先于内置（同 match 时取用户值）", async () => {
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { readUserCatalog } = await import("../../src/server/adapters/providers/models.js");
+    const dir = mkdtempSync(join(tmpdir(), "agentbot-catalog-"));
+    const file = join(dir, "model-catalog.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        updatedAt: "2026-10-27",
+        models: [{ match: "^gpt-4o$", contextWindow: 999999, maxOutputTokens: 12345 }],
+      }),
+    );
+    try {
+      const entries = readUserCatalog(file);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        match: "^gpt-4o$",
+        contextWindow: 999999,
+        maxOutputTokens: 12345,
+      });
+      // 坏文件不抛异常，只返回空表（内置表仍然生效）
+      writeFileSync(file, "{ not json");
+      expect(readUserCatalog(file)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

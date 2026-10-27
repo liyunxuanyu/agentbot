@@ -12,10 +12,14 @@ import {
 } from "../../adapters/providers/store.js";
 import { createProviderClient } from "../../adapters/providers/index.js";
 import {
+  builtinEntries,
+  CATALOG_PATH,
   defaultWindowFor,
   fetchModels,
   ModelListError,
+  readUserCatalog,
 } from "../../adapters/providers/models.js";
+import builtinCatalog from "../../adapters/providers/model-catalog.json" with { type: "json" };
 import type { ProviderConfig, ProviderProtocol } from "../../core/agent/provider.js";
 
 /**
@@ -346,6 +350,24 @@ export function registerProviderRoutes(app: FastifyInstance, ctx: ServerContext)
   app.get("/api/providers/available", async () => {
     const providers = listProviders();
     return { count: providers.length, defaultId: readProviderFile().defaultId };
+  });
+
+  /**
+   * `GET /api/providers/catalog` —— 模型能力对照表。
+   *
+   * 分两层返回：`builtin` 随代码分发（只读），`user` 来自
+   * `~/.agentbot/model-catalog.json`（用户可编辑，优先命中）。
+   * 设置页用它展示「当前生效的规则」，用户想加模型就改用户表，不动代码。
+   */
+  app.get("/api/providers/catalog", async () => {
+    return {
+      builtin: builtinEntries(),
+      user: readUserCatalog(),
+      userPath: CATALOG_PATH,
+      builtinVersion: (builtinCatalog as { version?: number }).version ?? 1,
+      builtinUpdatedAt: (builtinCatalog as { updatedAt?: string }).updatedAt ?? "",
+      sources: (builtinCatalog as { sources?: string[] }).sources ?? [],
+    };
   });
 
   /**

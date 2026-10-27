@@ -800,14 +800,46 @@ export interface PurgeResponse {
 }
 
 /** 数据整理预览：归档/删除 Bot 后留下的孤儿数据。 */
+/** 可勾选的整理项。 */
+export type TidyTarget = "channels" | "orphanSessions" | "memories" | "orphanUsage";
+
 export interface TidyPreview {
   channels: { id: string; type: string; name: string; participantCount: number }[];
+  /** 渠道还在、但所属 Bot 已不存在的会话。 */
+  orphanSessions: { id: string; channelId: string; channelName: string; botId: string }[];
   sessions: number;
   messages: number;
   events: number;
   memories: number;
-  /** 所属 Bot 已不存在的用量记录数（只统计，保留作历史账目）。 */
+  /** 所属 Bot 已不存在的用量记录数。 */
   orphanUsage: number;
+}
+
+export interface TidyResponse {
+  ok: boolean;
+  targets: TidyTarget[];
+  preview: TidyPreview;
+  deleted: Record<string, number>;
+}
+
+/** 模型能力对照表（可维护）。 */
+export interface CatalogEntry {
+  match: string;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  note?: string;
+}
+
+export interface ModelCatalogResponse {
+  /** 内置表（随代码分发，只读）。 */
+  builtin: CatalogEntry[];
+  /** 用户覆盖表（~/.agentbot/model-catalog.json）。 */
+  user: CatalogEntry[];
+  /** 用户表路径，便于用户直接编辑。 */
+  userPath: string;
+  builtinVersion: number;
+  builtinUpdatedAt: string;
+  sources: string[];
 }
 
 /** 群聊发送响应（`POST /api/messages` 在 group 渠道上多出的字段）。 */

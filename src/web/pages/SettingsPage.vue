@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { ApiError, api, isMissingEndpoint } from "../net/client";
 import type {
   McpServerDto,
+  ModelCatalogResponse,
   ModelMeta,
   PermissionDto,
   ProviderDto,
@@ -11,6 +12,7 @@ import type {
   RuntimeDetailDto,
   RuntimeProtocol,
   TidyPreview,
+  TidyTarget,
   TokenStatusResponse,
 } from "../net/types";
 import { useBotsStore } from "../stores/bots";
@@ -343,6 +345,46 @@ const tidyPreview = ref<TidyPreview | null>(null);
 const tidyBusy = ref(false);
 const tidyError = ref("");
 const tidyResult = ref<Record<string, number> | null>(null);
+/** 勾选的整理项。默认不含用量历史 —— 那是账目，要用户主动勾。 */
+const tidyTargets = ref<TidyTarget[]>(["channels", "orphanSessions", "memories"]);
+
+const TIDY_OPTIONS: { key: TidyTarget; label: string; desc: string }[] = [
+  {
+    key: "channels",
+    label: "空会话渠道",
+    desc: "dm / 群聊里没有任何在用 Bot，连带它的会话、消息、事件一起删",
+  },
+  {
+    key: "orphanSessions",
+    label: "孤儿会话",
+    desc: "渠道还在，但所属 Bot 已被删除",
+  },
+  {
+    key: "memories",
+    label: "孤儿记忆",
+    desc: "记忆条目所属 Bot 已不存在",
+  },
+  {
+    key: "orphanUsage",
+    label: "孤儿用量记录",
+    desc: "所属 Bot 已不存在的用量行；删了用量统计会变少，默认不勾",
+  },
+];
+
+function tidyCountOf(key: TidyTarget): number {
+  const p = tidyPreview.value;
+  if (!p) return 0;
+  if (key === "channels") return p.channels.length;
+  if (key === "orphanSessions") return p.orphanSessions.length;
+  if (key === "memories") return p.memories;
+  return p.orphanUsage;
+}
+
+function toggleTidyTarget(key: TidyTarget): void {
+  tidyTargets.value = tidyTargets.value.includes(key)
+    ? tidyTargets.value.filter((k) => k !== key)
+    : [...tidyTargets.value, key];
+}
 
 async function previewTidy(): Promise<void> {
   if (tidyBusy.value) return;
@@ -363,12 +405,16 @@ async function previewTidy(): Promise<void> {
 
 async function applyTidy(): Promise<void> {
   if (tidyBusy.value || !tidyPreview.value) return;
+  if (tidyTargets.value.length === 0) {
+    tidyError.value = "至少勾一类要整理的数据。";
+    return;
+  }
   tidyBusy.value = true;
   tidyError.value = "";
   try {
-    const res = await api.tidyApply();
+    const res = await api.tidyApply(tidyTargets.value);
     tidyResult.value = res.deleted;
-    ui.toast(`已清理 ${res.deleted.channels ?? 0} 个渠道、${res.deleted.memories ?? 0} 条孤儿记忆`);
+    ui.toast(`已清理 ${res.deleted["channels"] ?? 0} 个渠道、${res.deleted["sessions"] ?? 0} 个会话`);
     // 列表与用量都变了：让下次进入时重新拉
     void channels.load();
     void bots.load();
@@ -378,6 +424,22 @@ async function applyTidy(): Promise<void> {
       err instanceof ApiError ? (err.messageText() ?? `整理失败（${err.code}）`) : "整理失败，请重试";
   } finally {
     tidyBusy.value = false;
+  }
+}
+
+// ---- 模型能力对照表（可维护）----
+const catalogOpen = ref(false);
+const catalog = ref<ModelCatalogResponse | null>(null);
+const catalogErr = ref("");
+
+async function openCatalog(): Promise<void> {
+  catalogOpen.value = true;
+  catalogErr.value = "";
+  try {
+    catalog.value = await api.modelCatalog();
+  } catch (err) {
+    catalogErr.value =
+      err instanceof ApiError ? (err.messageText() ?? `读取失败（${err.code}）`) : "读取失败";
   }
 }
 
@@ -1339,13 +1401,26 @@ token  {{ tokenStatus.preview }}</pre>
               </p>
 
               <div v-if="tidyPreview" style="margin-bottom: 12px">
-                <div class="kv"><span class="k">待清理会话渠道</span><span class="v">{{ tidyPreview.channels.length }}</span></div>
-                <div class="kv"><span class="k">连带会话 / 消息 / 事件</span><span class="v u-mono">{{ tidyPreview.sessions }} / {{ tidyPreview.messages }} / {{ tidyPreview.events }}</span></div>
-                <div class="kv"><span class="k">孤儿记忆条目</span><span class="v">{{ tidyPreview.memories }}</span></div>
-                <div class="kv">
-                  <span class="k">孤儿用量记录</span>
-                  <span class="v" :title="'保留作历史账目，不删除'">{{ tidyPreview.orphanUsage }}（保留）</span>
-                </div>
+                <div class="u-label" style="margin: 0 0 8px">选择要整理的数据</div>
+                <label
+                  v-for="opt in TIDY_OPTIONS"
+                  :key="opt.key"
+                  class="radio"
+                  style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; opacity: tidyCountOf(opt.key) === 0 ? .5 : 1"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="tidyTargets.includes(opt.key)"
+                    :disabled="tidyCountOf(opt.key) === 0"
+                    @change="toggleTidyTarget(opt.key)"
+                  />
+                  <span>
+                    <b>{{ opt.label }}</b>
+                    <span class="u-mono" style="margin-left: 6px">{{ tidyCountOf(opt.key) }}</span>
+                    <span style="display: block; font-size: var(--font-size-micro); color: var(--color-text-muted)">{{ opt.desc }}</span>
+                  </span>
+                </label>
+                <div class="kv"><span class="k">合计会话 / 消息 / 事件</span><span class="v u-mono">{{ tidyPreview.sessions }} / {{ tidyPreview.messages }} / {{ tidyPreview.events }}</span></div>
                 <ul v-if="tidyPreview.channels.length > 0" class="hint" style="margin: 8px 0 0; padding-left: 18px">
                   <li v-for="c in tidyPreview.channels.slice(0, 6)" :key="c.id">
                     {{ c.type === "group" ? "群聊" : "私聊" }} · {{ c.name }}
@@ -1361,15 +1436,16 @@ token  {{ tokenStatus.preview }}</pre>
                 </button>
                 <button
                   class="btn btn--sm btn--danger"
-                  :disabled="tidyBusy || !tidyPreview || tidyPreview.channels.length === 0 && tidyPreview.memories === 0"
+                  :disabled="tidyBusy || !tidyPreview || tidyTargets.length === 0"
                   @click="applyTidy"
                 >
-                  执行整理
+                  整理选中项
                 </button>
               </div>
               <p v-if="tidyResult" class="hint" style="margin-top: 10px">
-                已清理：渠道 {{ tidyResult.channels }} · 会话 {{ tidyResult.sessions }} ·
-                消息 {{ tidyResult.messages }} · 事件 {{ tidyResult.events }} · 记忆 {{ tidyResult.memories }}
+                已清理：渠道 {{ tidyResult["channels"] ?? 0 }} · 会话 {{ tidyResult["sessions"] ?? 0 }} ·
+                消息 {{ tidyResult["messages"] ?? 0 }} · 事件 {{ tidyResult["events"] ?? 0 }} ·
+                记忆 {{ tidyResult["memories"] ?? 0 }} · 用量 {{ tidyResult["orphanUsage"] ?? 0 }}
               </p>
             </section>
 
@@ -1692,6 +1768,11 @@ token  {{ tokenStatus.preview }}</pre>
         <input id="pv-out" v-model="providerForm.maxOutputTokens" class="input u-mono" placeholder="留空表示不限制，由供应商默认" inputmode="numeric" />
         <div class="hint">这是单次回复的上限，不是上下文窗口。留空时请求里不发送该参数。</div>
       </div>
+      <div class="hint" style="margin-top: -4px">
+        上面两个默认值来自
+        <button class="btn btn--sm btn--ghost" style="height: 20px; padding: 0 4px; vertical-align: baseline" @click="openCatalog">模型能力对照表</button>
+        ，认不出的模型不填。表可自己维护。
+      </div>
       <div class="field">
         <label class="radio">
           <input v-model="providerForm.supportsTools" type="checkbox" />
@@ -1709,6 +1790,43 @@ token  {{ tokenStatus.preview }}</pre>
         <button class="btn btn--primary" :disabled="providerSaving" @click="saveProvider">
           {{ providerSaving ? "保存中…" : "保存" }}
         </button>
+      </template>
+    </AppModal>
+
+    <!-- 模型能力对照表：内置（只读）+ 用户覆盖（可编辑文件） -->
+    <AppModal v-model:open="catalogOpen" title="模型能力对照表">
+      <div v-if="catalogErr" class="field-err" style="margin-bottom: 12px">{{ catalogErr }}</div>
+      <template v-else-if="catalog">
+        <p class="hint" style="margin-top: 0">
+          内置表版本 {{ catalog.builtinVersion }}（{{ catalog.builtinUpdatedAt }}），随代码升级；
+          用户表优先命中，写在
+          <code class="u-mono">{{ catalog.userPath }}</code>，改完保存即生效（下次拉取模型或重开表单）。
+        </p>
+        <div class="u-label" style="margin: 16px 0 8px">用户覆盖（{{ catalog.user.length }} 条）</div>
+        <p v-if="catalog.user.length === 0" class="hint">
+          还没有用户规则。加一条形如
+          <code class="u-mono">{"{"} "match": "my-model-200k", "contextWindow": 204800, "maxOutputTokens": 16384 {"}"}</code>
+          的规则即可覆盖内置表或补上新模型。
+        </p>
+        <div v-else class="u-mono" style="font-size: var(--font-size-micro); max-height: 160px; overflow: auto; background: var(--color-surface-2); border-radius: 8px; padding: 8px 10px">
+          <div v-for="(e, i) in catalog.user" :key="`u${i}`">
+            {{ e.match }} → {{ e.contextWindow ?? "?" }} / {{ e.maxOutputTokens ?? "?" }}
+          </div>
+        </div>
+
+        <div class="u-label" style="margin: 16px 0 8px">内置规则（{{ catalog.builtin.length }} 条，按顺序匹配）</div>
+        <div class="u-mono" style="font-size: var(--font-size-micro); max-height: 260px; overflow: auto; background: var(--color-surface-2); border-radius: 8px; padding: 8px 10px">
+          <div v-for="(e, i) in catalog.builtin" :key="`b${i}`">
+            {{ e.match }} → {{ e.contextWindow ?? "?" }} / {{ e.maxOutputTokens ?? "?" }}
+            <span v-if="e.note" style="opacity: .7">· {{ e.note }}</span>
+          </div>
+        </div>
+        <p v-if="catalog.sources.length > 0" class="hint" style="margin-top: 12px">
+          来源：{{ catalog.sources.join("；") }}
+        </p>
+      </template>
+      <template #footer>
+        <button class="btn btn--primary" @click="catalogOpen = false">关闭</button>
       </template>
     </AppModal>
 

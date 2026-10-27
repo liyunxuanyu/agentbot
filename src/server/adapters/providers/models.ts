@@ -1,4 +1,8 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { config } from "../../config.js";
 import type { ProviderConfig, ProviderProtocol } from "../../core/agent/provider.js";
+import builtinCatalog from "./model-catalog.json" with { type: "json" };
 import { joinUrl, joinVersionedUrl, readErrorMessage } from "./http.js";
 
 /**
@@ -10,8 +14,13 @@ import { joinUrl, joinVersionedUrl, readErrorMessage } from "./http.js";
  *
  * 为什么要有第 ②：两个协议都不在模型列表里返回上下文窗口（[OI] 规范没有这个字段，
  * Anthropic 的 `/v1/models` 只有 id / display_name / created_at）。所以默认值来自
- * 一张内置对照表 + 命名规则兜底，而不是「问供应商要」——问不到的东西不能假装问到了。
- * 表里没有的模型标 `known: false`，前端提示「默认值来自命名推断，请核对」。
+ * 一张**可维护的对照表** + 命名规则兜底，而不是「问供应商要」——问不到的东西不能
+ * 假装问到了。表里没有的模型标 `known: false`，前端提示「默认值来自命名推断，请核对」。
+ *
+ * 表分两层：
+ *   - 内置：`model-catalog.json`，随代码分发，升级时整体替换；
+ *   - 用户覆盖：`~/.agentbot/model-catalog.json`，逐条追加/覆盖，优先于内置。
+ * 用户改了内置表也不会丢，因为内置那份不进 `~/.agentbot`。
  */
 
 /** 一次拉取的上限，防止某个网关返回几万条把界面撑爆。 */
@@ -26,62 +35,96 @@ export interface ModelMeta {
   contextWindow: number | null;
   /** 最大输出 token；无法判断时为 null。 */
   maxOutputTokens: number | null;
-  /** true = 命中内置对照表；false = 命名规则推断。 */
+  /** true = 命中对照表；false = 命名规则推断。 */
   known: boolean;
 }
 
-interface KnownModel {
-  /** 匹配规则：小写包含即命中，按数组顺序取第一条。 */
-  match: RegExp;
-  contextWindow: number;
-  maxOutputTokens: number;
+/** 对照表里的一条规则。 */
+export interface CatalogEntry {
+  /** 正则（对模型 id 小写后匹配）。 */
+  match: string;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  /** 来源说明，展示在设置页，方便用户判断可信度。 */
+  note?: string;
+}
+
+export interface CatalogFile {
+  version: number;
+  updatedAt: string;
+  note?: string;
+  sources?: string[];
+  models: CatalogEntry[];
+}
+
+export const CATALOG_PATH = join(config.home, "model-catalog.json");
+
+function normalizeEntries(raw: unknown): CatalogEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CatalogEntry[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const row = item as Record<string, unknown>;
+    if (typeof row["match"] !== "string" || row["match"].length === 0) continue;
+    const num = (v: unknown): number | null =>
+      typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : null;
+    out.push({
+      match: row["match"],
+      contextWindow: num(row["contextWindow"]),
+      maxOutputTokens: num(row["maxOutputTokens"]),
+      ...(typeof row["note"] === "string" ? { note: row["note"] } : {}),
+    });
+  }
+  return out;
+}
+
+/** 读用户覆盖表；文件不存在或格式坏了都返回空数组（内置表仍然生效）。 */
+export function readUserCatalog(path: string = CATALOG_PATH): CatalogEntry[] {
+  if (!existsSync(path)) return [];
+  try {
+    const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof raw !== "object" || raw === null) return [];
+    return normalizeEntries((raw as { models?: unknown }).models);
+  } catch (err) {
+    console.warn(
+      `[models] 用户模型表读取失败，已忽略：${err instanceof Error ? err.message : String(err)}`,
+    );
+    return [];
+  }
+}
+
+/** 内置表（只读，来自打包进产物的 JSON）。 */
+export function builtinEntries(): CatalogEntry[] {
+  return normalizeEntries((builtinCatalog as { models?: unknown }).models);
 }
 
 /**
- * 内置对照表。数值取各家公开文档的**默认/常见上限**，只作为表单默认值，
- * 用户可改；宁可保守（偏小）也不要写大——写大会让请求被供应商拒绝。
+ * 生效的对照表 = 用户覆盖在前 + 内置在后。
+ * 用户条目优先命中，所以想改某个模型只需写一条更靠前（或同 match）的规则。
  */
-const KNOWN: readonly KnownModel[] = [
-  // Anthropic
-  { match: /claude.*opus.*4/, contextWindow: 200_000, maxOutputTokens: 32_000 },
-  { match: /claude.*sonnet.*4/, contextWindow: 200_000, maxOutputTokens: 64_000 },
-  { match: /claude.*haiku.*4/, contextWindow: 200_000, maxOutputTokens: 32_000 },
-  { match: /claude-3[-.]7-sonnet/, contextWindow: 200_000, maxOutputTokens: 64_000 },
-  { match: /claude-3[-.]5-sonnet/, contextWindow: 200_000, maxOutputTokens: 8_192 },
-  { match: /claude-3[-.]5-haiku/, contextWindow: 200_000, maxOutputTokens: 8_192 },
-  { match: /claude-3-(opus|sonnet|haiku)/, contextWindow: 200_000, maxOutputTokens: 4_096 },
-  { match: /^claude/, contextWindow: 200_000, maxOutputTokens: 8_192 },
+export function effectiveCatalog(): CatalogEntry[] {
+  return [...readUserCatalog(), ...builtinEntries()];
+}
 
-  // [OI]
-  { match: /gpt-5/, contextWindow: 400_000, maxOutputTokens: 128_000 },
-  { match: /gpt-4\.1/, contextWindow: 1_047_576, maxOutputTokens: 32_768 },
-  { match: /gpt-4o-mini/, contextWindow: 128_000, maxOutputTokens: 16_384 },
-  { match: /gpt-4o/, contextWindow: 128_000, maxOutputTokens: 16_384 },
-  { match: /gpt-4-turbo/, contextWindow: 128_000, maxOutputTokens: 4_096 },
-  { match: /^gpt-4/, contextWindow: 8_192, maxOutputTokens: 4_096 },
-  { match: /^o[134](-|$)/, contextWindow: 200_000, maxOutputTokens: 100_000 },
+/** 编译后的正则缓存：每次 infer 都 new RegExp 会在拉 500 个模型时明显变慢。 */
+let regexCache: { key: string; list: { re: RegExp; entry: CatalogEntry }[] } | null = null;
 
-  // DeepSeek（含本机在用的 pix 网关）
-  { match: /deepseek.*(v4|v3\.2|v3)/, contextWindow: 128_000, maxOutputTokens: 8_192 },
-  { match: /deepseek-reasoner|deepseek-r1/, contextWindow: 128_000, maxOutputTokens: 8_192 },
-  { match: /deepseek/, contextWindow: 64_000, maxOutputTokens: 8_192 },
-
-  // Google
-  { match: /gemini-2\.5/, contextWindow: 1_048_576, maxOutputTokens: 65_536 },
-  { match: /gemini-2\.0/, contextWindow: 1_048_576, maxOutputTokens: 8_192 },
-  { match: /gemini-1\.5/, contextWindow: 1_048_576, maxOutputTokens: 8_192 },
-  { match: /^gemini/, contextWindow: 128_000, maxOutputTokens: 8_192 },
-
-  // 国产与常见开源
-  { match: /qwen.*(max|plus|turbo)/, contextWindow: 131_072, maxOutputTokens: 8_192 },
-  { match: /^qwen/, contextWindow: 32_768, maxOutputTokens: 8_192 },
-  { match: /glm-4\.[5-9]|glm-4-plus/, contextWindow: 128_000, maxOutputTokens: 8_192 },
-  { match: /^glm/, contextWindow: 128_000, maxOutputTokens: 4_096 },
-  { match: /kimi|moonshot/, contextWindow: 128_000, maxOutputTokens: 8_192 },
-  { match: /llama-?3\.[1-9]/, contextWindow: 128_000, maxOutputTokens: 8_192 },
-  { match: /^llama/, contextWindow: 8_192, maxOutputTokens: 4_096 },
-  { match: /mistral|mixtral/, contextWindow: 32_768, maxOutputTokens: 8_192 },
-];
+function compiled(): { re: RegExp; entry: CatalogEntry }[] {
+  const entries = effectiveCatalog();
+  const key = entries.map((e) => `${e.match}|${e.contextWindow}|${e.maxOutputTokens}`).join("\n");
+  if (regexCache && regexCache.key === key) return regexCache.list;
+  const list: { re: RegExp; entry: CatalogEntry }[] = [];
+  for (const entry of entries) {
+    try {
+      list.push({ re: new RegExp(entry.match, "i"), entry });
+    } catch {
+      // 坏正则跳过，不影响其它规则
+      console.warn(`[models] 对照表规则无效，已跳过：${entry.match}`);
+    }
+  }
+  regexCache = { key, list };
+  return list;
+}
 
 /** 命名规则兜底：带 200k / 128k 之类字样的模型，尽量从名字里读出窗口。 */
 function inferFromName(id: string): { contextWindow: number | null; maxOutputTokens: number | null } {
@@ -99,8 +142,8 @@ function inferFromName(id: string): { contextWindow: number | null; maxOutputTok
 /** 给一个模型 id 推断默认能力。 */
 export function inferModelMeta(id: string, label?: string): ModelMeta {
   const lower = id.toLowerCase();
-  for (const entry of KNOWN) {
-    if (entry.match.test(lower)) {
+  for (const { re, entry } of compiled()) {
+    if (re.test(lower)) {
       return {
         id,
         label: label ?? id,
