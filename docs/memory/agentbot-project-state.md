@@ -63,6 +63,14 @@ metadata:
 
 **验收**：365 passed / 7 failed（7 个与基线同一批 Windows 环境假设）；tsc/vue-tsc/boundaries/build 通过；`smoke:builtin` 通过。报告：`.forge/agentbot-07-review-builtin-engine.md`；变更日志：`.forge/agentbot-10-change-log.md`。
 
+## 待修：7 条部分落地的需求（2026-10-28）
+
+需求审计完成（24 条：17 对齐 / 7 部分 / 0 未做）。待修清单在 [.forge/agentbot-18-fix-list.md](../../.forge/agentbot-18-fix-list.md)，每条有文件位置与验收标准。
+
+摘要：R8 缓存未上报被算成 0%；R3 群聊记忆未跨 Bot 共享；G7 群聊写类工具无串行；R5 auto 越界不弹卡；R5-c MCP 工具在 plan 下未裁；G3 切 plan 的系统块刷新后消失；R7 压缩条数/字数未进流。
+
+开工前需拍板：R3 走共享还是不共享（建议共享）、R5 走弹卡还是直接拒绝（建议直接拒绝）。
+
 ## 会话控制 / 记忆隔离 / 管理员 Bot（2026-10-27 完成）
 
 R1–R8 已实现并验收：迁移 v3、会话/渠道工作区、记忆作用域、会话级模型覆盖、四档权限（confirm/auto/plan/full）、管理员 Bot 与 `create_bot`、上下文压缩、缓存命中率。证据：`.forge/agentbot-15-change-log-session-control.md`；口径：`.forge/agentbot-11-requirements-align.md`；交接与待办：`.forge/agentbot-14-handoff.md`。

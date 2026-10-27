@@ -9,9 +9,12 @@
 ```bash
 git clone https://github.com/liyunxuanyu/agentbot.git
 cd agentbot
+git checkout continue-dev
 npm install
 npm run build && npm run start:local     # 控制台会打印带 token 的访问 URL
 ```
+
+**当前有 7 条待修**：见 [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— 每条写了改哪个文件、怎么验收，以及开工前需要拍板的两件事。审计依据是 [`.forge/agentbot-17-requirements-audit.md`](.forge/agentbot-17-requirements-audit.md)。
 
 首次在新机器上要做的两件事：
 
@@ -20,7 +23,8 @@ npm run build && npm run start:local     # 控制台会打印带 token 的访问
 
 **先读这两处再动代码**：
 
-- [`.forge/agentbot-14-handoff.md`](.forge/agentbot-14-handoff.md) —— **当前这一轮**的交接：待办清单、迁移 v3 SQL、模块文件归属、验收门槛。口径源头是 [`.forge/agentbot-11-requirements-align.md`](.forge/agentbot-11-requirements-align.md)。
+- [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— **当前待办**：7 条待修需求，改哪个文件、怎么验收、哪两条要先拍板。
+- [`.forge/agentbot-14-handoff.md`](.forge/agentbot-14-handoff.md) —— 上一轮的交接记录：迁移 v3 SQL、模块文件归属、验收门槛（已完成，留作参考）。口径源头是 [`.forge/agentbot-11-requirements-align.md`](.forge/agentbot-11-requirements-align.md)。
 - [`docs/memory/agentbot-project-state.md`](docs/memory/agentbot-project-state.md) —— 项目全貌 + 7 处真机踩过的坑（虚拟列表 transform 毁 sticky、CLI 人格注入、exit 0 误判 crashed、messages 同毫秒排序、pending Turn、最新轮不自动折叠…）。重复踩一遍要几个小时。
 - [`.forge/`](.forge/) —— 产品文档全在这里：`agentbot-00-brief` / `01-prd` / `02-ux` / `03-ui` / `tokens.css` / `05-architecture` / `06-builtin-engine`（内置引擎设计）/ `07-review`（验收报告），以及 `agentbot-prototype-v2/index.html`（视觉权威原型）。
 
