@@ -131,6 +131,41 @@ export function isUnauthorized(err: unknown): boolean {
 }
 
 /**
+ * 401 时的兜底：清掉本地残留 token 并跳到服务端登录页。
+ *
+ * 为什么需要它：登录态现在由 HttpOnly cookie 承载，前端读不到 cookie 是否还在。
+ * cookie 过期 / 被清 / token 被重置后，页面上的旧 sessionStorage 副本仍会被
+ * `withToken()` 拼进请求，导致每次都是 401。跳登录页前先清副本，用户重新输入
+ * 一次 token 就能恢复（登录页也会再清一次，见 `http/login.ts`）。
+ *
+ * 只在浏览器里跳一次：多个并发请求同时 401 时，用 `redirecting` 去重，
+ * 避免重复 `location.assign`。
+ */
+let redirectingToLogin = false;
+/** 主动关闭 401 自动跳转（token 重置流程用，见 `suppressLoginRedirect`）。 */
+let authRedirectSuppressed = false;
+
+/**
+ * 关掉 401 自动跳登录页。
+ *
+ * 只给「重置 token」用：重置后本页的所有请求都会 401，但页面正展示新地址，
+ * 立刻跳走会让用户看不到它。由用户自己复制地址后新开标签页。
+ */
+export function suppressLoginRedirect(): void {
+  authRedirectSuppressed = true;
+}
+
+export function redirectToLogin(): void {
+  if (redirectingToLogin || authRedirectSuppressed) return;
+  redirectingToLogin = true;
+  clearToken();
+  // 已在登录页就不再跳，避免刷新循环
+  if (window.location.pathname === "/login") return;
+  const here = window.location.pathname + window.location.search + window.location.hash;
+  window.location.assign(`/login?next=${encodeURIComponent(here)}`);
+}
+
+/**
  * 把 token 附到请求 URL 上。
  *
  * 为什么不用自定义 header：后端的 `extractToken()` 只认 `?t=` 与 `agentbot_token`
@@ -198,6 +233,9 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     } catch {
       // 非 JSON 错误体（例如代理返回的 HTML）不解析
     }
+    // 401：登录态已失效（cookie 过期/被清/token 被重置）→ 回登录页。
+    // 仍然抛错，让当前调用方有机会先收尾；页面随后会被整页替换。
+    if (res.status === 401) redirectToLogin();
     throw new ApiError(res.status, code, undefined, body);
   }
 
@@ -656,6 +694,9 @@ export const api = {
     request<TokenStatusResponse>("/api/token", { signal }),
 
   resetToken: () => request<TokenResetResponse>("/api/token/reset", { method: "POST" }),
+
+  /** 退出登录：服务端清掉 HttpOnly cookie（本函数只负责发请求，跳转由调用方做）。 */
+  logout: () => request<void>("/api/auth/logout", { method: "POST" }),
 
   purgeAll: (confirm: string) =>
     request<PurgeResponse>("/api/admin/purge", { method: "POST", body: { confirm } }),

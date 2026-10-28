@@ -82,9 +82,50 @@ export function extractToken(headers: Record<string, unknown>, query: Record<str
   return null;
 }
 
-export function tokenCookie(token: string): string {
-  // SameSite=Strict + HttpOnly：同机其他程序既拿不到也带不上
-  return `agentbot_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict`;
+/** 登录态 cookie 的有效期：30 天。持久 cookie，浏览器重启后仍在。 */
+export const TOKEN_COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
+
+/**
+ * 是否给 cookie 加 `Secure`。
+ *
+ * 本地服务默认走 http://127.0.0.1，加 Secure 会让浏览器直接丢弃 cookie
+ * （登录页看似成功、刷新又回到登录页）。所以默认只在 HTTPS 或
+ * `NODE_ENV=production` 时开启，并允许用环境变量显式覆盖：
+ *   AGENTBOT_COOKIE_SECURE=1  强制开启（反向代理终止 TLS 时用）
+ *   AGENTBOT_COOKIE_SECURE=0  强制关闭（本机以 NODE_ENV=production 跑 http 时）
+ */
+export function cookieSecure(protocol?: string): boolean {
+  const override = process.env["AGENTBOT_COOKIE_SECURE"];
+  if (override === "1") return true;
+  if (override === "0") return false;
+  if (protocol === "https") return true;
+  return process.env["NODE_ENV"] === "production";
+}
+
+/** 持久登录 cookie：HttpOnly（JS 读不到）+ SameSite=Strict（跨站带不上）。 */
+export function tokenCookie(token: string, secure: boolean = cookieSecure()): string {
+  const parts = [
+    `agentbot_token=${encodeURIComponent(token)}`,
+    "Path=/",
+    `Max-Age=${TOKEN_COOKIE_MAX_AGE}`,
+    "HttpOnly",
+    "SameSite=Strict",
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+/** 退出登录：让浏览器立即删除 cookie（属性必须与种下时一致）。 */
+export function clearTokenCookie(secure: boolean = cookieSecure()): string {
+  const parts = [
+    "agentbot_token=",
+    "Path=/",
+    "Max-Age=0",
+    "HttpOnly",
+    "SameSite=Strict",
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
 }
 
 /**

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NAV_PATHS, SMALL_PATHS, MOON_PATH, type IconName } from "../../lib/icons";
+import { NAV_PATHS, SMALL_PATHS, MOON_PATH, LOGOUT_PATH, type IconName } from "../../lib/icons";
 
 /**
  * 图标组件 —— 路径数据在 lib/icons.ts（与原型 ICONS 逐字一致）。
@@ -26,6 +26,19 @@ withDefaults(
     stroke-linecap="round"
     aria-hidden="true"
     v-html="MOON_PATH"
+  />
+  <svg
+    v-else-if="name === 'logout'"
+    :width="size"
+    :height="size"
+    viewBox="0 0 20 20"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    v-html="LOGOUT_PATH"
   />
   <svg
     v-else-if="name === 'stop'"

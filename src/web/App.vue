@@ -9,6 +9,7 @@ import { useUiStore } from "./stores/ui";
 import { useBotsStore } from "./stores/bots";
 import { useSetupStore } from "./stores/setup";
 import { botVars } from "./lib/botVars";
+import { api, redirectToLogin } from "./net/client";
 
 /**
  * 应用壳（原型 shell()）。
@@ -107,6 +108,22 @@ function onToggleTheme(): void {
   ui.toggleTheme();
 }
 
+/**
+ * 退出登录：让服务端清掉 HttpOnly cookie，然后整页去登录页。
+ *
+ * 为什么不是纯前端「清 sessionStorage」：登录态的唯一权威是 cookie（HttpOnly，
+ * JS 读不到也删不掉）。只清本地副本的话，刷新后 cookie 仍在，用户会「退不出去」。
+ * 请求失败也照样跳：登录页会清掉本地副本，至少不会卡在当前页。
+ */
+async function onLogout(): Promise<void> {
+  try {
+    await api.logout();
+  } catch {
+    // 网络错误/已过期都无所谓，下面的跳转才是目的
+  }
+  redirectToLogin();
+}
+
 void toasts;
 </script>
 
@@ -192,6 +209,9 @@ void toasts;
           @click="onToggleTheme"
         >
           <AppIcon :name="isDark ? 'sun' : 'moon'" :size="16" />
+        </button>
+        <button class="icon-btn" aria-label="退出登录" title="退出登录" @click="onLogout">
+          <AppIcon name="logout" :size="16" />
         </button>
       </header>
 

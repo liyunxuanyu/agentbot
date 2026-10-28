@@ -14,6 +14,7 @@ import type { McpManager } from "../adapters/mcp/manager.js";
 import {
   authLockRemainingMs,
   clearAuthFailures,
+  cookieSecure,
   currentToken,
   extractToken,
   recordAuthFailure,
@@ -21,6 +22,7 @@ import {
   verifyToken,
 } from "./auth.js";
 import { registerRoutes } from "./routes/index.js";
+import { loginPage, nextFromUrl, registerLoginRoutes } from "./login.js";
 
 /**
  * HTTP 入口。
@@ -29,9 +31,22 @@ import { registerRoutes } from "./routes/index.js";
  *   /api/health —— 唯一免鉴权端点，只回 {ok:true}，用于探活；
  *   其余一切（含静态资源）—— 先过 token 钩子，失败 401 且不带任何业务数据。
  *
+ * 登录页（`/login`）与退出（`/logout`、`/api/auth/logout`）同样免鉴权：
+ * 前者是拿 token 换 cookie 的唯一入口，后者只删凭证。
+ *
  * 静态资源在首页带 `?t=` 打开时会随响应种下 HttpOnly cookie，
  * 之后的 <script>/<link> 请求自动带上，所以资源也走同一道闸。
  */
+
+/** 无需 token 的路径（登录/登出/探活）。只按路径判断，不按方法。 */
+function isPublicPath(path: string): boolean {
+  return (
+    path === "/api/health" ||
+    path === "/login" ||
+    path === "/logout" ||
+    path === "/api/auth/logout"
+  );
+}
 
 /**
  * 浏览器地址栏直接访问（而非 fetch/XHR/EventSource）时，401 应给人看的页面。
@@ -45,66 +60,6 @@ function wantsHtml(req: FastifyRequest): boolean {
   if (!accept.includes("text/html")) return false;
   // /api/* 永远回 JSON：那里是程序读的，不是人读的
   return !req.url.split("?")[0]!.startsWith("/api/");
-}
-
-/** 给人看的 401/429 页面：说清「为什么打不开」和「怎么打开」，不暴露任何业务数据。 */
-function unauthorizedHtml(reason: "unauthorized" | "too_many" = "unauthorized"): string {
-  const title = reason === "too_many" ? "尝试次数过多" : "需要访问令牌";
-  const lead =
-    reason === "too_many"
-      ? "连续 10 次鉴权失败，本机来源已被临时限流 60 秒。稍等再试即可，不需要做别的操作。"
-      : "AgentBot 只允许持有访问令牌的窗口使用。令牌在启动服务时的控制台里打印过，形如：";
-  const tail =
-    reason === "too_many"
-      ? "如果你并没有主动重试，可能是某个页面在反复轮询。等一分钟后刷新即可。"
-      : "请复制那条完整 URL 打开一次。打开后浏览器会记住它，之后直接点导航即可。";
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title} · AgentBot</title>
-<style>
-  :root { color-scheme: light dark; }
-  body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center;
-    background: #F6F8FA; color: #16202B;
-    font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    line-height: 1.6;
-  }
-  .card {
-    max-width: 560px; margin: 24px; padding: 32px;
-    background: #FFFFFF; border-radius: 14px;
-    box-shadow: 0 1px 2px rgba(22,32,43,.05), 0 2px 8px rgba(22,32,43,.04);
-  }
-  h1 { margin: 0 0 8px; font-size: 22px; letter-spacing: -.01em; }
-  p { margin: 0 0 12px; color: #3D4E5C; font-size: 14px; }
-  code {
-    display: block; margin: 12px 0; padding: 12px 14px;
-    background: #EEF2F5; border-radius: 8px;
-    font-family: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
-    font-size: 12.5px; word-break: break-all; color: #16202B;
-  }
-  .hint { font-size: 13px; color: #5A6B7A; }
-  @media (prefers-color-scheme: dark) {
-    body { background: #11161B; color: #E9EEF2; }
-    .card { background: #1A2129; box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.28); }
-    p { color: #C2CDD6; }
-    code { background: #0C1014; color: #E9EEF2; }
-    .hint { color: #9AA9B6; }
-  }
-</style>
-</head>
-<body>
-  <div class="card">
-    <h1>${title}</h1>
-    <p>${lead}</p>
-    ${reason === "too_many" ? "" : '<code>http://127.0.0.1:端口/?t=一串字符</code>'}
-    <p>${tail}</p>
-    <p class="hint">找不到令牌？重新启动服务，控制台会再打印一次；或查看 <code style="display:inline;padding:2px 6px;margin:0">~/.agentbot/token</code> 文件，再拼到地址后面。</p>
-  </div>
-</body>
-</html>`;
 }
 
 export interface ServerContext {
@@ -293,8 +248,9 @@ export function buildServer(ctx: ServerContext, opts: BuildServerOptions = {}): 
   // ---- 鉴权前置钩子（P0-14）----
   app.addHook("onRequest", (req, reply, done) => {
     if (!authEnabled) return done();
-    // 探活端点免鉴权，且不含任何业务数据
-    if (req.url.split("?")[0] === "/api/health") return done();
+    const path = req.url.split("?")[0] ?? "/";
+    // 探活与登录/登出免鉴权：它们要么不含业务数据，要么就是拿来换 cookie 的
+    if (isPublicPath(path)) return done();
 
     const source = clientSource(req);
     const locked = authLockRemainingMs(source);
@@ -302,11 +258,13 @@ export function buildServer(ctx: ServerContext, opts: BuildServerOptions = {}): 
       // 连续失败已达上限：60s 内一律 429，连 token 都不再比对
       const retry = Math.ceil(locked / 1000);
       if (wantsHtml(req)) {
+        // 人读的页面：给登录页并说明限流原因，而不是一屏 JSON
         reply
           .code(429)
           .header("retry-after", String(retry))
+          .header("cache-control", "no-store")
           .header("content-type", "text/html; charset=utf-8")
-          .send(unauthorizedHtml("too_many"));
+          .send(loginPage({ next: nextFromUrl(req.url), lockedSeconds: retry }));
       } else {
         reply
           .code(429)
@@ -324,10 +282,12 @@ export function buildServer(ctx: ServerContext, opts: BuildServerOptions = {}): 
     if (!verifyToken(token)) {
       recordAuthFailure(source);
       if (wantsHtml(req)) {
+        // 浏览器导航：送去登录页，登录成功后回到原地址（保留路径与查询串）
         reply
-          .code(401)
-          .header("content-type", "text/html; charset=utf-8")
-          .send(unauthorizedHtml());
+          .code(302)
+          .header("location", `/login?next=${encodeURIComponent(nextFromUrl(req.url))}`)
+          .header("cache-control", "no-store")
+          .send("");
       } else {
         reply
           .code(401)
@@ -338,12 +298,27 @@ export function buildServer(ctx: ServerContext, opts: BuildServerOptions = {}): 
     }
 
     clearAuthFailures(source);
-    // 首次带 ?t= 访问：种下 HttpOnly cookie，后续 fetch/EventSource 都用它
+    // 首次带 ?t= 访问：种下持久 HttpOnly cookie，后续 fetch/EventSource 都用它
     if (typeof query["t"] === "string") {
-      reply.header("set-cookie", tokenCookie(token as string));
+      reply.header("set-cookie", tokenCookie(token as string, cookieSecure(req.protocol)));
     }
     return done();
   });
+
+  // 登录表单提交是 application/x-www-form-urlencoded（浏览器原生表单，无 JS 也能用）
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "string" },
+    (_req, body, done) => {
+      const params = new URLSearchParams(String(body));
+      const parsed: Record<string, string> = {};
+      for (const [k, v] of params) parsed[k] = v;
+      done(null, parsed);
+    },
+  );
+
+  // 登录/登出（免鉴权，见 isPublicPath）
+  registerLoginRoutes(app, { authEnabled });
 
   // ---- 路由 ----
   registerRoutes(app, ctx);

@@ -23,7 +23,8 @@ import { listenEphemeral } from "./http-listen.js";
  * 浏览器里出现一屏 `{"error":"unauthorized"}` —— 安全上没错，但人看不懂。
  *
  * 约定：
- *   - 浏览器导航（Accept 含 text/html、且不是 /api/*）→ HTML 说明页；
+ *   - 浏览器导航（Accept 含 text/html、且不是 /api/*）→ 302 到 `/login`，
+ *     登录页本身不含任何业务数据；
  *   - fetch / EventSource / /api/* → 仍然只回 JSON，且不含任何业务数据。
  */
 
@@ -131,16 +132,27 @@ afterAll(async () => {
 });
 
 describe("鉴权失败的人机分流", () => {
-  it("浏览器导航（Accept: text/html）拿到 HTML 说明页，不是 JSON", async () => {
-    const res = await fetch(`${base}/bots`, { headers: { accept: "text/html,application/xhtml+xml" } });
-    expect(res.status).toBe(401);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    const html = await res.text();
-    expect(html).toContain("需要访问令牌");
-    expect(html).toContain("?t=");
-    // 不含任何业务数据
+  it("浏览器导航（Accept: text/html）跳到登录页，而不是 JSON", async () => {
+    const res = await fetch(`${base}/bots`, {
+      headers: { accept: "text/html,application/xhtml+xml" },
+      redirect: "manual",
+    });
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toMatch(/^\/login\?next=/);
+    expect(decodeURIComponent(location)).toContain("/bots");
+
+    const page = await fetch(`${base}${location}`, {
+      headers: { accept: "text/html" },
+    });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    const html = await page.text();
+    expect(html).toContain("访问令牌");
+    expect(html).toContain('type="password"');
+    // 不含任何业务数据，也不回显 token
     expect(html).not.toContain("unauthorized");
-    expect(html).not.toContain("bots\":");
+    expect(html).not.toContain(token);
   });
 
   it("/api/* 即使 Accept 含 text/html 也只回 JSON", async () => {
@@ -172,10 +184,10 @@ describe("鉴权失败的人机分流", () => {
     for (let i = 0; i < 12; i++) {
       await fetch(`${base}/api/bots?t=wrong-token-${i}`);
     }
-    const res = await fetch(`${base}/bots`, { headers: { accept: "text/html" } });
+    const res = await fetch(`${base}/login`, { headers: { accept: "text/html" } });
     expect(res.status).toBe(429);
     const html = await res.text();
-    expect(html).toContain("尝试次数过多");
+    expect(html).toContain("暂时锁定");
     expect(html).toContain("60");
   });
 });

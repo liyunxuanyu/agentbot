@@ -12,6 +12,7 @@ export type IconName =
   | "gear"
   | "sun"
   | "moon"
+  | "logout"
   | "plus"
   | "send"
   | "stop"
@@ -44,3 +45,7 @@ export const SMALL_PATHS: Partial<Record<IconName, { box: number; body: string }
 
 /** 月亮：原型没有（它用同一个太阳图标表示「切换」），按同一线性语言补一个。 */
 export const MOON_PATH = '<path d="M16.5 11.5A6.8 6.8 0 0 1 8.5 3.5a6.8 6.8 0 1 0 8 8z"/>';
+
+/** 退出登录：门框 + 向右的箭头（顶栏图标，viewBox 20）。 */
+export const LOGOUT_PATH =
+  '<path d="M8 3H5.5A1.5 1.5 0 0 0 4 4.5v11A1.5 1.5 0 0 0 5.5 17H8"/><path d="M12.5 6.5 16 10l-3.5 3.5"/><path d="M16 10H8"/>';

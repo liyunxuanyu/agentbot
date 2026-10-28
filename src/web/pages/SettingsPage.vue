@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
-import { ApiError, api, isMissingEndpoint } from "../net/client";
+import { ApiError, api, isMissingEndpoint, suppressLoginRedirect } from "../net/client";
 import type {
   CatalogEntry,
   McpServerDto,
@@ -299,11 +299,13 @@ async function loadToken(): Promise<void> {
  *
  * 重置后当前标签页的 token 已失效：下一次请求就是 401。所以这里不自动跳转，
  * 而是把新 URL 完整展示出来，让用户复制后自己打开 —— 这样「旧标签页失效」
- * 这件事是可见的，不会让人以为界面卡住了。
+ * 这件事是可见的，不会让人以为界面卡住了。为此要关掉全局的「401 → 登录页」
+ * 自动跳转（否则 `loadToken()` 的 401 会立刻把页面换走，新地址根本看不到）。
  */
 async function resetToken(): Promise<void> {
   if (resetting.value) return;
   resetting.value = true;
+  suppressLoginRedirect();
   try {
     const res = await api.resetToken();
     resetResult.value = { url: res.url, closedStreams: res.closedStreams };
