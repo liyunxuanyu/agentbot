@@ -43,6 +43,8 @@ const diff = ref<FileDiffDto | null>(null);
 const loading = ref(false);
 const detailLoading = ref(false);
 const error = ref("");
+/** 上次成功加载对应的 `botId:sessionId`：props 迟到时用来判断要不要补拉。 */
+const loadedFor = ref<string | null>(null);
 
 const selectedChange = computed(() =>
   selected.value ? (changes.value.find((f) => f.path === selected.value) ?? null) : null,
@@ -70,7 +72,15 @@ function messageOf(err: unknown): string {
 }
 
 async function loadList(): Promise<void> {
-  if (!props.botId) return;
+  // botId 还没就绪（Bot 列表尚未加载完）时**不能**静默返回：
+  // 旧实现在这里 return，而加载只在「打开面板」那一刻触发一次 ——
+  // 打开时 botId 为 null 就永久空白，用户只能关掉重开（真机偶发踩到，
+  // 面板显示「工作区未解析 / 工作区没有未提交的改动」，实际后端有 2 个改动）。
+  // 现在由下方 watch 在 botId 到位后补一次，这里只负责不发无效请求。
+  if (!props.botId) {
+    loadedFor.value = null;
+    return;
+  }
   loading.value = true;
   error.value = "";
   try {
@@ -79,6 +89,7 @@ async function loadList(): Promise<void> {
     changes.value = res.files;
     gitAvailable.value = res.git;
     changesMessage.value = res.message ?? "";
+    loadedFor.value = `${props.botId}:${props.sessionId ?? ""}`;
     if (tab.value === "tree") await loadTree();
   } catch (err) {
     error.value = messageOf(err);
@@ -138,6 +149,21 @@ watch(
     if (!isOpen) return;
     await loadList();
     if (props.initialPath) await selectFile(props.initialPath);
+  },
+);
+
+/**
+ * botId / sessionId 迟到（Bot 列表异步加载、发送后新建 Session）时补一次。
+ *
+ * 面板通常在会话页挂载时就存在，打开那一刻 props 可能还是 null；
+ * 只依赖 open 的 watch 会让面板永久停在空白态（真机偶发）。
+ */
+watch(
+  () => [props.botId, props.sessionId] as const,
+  async () => {
+    if (!open.value) return;
+    const key = `${props.botId ?? ""}:${props.sessionId ?? ""}`;
+    if (props.botId && loadedFor.value !== key) await loadList();
   },
 );
 
