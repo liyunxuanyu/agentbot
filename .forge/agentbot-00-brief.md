@@ -2,6 +2,9 @@
 
 > 事实底座：`.forge/agentbot-ref-research.md`。标 `[假设]` 的论断无公开来源支撑。
 > 已决前提见 `.forge/state.json` Q1–Q5（插件形态、首版运行时、单用户、群聊、会话归属）。
+> **立项后的修订（2026-10-26）**：第四条通道 `builtin`（内置引擎）在服务进程内自带 agent loop，
+> 与「自己不实现 agent loop」不同。它是加法（外部通道完全不动），理由与设计见
+> [`agentbot-06-builtin-engine.md`](agentbot-06-builtin-engine.md)。本文其余判断保持不变。
 
 ## 一句话
 
