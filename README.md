@@ -260,7 +260,7 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `GET /api/stream?sessionId=` | 是 | SSE 事件流，按 `events.id` 续推 |
 | `GET /api/runtimes` | 是 | 运行时列表（含能力三态与事件掩码），读探测缓存 |
 | `POST /api/runtimes` | 是 | 手动添加自定义运行时 `{id, displayName, protocol, command, args?, env?, cwd?, detect?}` → 201；重复可执行文件回 `409 already_exists` + `existingId` |
-| `POST /api/runtimes/:id/probe` | 是 | 只重探这一个运行时；内置运行时缺声明回 `409 declaration_missing` |
+| `POST /api/runtimes/:id/probe` | 是 | 只重探这一个运行时。内置引擎不跑 PATH 探测，而是按「有没有配供应商」刷新可用性；声明找不到回 `409 declaration_missing` |
 | `GET /api/bots` | 是 | Bot 列表，运行时**内联展开**；含 `providerId` / `role` / `enabledSkills` |
 | `GET /api/channels` | 是 | 渠道列表 |
 | `POST /api/channels` | 是 | 新建渠道：`{type:"dm"\|"group", participantBotIds, name?, hostBotId?}` → 201 `{channel}`。私聊**幂等**（同一 Bot 只有一条 dm，重复调用返回已有那条）；群聊限 2–5 个参与者，主持人必须在参与者里 |
