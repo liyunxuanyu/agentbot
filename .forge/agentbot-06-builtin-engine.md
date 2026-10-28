@@ -38,24 +38,30 @@ src/server/
 │  ├─ prompt.ts           系统提示装配（人格 + 记忆 + 技能索引 + 工具说明预算）
 │  ├─ tools/
 │  │  ├─ registry.ts      注册表（内置 + MCP 同一张表）
-│  │  └─ builtin/         read_file write_file edit_file list_dir grep run_shell web_fetch read_skill
-│  ├─ skills.ts           技能扫描、frontmatter 解析、索引生成
+│  │  └─ builtin/         read_file write_file edit_file list_dir grep run_shell
+│  │                      web_fetch read_skill list_skills create_bot
+│  ├─ skills.ts           技能扫描（mtime 签名缓存）、frontmatter 解析、按启用列表过滤、索引生成
+│  ├─ skills/install.ts   内置技能包安装（幂等、不覆盖用户改动、删了补装）
+│  ├─ skills/builtin/*/SKILL.md   4 份随代码分发的基础技能
 │  └─ limits.ts           迭代/工具/输出上限常量
 ├─ adapters/
 │  ├─ providers/          ← 唯一出现线上协议的地方
 │  │  ├─ contract.ts      ProviderClient 的实现契约（与 core/agent/provider.ts 对齐）
 │  │  ├─ openai-chat.ts   POST {baseUrl}/chat/completions（stream + tools）
 │  │  ├─ anthropic.ts     POST {baseUrl}/v1/messages（stream + tool_use）
+│  │  ├─ models.ts        模型清单拉取 + 能力表（内置 JSON + 用户覆盖）
 │  │  └─ index.ts         createProvider(config) 工厂
 │  ├─ mcp/
 │  │  ├─ client.ts        stdio JSON-RPC：initialize / tools/list / tools/call
+│  │  ├─ manager.ts       连接池 + 运行期 add/replace/remove（N3-2 热插拔）
 │  │  └─ config.ts        ~/.agentbot/mcp.json 读写与校验
 │  └─ channels/builtin/
 │     └─ driver.ts        ChannelDriver 实现（无进程）
 └─ http/routes/
-   ├─ providers.ts        /api/providers CRUD + test
-   ├─ mcp.ts              /api/mcp CRUD + 探测
-   └─ skills.ts           /api/skills 列表 + 重扫
+   ├─ providers.ts        /api/providers CRUD + test + models + catalog
+   ├─ mcp.ts              /api/mcp CRUD + reconnect（热插拔）
+   ├─ skills.ts           /api/skills 列表 + 重扫（补装内置包）
+   └─ setup.ts            /api/setup/state（初始化引导，N1）
 ```
 
 **依赖方向（硬约束）**：
@@ -182,6 +188,8 @@ export interface ToolResult {
 | `run_shell` | **exec** | 默认超时 120s；输出上限 64KB；取消时树杀（复用 `core/process/kill-tree.ts`）；**cwd 固定为会话 cwd** |
 | `web_fetch` | **network** | 仅 GET；超时 20s；HTML 转文本；上限 64KB；拒绝非 http(s) |
 | `read_skill` | read | 按 name 读取 `~/.agentbot/skills/<name>/SKILL.md` 全文 |
+| `list_skills` | read | 列出全部技能名 + 一行描述（含未启用的）；不进系统提示，供长尾发现（N4，2026-10-28 新增） |
+| `create_bot` | **admin** | 仅管理员 Bot 可用（工具表按 `bots.role` 裁剪）；与 `POST /api/bots` 共用 `core/bots/create.ts`（2026-10-27 新增） |
 
 **路径安全统一实现**（`tools/paths.ts`）：`resolveInside(cwd, p)` → `{ok, abs}`；任何工具都不得绕过。
 

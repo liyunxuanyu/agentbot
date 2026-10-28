@@ -20,7 +20,7 @@
 | 流式传输 | SSE（服务端→客户端）+ HTTP POST（客户端→服务端） | 事件严格单向；`EventSource` 原生重连 + `Last-Event-ID` 直接兑现 P0-04 | P0-14 写的是 WebSocket——等价落为「SSE 握手 token 校验失败即 401 断开」 |
 | 构建 | Vite 5 + `@vitejs/plugin-vue`（前端）+ tsup（后端单文件 ESM） | HMR 快；`node dist/server.js` 启动，无 ts-node 运行时开销 | 原生模块需 `external` |
 | 组件库 | **不引入整套组件库**（可选按需引入 TDesign Vue Next 的 Dialog / Dropdown / Tooltip） | 核心组件（Bot 卡片、Turn、事件折叠块、权限卡片、消息气泡）高度定制，套组件库反而要覆盖大量默认样式；仅少数边界场景用现成基础件 | 可选依赖，样式冲突就退回自研；不引入 Element Plus 全套 |
-| 测试 | Vitest（单元 + 契约回放）+ Playwright（3 条关键链路） | 契约测试是 PRD 硬要求，Vitest 对 JSONL fixture 回放最轻 | E2E 依赖真实 CLI，CI 中跳过 |
+| 测试 | Vitest（单元 + 契约回放）+ 端到端冒烟脚本 `scripts/smoke-builtin.mjs` | 契约测试是 PRD 硬要求，Vitest 对 JSONL fixture 回放最轻；冒烟用假 [OI] 网关跑全链路，不依赖真实 key 与真实 CLI | **未引入 Playwright**（架构初稿写过，实际没落地）；浏览器侧靠真机手测 |
 
 **明确不引入**：Redis/队列（单进程内存队列够）、ORM（12 张表手写 SQL 更透明）、Electron、Docker/K8s、WebSocket 库、状态机库（3 个状态机手写更可控）。
 
@@ -31,17 +31,21 @@
 ```
 agentbot/
 ├─ src/server/
-│  ├─ main.ts        启动：迁移→token→探测→调度器→HTTP
+│  ├─ main.ts        启动：状态目录 → 迁移 → 内置技能安装 → token → 探测 → MCP
+│  │                 → 管理员种子 → 权限 → 清扫 → 编排器 → Assignment → 调度器 → HTTP
 │  ├─ config.ts      ~/.agentbot 路径、默认值、保留策略
-│  ├─ http/{auth,sse}.ts + http/routes/*     token/429、SSE 重放、REST
+│  ├─ http/{auth,login,sse}.ts + http/routes/*     鉴权/登录页、SSE 重放、REST
 │  ├─ core/                        ← 不含任何协议字符串
 │  │  ├─ db/{schema.sql,db.ts,migrate.ts} + repo/*（每实体一文件，纯 SQL）
+│  │  ├─ agent/{loop,prompt,skills,limits}.ts + agent/skills/{install.ts,builtin/*}
+│  │  │                                           + agent/tools/（registry + builtin/*）
+│  │  ├─ bots/{create,seed,runtime-lookup}.ts
 │  │  ├─ events/{model,ingest,bus}.ts        统一事件、掩码过滤、落库+广播
-│  │  ├─ orchestrator/{turn,turn-queue,session-lock,context}.ts
-│  │  ├─ process/{supervisor,kill-tree,pid-registry}.ts
-│  │  ├─ permissions/{boundary,resolver,policy,grants}.ts
+│  │  ├─ orchestrator/{turn,session-lock,context}.ts
+│  │  ├─ process/{supervisor,kill-tree,pid-registry,session-cwd}.ts
+│  │  ├─ permissions/{boundary,resolver,policy,grants,worktree-guard}.ts
 │  │  ├─ memory/{assembler,summarizer}.ts
-│  │  ├─ group/{host,dispatcher}.ts          主持人决策、顺序派发
+│  │  ├─ group/{host,dispatcher,notices,write-lock}.ts
 │  │  ├─ assignment/{runner,report,worktree}.ts
 │  │  ├─ scheduling/{scheduler,triggers}.ts
 │  │  └─ usage/{recorder,aggregate}.ts + maintenance/{retention,sweeper}.ts
@@ -49,30 +53,28 @@ agentbot/
 │     ├─ contract.ts               Adapter/ChannelDriver 类型（唯一契约）
 │     ├─ registry.ts               加载 declarations/、校验、热载
 │     ├─ probe.ts                  探测与能力合并
-│     ├─ channels/{acp,native,cli}/*   三通道驱动
+│     ├─ builtin-runtime.ts        内置引擎的声明（不参与 PATH 探测）
+│     ├─ providers/*               模型供应商：store / openai-chat / anthropic / models
+│     ├─ mcp/{client,manager,config}.ts
+│     ├─ channels/{acp,native,cli,builtin}/*   四通道驱动
 │     └─ declarations/*.yaml       每运行时一个声明
 ├─ src/web/                        Vue 3
-│  ├─ main.ts                      createApp + router + pinia
-│  ├─ App.vue                      应用壳（rail + side + main）
-│  ├─ router/index.ts              10 条路由
-│  ├─ pages/                       每页一个 .vue
-│  │  ├─ SetupPage.vue / BotsPage.vue / BotDetailPage.vue
-│  │  ├─ ChatsPage.vue / ChatPage.vue
-│  │  ├─ AssignmentsPage.vue / AssignmentDetailPage.vue
-│  │  └─ SchedulesPage.vue / UsagePage.vue / SettingsPage.vue
-│  ├─ components/
-│  │  ├─ bot/  BotCard.vue BotAvatar.vue BotStateChip.vue BotCapabilityBadges.vue
-│  │  ├─ chat/ TurnItem.vue MessageBubble.vue EventRow.vue EventBlock.vue
-│  │  │        PermissionCard.vue Composer.vue SessionDivider.vue
-│  │  ├─ assignment/ AssignmentSheet.vue
-│  │  └─ common/ EmptyState.vue AppModal.vue Toast.vue
-│  ├─ stores/                      bots.ts sessions.ts events.ts permissions.ts ui.ts
-│  ├─ composables/                 useSseStream.ts useVirtualList.ts useHotkeys.ts
-│  └─ api/                         client.ts（REST）+ stream.ts（SSE）
+│  ├─ main.ts                      bootstrapToken → createApp + router + pinia
+│  ├─ App.vue                      应用壳（rail + side + main）+ 首启跳转 + 退出登录
+│  ├─ router/index.ts              10 个页面路由 + 根重定向 + 404 兜底
+│  ├─ pages/                       每页一个 .vue（含 SetupPage / SettingsPage）
+│  ├─ components/{bot,chat,common}/
+│  ├─ stores/                      bots channels runtimes providers mcp skills setup
+│  │                               sessions events permissions ui
+│  ├─ composables/                 useSseStream useVirtualList useHotkeys
+│  └─ net/                         client.ts（REST）+ stream.ts（SSE）+ types.ts
 ├─ src/shared/       前后端共用：事件类型、DTO、错误码
 ├─ fixtures/         录制的原始协议样本（契约测试）
-└─ tests/{contract,unit,e2e}/
+└─ tests/{contract,unit}/
 ```
+
+**目录名是 `net/` 而不是 `api/`**（历史遗留的硬约束）：Vite dev 代理把 `/api` 前缀整体
+转发给后端，源码模块 URL 一旦落在 `/api/*` 下就会被代理吞掉并返回 401。
 
 **分离铁律**：`core/` 不得出现协议字符串（`session/update`、`--output-format`）；`adapters/` 不得访问数据库。CI 用 lint 规则禁止反向 import。
 
@@ -204,10 +206,12 @@ modes: { headless: true }
 
 | 通道 | 关键通知 | 映射 |
 |---|---|---|
-| Codex app-server（JSONL/JSON-RPC） | `item.started`/`item.completed`（reasoning / command_execution / file_change / mcp_tool_call / agent_message）、`turn.completed`、`token_count` | reasoning→thought；command/file/mcp→tool_call(+result)；agent_message→message_delta；token_count→usage；turn.completed→done |
-| Codex approvals | `exec_approval_request` / `apply_patch_approval_request` | permission_request，应答走 JSON-RPC response |
-| OpenCode（HTTP + SSE `/event`） | `message.part.updated`(text/reasoning/tool)、`session.idle`、`permission.updated` | text→message_delta；reasoning→thought；tool→tool_call/result；idle→done |
-| Claude Agent SDK（进程内库） | SDK 的 `assistant`/`result` 消息流 | 复用同一 mapper，`resumeStrategy:'native'` |
+| Codex app-server（JSONL/JSON-RPC） | `item/started`/`item/completed`（reasoning / commandExecution / fileChange / mcpToolCall / agentMessage）、`turn/completed`、`thread/tokenUsage/updated` | reasoning→thought；command/file/mcp→tool_call(+result)；agentMessage→message_delta；tokenUsage→usage；turn/completed→done |
+| Codex approvals | `item/*/requestApproval` / `execCommandApproval` / `applyPatchApproval` | permission_request，应答走 JSON-RPC response |
+
+**初稿列过 OpenCode（HTTP+SSE）与 Claude Agent SDK（进程内库）两行，均未实现**：当前实际接入的
+运行时是 ACP（gemini-cli / claude-code）、原生（codex app-server）、CLI（zcode / dsh）与内置引擎
+（`builtin`，无进程）。要接这两者需要新增通道驱动，不是改声明就能完成。
 
 ### 3.7 CLI 兜底（ZCode）——诚实的能力降级
 
@@ -252,13 +256,18 @@ resumeStrategy: process-lifetime
 
 ### 3.10 契约测试
 
-`fixtures/<adapter>/<scenario>.jsonl` 存**原始协议行**（ACP 的 JSON-RPC、Codex 的 JSONL、ZCode 的 stdout 行），与 `<scenario>.expected.json`（规范化事件序列）成对。Vitest 用 `FakeTransport` 喂给 `ChannelDriver`，断言：① 事件序列深度相等（忽略 ts）；② 产出类型 ⊆ `eventCapabilities`；③ 插入垃圾行后仍不抛错（变异测试）。录制脚本 `npm run record -- --adapter codex` 在真实运行时上抓样本。三个参考通道各 ≥3 场景（正常 / 权限 / 崩溃）。
+`fixtures/<adapter>/<scenario>.jsonl` 存**原始协议行**（ACP 的 JSON-RPC、Codex 的 JSONL、ZCode 的 stdout 行），与 `<scenario>.expected.json`（规范化事件序列）成对。Vitest 用 `FakeTransport` 喂给 `ChannelDriver`，断言：① 事件序列深度相等（忽略 ts）；② 产出类型 ⊆ `eventCapabilities`；③ 插入垃圾行后仍不抛错（变异测试）。三个参考通道各 ≥3 场景（正常 / 权限 / 崩溃）。
+
+**没有 `npm run record` 录制脚本**（初稿提过，未落地）：fixture 是手工整理 + 少量真实录制，换样本时直接替换 `fixtures/` 下的文件。
 
 ---
 
 ## 4. 数据模型
 
-12 张主表 + 1 张支撑表（`permission_grants`）。全部带 `created_at INTEGER`(epoch ms)。
+12 张主表 + `permission_grants` + `schema_meta`（共 14 张，见 `core/db/schema.sql`）。全部带 `created_at INTEGER`(epoch ms)。
+下面是**初版**表结构；v2/v3/v4 追加的列见文末「迁移 v3 / v4」两节（`bots.provider_id/role/
+permission_mode/enabled_skills`、`sessions.workspace_path/provider_id/model/permission_mode`、
+`channels.workspace_path`、`memory_entries.scope/channel_id`、`usage_records.cache_reported` 等）。
 
 ```sql
 bots(id TEXT PK, name TEXT UNIQUE, persona TEXT, avatar TEXT, default_runtime_id TEXT,
@@ -356,13 +365,21 @@ created → starting → ready → running ⇄ waiting_permission │
 
 ```
 运行时抛出请求
- ① 归一化：action ∈ {write, read, exec, network}；target 解析为绝对路径
+ ① 归一化：action ∈ {write, read, exec, network}（+ 管理员工具的 admin）；target 解析为绝对路径
+ ①' 四档权限模式在边界之前裁决（R5）：
+      plan   → 读自动批准；写类直接拒绝（工具在注册表里已裁掉，这里是兜底）
+      full   → 绕过边界，全部批准并写审计（mode:full）
+      auto   → 边界内 **write** 自动批准并写审计；shell/network/admin 仍走下面流程
+      confirm→ 不参与，直接走下面流程
  ② 边界判定（用 boundary_snapshot + version，不受后续修改影响）
       越界 → 直接 deny 应答运行时 + 写审计 + 推「超出 Bot 边界」（不弹卡、不占 120s）
  ③ 授权命中：preauth 且动作 ∈ 预授权集合 → 自动批准 + 审计
       或 60s 内同 action_key 已有 grant（session/bot 域）→ 自动批准 + 审计
  ④ 生成卡片，按 timeout_policy 计时
 ```
+
+**auto 档口径（R5 方案 B，2026-10-28 定稿）**：越界写直接拒绝、**不弹卡** —— auto 的语义是
+「别烦我」，弹卡等于退回 confirm。需求与 UX 文案已按此口径改齐。
 
 **路径解析与目录穿越防护**（`permissions/resolver.ts`）：
 
@@ -402,7 +419,7 @@ pending ──approve/deny/remember──→ decided
 2. assistant 正文的**权威副本是 `messages.content`**，不是事件累积。服务端每 250ms 或每 2KB 把增量 flush 进 `content` 并 `content_version++`。
 3. 重连时：先 `GET /messages?channelId=&after=<最后已知 messageId>`，对 `content_version` 更大的消息用服务端文本整体替换本地文本；再回放 `id > lastEventId` 的事件。消息身份由 `messageId` 保证，不会出现重复气泡。
 
-**Pinia store 分域**：`bots`（Bot 列表与详情）、`sessions`（当前会话与消息）、`events`（按 turnId 索引的事件表）、`permissions`（待批与已决）、`ui`（面板开合、主题、toast）。REST 结果落对应 store，SSE 只做增量合并；不引入 TanStack Query，避免两套缓存语义。
+**Pinia store 分域**：`bots`、`channels`、`runtimes`、`providers`、`mcp`、`skills`、`setup`（初始化引导状态）、`sessions`（当前会话与消息）、`events`（按 turnId 索引的事件表）、`permissions`（待批与已决）、`ui`（面板开合、主题、toast）。REST 结果落对应 store，SSE 只做增量合并；不引入 TanStack Query，避免两套缓存语义。
 
 **性能关键**：事件以 20–50 条/秒追加，**不能用 `reactive` 深代理整个事件表**。
 - `events` store 用 `shallowRef<Map<turnId, EventRow[]>>`，Map 内原地 push 后手动 `triggerRef(events)`；仅 Turn 增删时重建 Map。
@@ -416,9 +433,13 @@ pending ──approve/deny/remember──→ decided
 
 | 面 | 做法 |
 |---|---|
-| 本地 token | `crypto.randomBytes(32).toString('base64url')` 写入 `~/.agentbot/token`，`chmod 0600`（Windows 用 `icacls` 去继承只授当前用户，失败记 warning）；控制台打印 `http://127.0.0.1:<port>/?t=<token>` |
-| 会话凭据 | 首次带 `?t=` 访问后写 HttpOnly + SameSite=Strict cookie，之后 fetch 与 EventSource 都用 cookie；`?t=` 立即 `history.replaceState` 抹除 |
-| 401/429 | 鉴权前置钩子；失败返回 `401 {"error":"unauthorized"}` 无业务字段；按来源计数，10 次失败 → 60s 内 `429`；重置 token 时 `res.end()` 断开所有 SSE |
+| 本地 token | `crypto.randomBytes(32).toString('base64url')` 写入 `~/.agentbot/token`，`chmod 0600`（Windows 用 `icacls` 去继承只授当前用户，失败记 warning）；控制台打印登录页地址 `http://127.0.0.1:<port>/login`，并附一条 `?t=<token>` 链接（打开一次即种持久 cookie） |
+| 登录页 | `GET /login` 服务端渲染（`http/login.ts`），免鉴权、`no-store`、`referrer-policy: no-referrer`、不回显任何 token（连脱敏预览都不显示）；`POST /login` 校验后 303 回 `next`。为什么不放 Vue 路由页：鉴权钩子覆盖所有路径（含静态资源），未登录时 SPA 的 `index.html` 与 JS 包都拿不到，前端路由页没机会渲染 |
+| 会话凭据 | 登录成功或首次带有效 `?t=` 访问后种 `agentbot_token`：**HttpOnly + SameSite=Strict + Path=/ + Max-Age=30 天**（持久，重开浏览器仍在）。`Secure` 在 HTTPS 或 `NODE_ENV=production` 时自动加，可用 `AGENTBOT_COOKIE_SECURE=1\|0` 强制开关 —— 本地 http 加 Secure 会让浏览器丢弃 cookie（登录看似成功、刷新又回登录页）。`?t=` 由前端 `history.replaceState` 立即抹除 |
+| 凭据优先级 | 服务端 `tokenCandidates()` 返回 `?t=` → cookie 两个候选，**逐个校验、任一通过即放行**：前端 sessionStorage 里残留的旧 token 不会把有效 cookie 拖成 401。登录页反过来以 cookie 优先（有效 cookie 直接放行），并在页面脚本里清掉前端残留副本 |
+| `next` 校验 | 只接受站内绝对路径（拒绝 `//evil.com`、`\`、CR/LF）；剥掉 `?t=`；拒绝指回 `/login` 与 `/logout`（防开放重定向与回跳死循环） |
+| 登出 | `POST /api/auth/logout`（204，清 cookie，前端按钮用）与 `POST /logout`（303 回登录页，无 JS 兜底），**都免鉴权** —— 只删凭证、不读业务数据 |
+| 401/429 | 鉴权前置钩子；`/api/*` 与 fetch/EventSource 失败返回 `401 {"error":"unauthorized"}` 无业务字段；浏览器导航（`Accept` 含 `text/html` 且非 `/api/*`）改为 302 到 `/login?next=<原路径>`；按来源计数，10 次失败 → 60s 内 `429`（人读的请求回登录页 + `retry-after`，程序读的回 JSON）；重置 token 时 `closeAllStreams()` 断开所有 SSE |
 | 不代管凭据 | 从不读取/存储/记录用户 API Key。子进程继承 `process.env`（用户自己的环境，不落库）。P1-01 自定义 env 写 `~/.agentbot/secrets.json`（0600），API 只返回 `{key, set:true}`，日志全局脱敏 `/(key\|token\|secret\|authorization)/i` |
 | 命令注入 | 一律 `spawn(cmd, args, {shell:false, windowsHide:true})`，args 来自声明数组，**永不字符串拼接**。自定义命令串用白名单分词器（拒绝 `\| & ; > < $ ( ) \`` 与换行） |
 | 越权读写 | §6 路径解析 + 边界；服务自身只读写 `~/.agentbot/` 与用户显式允许的目录 |
