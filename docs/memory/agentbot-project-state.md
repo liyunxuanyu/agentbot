@@ -13,7 +13,7 @@ metadata:
 
 **技术栈（架构 §1，用户明确要求 Vue）**：Node 22 + TypeScript ESM + Fastify 5 + better-sqlite3(WAL) + SSE；前端 Vue 3 + Pinia + Vue Router（history 模式）+ @tanstack/vue-virtual。核/adapters 物理分离，`check-boundaries.mjs` 强制：core 不得出现协议字符串、adapters 不得 import 数据库。
 
-**启动方式**：`npm run build && npm run start:local`（`scripts/start-local.mjs` 自动把本机 ZCode 的 `zcode.cjs` 路径填进 `AGENTBOT_BIN_ZCODE`，否则 ZCode 显示"未安装"）。控制台打印带 token 的 URL。状态全在 `~/.agentbot`（db/token/wt/）。
+**启动方式**：`npm run build && npm run start:local`（`scripts/start-local.mjs` 自动把本机 ZCode 的 `zcode.cjs` 路径填进 `AGENTBOT_BIN_ZCODE`，否则 ZCode 显示"未安装"）。控制台打印登录页地址（另附一条带 token 的链接，2026-10-28 起登录页 + 持久 HttpOnly cookie，见文末）。状态全在 `~/.agentbot`（db/token/providers/mcp/skills/wt/）。
 
 **用户裁定的一条安全底线（重要）**：CLI 通道的运行时（ZCode/DSH，`permission.channel: none`）**强制在 git worktree 里跑**。原因是它们不发权限请求，产品层无法拦截——M10 实测时 ZCode 真的改了仓库 `package.json` 并新建了文件。实现：`core/permissions/worktree-guard.ts` + `core/process/session-cwd.ts`；worktree 未就绪返回 409 `worktree_not_ready`，**绝不静默降级 local**；用户可改回 local 但需 `confirmRisk: true` 二次确认。
 
@@ -65,7 +65,10 @@ metadata:
 
 ## 新需求：初始化引导 / 基础技能 / 热插拔 / 技能按需加载（2026-10-28）
 
-四条新需求整理在 [.forge/agentbot-19-new-requirements.md](../../.forge/agentbot-19-new-requirements.md)，全部未开工。
+> **已全部实现**（N1 / N2 / N3-1 / N3-2 / N4），落地细节见本文末「2026-10-28：18 号 7 条缺口 + 19 号四条需求全部落地」。
+> 下面是开工前的现状梳理，保留作背景。
+
+四条新需求整理在 [.forge/agentbot-19-new-requirements.md](../../.forge/agentbot-19-new-requirements.md)。
 
 - N1 初始化引导：现有 /setup 只有 3 步（探测运行时→建 Bot→发消息），缺供应商、管理员、工作区、技能；需扩到 5 步 + 首启判定 + 可重入
 - N2 基础技能：8 个内置工具已存在，缺的是做成 4 份 SKILL.md 并首次安装到 ~/.agentbot/skills/
@@ -75,6 +78,9 @@ metadata:
 建议顺序 N2 → N4 → N1 → N3。与 agentbot-18 的唯一文件交集是 migrate.ts 的 v4，合并一次做。
 
 ## 待修：7 条部分落地的需求（2026-10-28）
+
+> **7 条已全部修完**（R3 走方案 A、R5 走方案 B），验收项见 [.forge/agentbot-18-fix-list.md](../../.forge/agentbot-18-fix-list.md)。
+> 下面是当时的审计结论，保留作背景。
 
 需求审计完成（24 条：17 对齐 / 7 部分 / 0 未做）。待修清单在 [.forge/agentbot-18-fix-list.md](../../.forge/agentbot-18-fix-list.md)，每条有文件位置与验收标准。
 
@@ -117,3 +123,27 @@ R1–R8 已实现并验收：迁移 v3、会话/渠道工作区、记忆作用�
 - 内置技能包是运行时资源，`tsup.config.ts` 的 `onSuccess` 必须复制，否则打包后找不到源目录
 
 **门禁**：tsc / vue-tsc / boundaries 全绿；vitest 484 passed / 1 skipped；`smoke:builtin` 全链路通过。
+
+## 2026-10-28：服务端登录页 + 持久 HttpOnly cookie 登录态
+
+**动机**：此前只能把控制台打印的 `?t=<token>` 拼进地址栏，换设备 / 清 cookie 后要回去翻那条 URL。
+
+**实现**
+- 新增 `src/server/http/login.ts`：`GET /login`（服务端渲染表单，免鉴权、`no-store`、不回显 token）、
+  `POST /login`（校验 token → 303 回 `next`）、`POST /logout`（303 回登录页）、`POST /api/auth/logout`（204）。
+- cookie：`agentbot_token`，`HttpOnly; SameSite=Strict; Path=/; Max-Age=30 天`；`Secure` 在 HTTPS 或
+  `NODE_ENV=production` 时自动加，`AGENTBOT_COOKIE_SECURE=1|0` 可强制开关。
+- 鉴权钩子：`isPublicPath()` 放行 `/api/health`、`/login`、`/logout`、`/api/auth/logout`；
+  浏览器导航 401 → 302 `/login?next=<原路径>`（`nextFromUrl` 剥掉 `?t=`、拒绝指回登录页/登出，防死循环与开放重定向）。
+- 凭据优先级：`tokenCandidates()` = `?t=` → cookie，逐个校验任一通过即放行；登录页里反过来 cookie 优先。
+- 前端：`client.ts` 的 `redirectToLogin()` 清 sessionStorage 后整页跳 `/login`；`App.vue` 顶栏加退出按钮；
+  `vite.config.ts` 把 `/login`、`/logout` 也代理到后端（否则 Vite SPA 兜底返回 index.html，前端没有 /login 路由 → 死循环）。
+- 测试：`tests/unit/http-login.test.ts`、`http-auth-page.test.ts`。
+
+**新增的坑**
+- 登录页**不能**做成 Vue 路由页：鉴权钩子覆盖所有路径（含静态资源），未登录时 index.html 与 JS 包都拿不到。
+- 本地 http 下给 cookie 加 `Secure` 会被浏览器丢弃 → 登录「成功」但刷新又回登录页。
+- `?t=` 残留会拖累有效 cookie：必须「多候选逐个校验」，而不是只看第一个。
+- 开发态 `/login` 必须代理到后端，否则被 SPA 兜底吞掉。
+
+**门禁**：tsc / vue-tsc / boundaries 全绿；vitest **500 passed / 1 skipped（38 文件）**；`smoke:builtin` 通过。
