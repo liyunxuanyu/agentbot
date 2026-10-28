@@ -309,10 +309,11 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `GET /api/admin/tidy` · `POST /api/admin/tidy` | 是 | 孤儿数据预览 / 按 `targets` 整理（`channels`/`orphanSessions`/`memories`/`orphanUsage`，默认不含用量）；执行需 `confirm:true` |
 | `POST /api/admin/purge` | 是 | 全量删除：`{confirm:"删除全部数据"}` → `{ok, deleted:{每表行数}, closedStreams}`。确认短语不符回 `400 confirm_required`；保留 `runtime_definitions`（探测缓存）与 `schema_meta` |
 
-其余所有请求（含静态资源）都要过 token 校验：无 token 或错误 token 时，`/api/*` 与
-fetch/EventSource 返回 `401 {"error":"unauthorized"}`（响应体不含任何业务数据），
-浏览器导航（`Accept` 含 `text/html`）则 302 到 `/login?next=<原路径>`；
-同一来源连续 10 次失败后 60s 内返回 `429`。
+其余所有请求（含静态资源）都要过 token 校验，**免鉴权的只有** `/api/health`、`/login`、
+`/logout`、`/api/auth/logout`。无 token 或错误 token 时，`/api/*` 与 fetch/EventSource 返回
+`401 {"error":"unauthorized"}`（响应体不含任何业务数据），浏览器导航（`Accept` 含 `text/html`）
+则 302 到 `/login?next=<原路径>`；同一来源连续 10 次失败后 60s 内一律 `429`（带 `retry-after`，
+人读的请求回登录页 + 剩余秒数，程序读的回 `{"error":"too_many_requests"}`）。
 
 未注册的 `/api/*` 统一返回 `404 {"error":"not_found"}`。前端用这个 code（而不是任意 404）
 判断「端点还没实现」并降级为空态；已实现端点查不到资源时应回更具体的 code
@@ -332,6 +333,8 @@ fetch/EventSource 返回 `401 {"error":"unauthorized"}`（响应体不含任何�
                                  "contextWindow": 1000000, "streaming": true } },
   "executionLocation": "worktree", "effectivePath": "~/.agentbot/wt/research",
   "worktreeState": "ready", "status": "active",
+  "providerId": null, "role": "member",
+  "enabledSkills": ["file-basics", "shell-basics", "search-basics", "web-basics"],
   "state": "idle", "stateSince": null, "pendingPermissions": 1,
   "lastActiveAt": 1761200000000, "createdAt": 1761100000000
 }]}
@@ -339,9 +342,12 @@ fetch/EventSource 返回 `401 {"error":"unauthorized"}`（响应体不含任何�
 // GET /api/channels/:id  —— 首屏一次拿全，lastEventId 作为 SSE 首连游标
 { "channel": { "id": "g1", "type": "group", "name": "发布前评审",
                "participantBotIds": ["b1","b2"], "hostBotId": "b6",
+               "workspacePath": null,
                "lastMessagePreview": "…", "lastMessageAt": 0, "unread": 0, "createdAt": 0 },
   "sessions": [{ "id": "s1", "channelId": "g1", "botId": "b1", "runtimeId": "gemini",
                  "resumeState": "rebuilt", "status": "idle",
+                 "workspacePath": null, "providerId": null, "model": null,
+                 "permissionMode": "confirm",
                  "startedAt": 0, "endedAt": null, "messageCount": 4,
                  "tokensIn": 1204, "tokensOut": 388 }],
   "messages": [{ "id": "m1", "sessionId": "s1", "channelId": "g1", "turnId": "t-1",

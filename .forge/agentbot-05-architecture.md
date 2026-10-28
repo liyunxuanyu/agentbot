@@ -36,7 +36,7 @@ agentbot/
 │  ├─ config.ts      ~/.agentbot 路径、默认值、保留策略
 │  ├─ http/{auth,login,sse}.ts + http/routes/*     鉴权/登录页、SSE 重放、REST
 │  ├─ core/                        ← 不含任何协议字符串
-│  │  ├─ db/{schema.sql,db.ts,migrate.ts} + repo/*（每实体一文件，纯 SQL）
+│  │  ├─ db/{schema.sql,db.ts,migrate.ts} + repo/{events,memory,messages}.ts（纯 SQL）
 │  │  ├─ agent/{loop,prompt,skills,limits}.ts + agent/skills/{install.ts,builtin/*}
 │  │  │                                           + agent/tools/（registry + builtin/*）
 │  │  ├─ bots/{create,seed,runtime-lookup}.ts
@@ -48,7 +48,7 @@ agentbot/
 │  │  ├─ group/{host,dispatcher,notices,write-lock}.ts
 │  │  ├─ assignment/{runner,report,worktree}.ts
 │  │  ├─ scheduling/{scheduler,triggers}.ts
-│  │  └─ usage/{recorder,aggregate}.ts + maintenance/{retention,sweeper}.ts
+│  │  └─ usage/{recorder,aggregate}.ts   （预留的 maintenance/{retention,sweeper}.ts 未实现）
 │  └─ adapters/                    ← 唯一允许出现协议细节的地方
 │     ├─ contract.ts               Adapter/ChannelDriver 类型（唯一契约）
 │     ├─ registry.ts               加载 declarations/、校验、热载
@@ -309,7 +309,8 @@ permission_grants(id TEXT PK, bot_id, session_id, action_key TEXT, scope TEXT /*
 
 **用量聚合**：不建物化视图，`GROUP BY bot_id, runtime_id` 走覆盖索引。删除 Bot 后 `usage_records.bot_id` 保留（不级联），靠左连接显示「已删除 Bot」。
 
-**保留策略**：`maintenance/retention.ts` 启动时 + 每 24h 执行，按 `created_at < cutoff` 分批 `DELETE ... LIMIT 5000` 循环（避免长事务锁住 WAL）；只影响 `messages/events/usage_records/permission_requests`，`memory` 与 `assignment.report` 不自动删。
+**保留策略（设计，尚未实现）**：设计上是 `maintenance/retention.ts` 启动时 + 每 24h 执行，按 `created_at < cutoff` 分批 `DELETE ... LIMIT 5000` 循环（避免长事务锁住 WAL），只影响 `messages/events/usage_records/permission_requests`。
+**实际代码**：`config.retention`（`usageDays` / `auditDays` / `worktreeGraceDays` / `sweepIntervalMs`）已定义，`repo/events.ts` 也有 `deleteOlderThan()`，但**没有任何调度器调用它**，`core/maintenance/` 目录不存在；设置页的 90/180/365 单选只在本地 state 里，页面明示「后端还没有保留策略端点，不会落库」。删除数据目前只有 `POST /api/admin/purge`（全量）与 `POST /api/admin/tidy`（孤儿数据）。
 
 ---
 
