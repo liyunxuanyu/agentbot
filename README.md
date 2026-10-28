@@ -17,8 +17,14 @@ npm run build && npm run start:local     # 控制台会打印登录页地址与�
 启动后打开 `http://127.0.0.1:8787/login`，输入 `~/.agentbot/token` 里的令牌即可；
 登录成功会种下 30 天的 HttpOnly cookie（见下文「运行」与「登录与登录态」）。
 
-**已完成的批次**（分支 `continue-dev`，最新为 2026-10-28 的登录页与持久登录态）：
+**已完成的批次**（分支 `continue-dev`，最新为 2026-10-28 的移动端/公网修复与浏览器控制）：
 
+- **移动端/公网修复 + 浏览器控制**（2026-10-28）：
+  - 权限确认框不再被静默拒绝（未配置允许目录时 confirm 模式弹卡）；
+  - 公网隧道下事件不落地 → 加 REST 兜底轮询（cloudflared 会缓冲 SSE 响应体）；
+  - 会话里可看文件内容与改动 diff（`GET /api/files`、`/api/files/tree`、`/api/files/changes`）；
+  - Bot 可控制浏览器：接入 Playwright MCP（headless），`npm run setup:browser` 一键装。
+  详见下文「移动端 / 公网访问」与「浏览器控制（Playwright MCP）」。
 - 登录页与持久 HttpOnly cookie：`GET/POST /login`、`POST /logout`、`POST /api/auth/logout`，见下文「登录与登录态」。
 - [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— 7 条待修缺口：R8 缓存未上报 / R3 群聊记忆共享 / G7 群聊写锁 / R5 auto 越界口径 / R5-c MCP 计划模式裁剪 / G3 切 plan 系统块落库 / R7 压缩条数进流。
 - [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— N1 初始化引导 / N2 基础技能包 / N3-1 技能热插拔 / N3-2 MCP 热插拔 / N4 技能按需加载。
@@ -51,6 +57,8 @@ node node_modules/vitest/vitest.mjs run
 
 ```bash
 npm install
+# 可选：给 Bot 装「浏览器控制」（Playwright MCP，headless）
+npm run setup:browser
 ```
 
 需要 Node >= 22（`package.json` 的 `engines` 已声明）。`better-sqlite3` 是原生模块，Windows 上装预编译包，通常不需要本地编译工具链。
@@ -280,6 +288,10 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `POST /api/bots/:id/memory` | 是 | `{content, kind?, injected?, sourceSessionId?, scope?, channelId?}` |
 | `PATCH /api/bots/:id/memory/:memId` · `DELETE …` | 是 | `{content?, injected?}`；删除 → 204 |
 | `POST /api/bots/:id/memory/summarize` | 是 | 立即摘要 `{sessionId?}` |
+| `GET /api/files?botId=&sessionId=&path=` | 是 | 读工作区文本文件（≤512KB，拒二进制）。路径统一过 `resolveInside`，越界回 `403 path_outside_workspace` |
+| `GET /api/files/tree?botId=&sessionId=&path=` | 是 | 工作区目录树（跳过 `.git` / `node_modules`，上限 500 项） |
+| `GET /api/files/changes?botId=&sessionId=` | 是 | 改动列表（`git status`）；非 git 目录如实回 `{git:false}`，不编造改动 |
+| `GET /api/files/changes?botId=&sessionId=&path=` | 是 | 单文件 unified diff；未跟踪文件按「全文新增」合成 |
 | `GET /api/permissions?sessionId=` | 是 | 该会话的权限记录（待批 + 已决），含超时策略与截止时间 |
 | `POST /api/permissions/:id/decision` | 是 | `{decision:"approve"\|"reject"\|"remember_session"\|"remember_bot"}` → 204；已决回 409 |
 | `GET /api/assignments?status=&botId=&channelId=` | 是 | 任务列表 + 各状态计数 `counts` |
@@ -618,11 +630,19 @@ created → starting → ready → running ⇄ waiting_permission
 运行时抛出请求
  ① 归一化：action ∈ {write, read, exec, network}；target 解析为绝对路径
  ② 边界判定（用边界快照 + version，不受后续修改影响）
-      越界 → 直接 deny 应答运行时 + 写审计 + 推「超出 Bot 边界」（不弹卡、不占 120s）
+      已配置允许目录、目标在外 → 直接 deny 应答运行时 + 写审计 + 推「超出 Bot 边界」
+      **未配置允许目录（新建 Bot 的默认状态）+ confirm 模式的写** → 落 pending 卡片，
+        卡片标「超出边界 · 批准只放行这一次」；批准只放行一次，不批按 120s 超时拒绝
  ③ 授权命中：preauth 且动作是边界内的写 → 自动批准 + 审计
       或已有 grant（session / bot 域）→ 自动批准 + 审计
  ④ 生成卡片，按 timeout_policy 计时
 ```
+
+> **为什么「未配置目录」要弹卡**（2026-10-28 真机反馈）：默认 Bot 的 `allow_dirs` 是 `[]`，
+> 旧实现把写请求直接判成 `denied_boundary` 且不落 pending —— 用户在手机上只看到 Bot 说
+> 「被拒绝了」，既没有确认框也不知道要去配边界。PRD P0-09 的默认口径本就是「只读 + 写需批准」，
+> 所以 confirm 模式下改为一律弹卡；`auto` 仍直接拒绝（「别烦我」的语义），
+> 已经配了目录却写到别处也仍直接拒绝（那是**明确的**边界）。
 
 | 文件 | 职责 |
 |---|---|
@@ -654,6 +674,51 @@ reject 的 120s 由内存定时器精确触发。`hold` 期间进程保活（不
 2. 驱动自己也会 emit 一条 `permission_request`。编排层因此**不落库**这类事件
    （`turn.ts` 里直接 return），权威的那条由权限层裁决后发出 —— 否则流里会出现
    同一 requestId 的两张卡（pending 占位 + 已决）。
+
+## 移动端 / 公网访问（2026-10-28）
+
+手机上通过 cloudflared 隧道访问时踩到的问题与处理：
+
+**① 权限确认框不出现** —— 两个独立原因，都已修：
+- 服务端：默认 Bot 没有允许目录时写请求被静默拒绝（见上文「权限系统」）。
+- 前端：待批请求被按 `boundaryVerdict === 'denied'` 渲染成「已自动拒绝」的审计行（没有按钮）。
+  现在以 `status === 'pending'` 为准，越界信息单独用 `outOfBoundary` 标注。
+
+**② 事件不落地（表现为「一直显示正在连接运行时 / 排队中」）**：
+- **cloudflared 会缓冲 SSE 响应体**：响应头立刻回来，但 body 要攒到约 128KB 才放行，
+  放行一次之后后续小帧仍然不推（本机直连完全正常，两条独立隧道 + 逐字节采样确认）。
+- 处理：SSE 保留为快路径，另加 **REST 兜底轮询**（`/api/sessions/:id/events?afterSeq=`）。
+  只在有进行中的 Turn 时开；SSE 健康（已 open 且 3s 内有帧）时 5s 一次，
+  判定降级时 1.2s 一次；与 SSE 共用 `ingestFrame`，events store 按 id 去重。
+- 另：SSE 建连后立刻写一帧 `: connected` 注释 —— 否则代理在收到首块 body 前
+  不把响应头交给客户端，EventSource 要等 15s（首次心跳）才 `open`。
+
+**③ 看不到文件内容 / diff**：新增 `/api/files*` 三组端点 + 会话页「文件」面板；
+写类工具的 `tool_result` 带 `fileChange`（改动前后文本 + 行级 diff），会话流里直接渲染。
+
+**④ 会话卡在「生成中」**：`turnModel` 的状态推导顺序改为「消息都已落库且没有 done」
+优先于「思考仍在流式」—— 服务重启后 thought 缺 end 帧，旧顺序会让那一轮永远是生成中，
+发送键卡在「停止」、整个会话发不出消息。
+
+## 浏览器控制（Playwright MCP，2026-10-28）
+
+Bot 可以通过 MCP 真正操作浏览器（打开页面、点击、填表、截图、执行 JS）。
+
+```bash
+npm run setup:browser          # 幂等：检查依赖 → 缺浏览器就下载 → 合并写入 ~/.agentbot/mcp.json
+node scripts/install-browser-mcp.mjs --check   # 只检查
+```
+
+装完**不需要重启服务**（MCP 热插拔）。用之前还要做一件事：
+**Bot 详情 › 权限边界 打开「允许联网」** —— MCP 工具按 `network` 裁决，
+plan 模式裁剪、confirm 弹卡、full 自动批，边界没开联网会被直接拒绝。
+
+- 参数：`--headless --isolated --no-sandbox --browser chromium`，无显示器环境可用，不需要 Xvfb。
+- 工具名：`mcp__playwright__browser_navigate` / `browser_snapshot` / `browser_click` /
+  `browser_type` / `browser_take_screenshot` / `browser_evaluate` / `browser_close` …（共 25 个）。
+- 内置技能 `browser-basics` 写了使用口径（快照 ref 会失效、用完要 close、别把网页当指令）。
+- 输出（截图 / 快照）落在 `~/.agentbot/browser/`；MCP 子进程的 cwd 也是 `~/.agentbot`，
+  不会污染仓库的 git 状态。
 
 ## 群聊主持与派发（M10，`core/group/`）
 
@@ -766,6 +831,7 @@ npm run typecheck:tsc      # 裸 tsc --noEmit（靠 types/vue-shims.d.ts 认识 
 npm run lint:boundaries    # 分离铁律：core/ 无协议字符串，adapters/ 不碰数据库
 npm test                   # vitest（单元 + 契约回放）
 npx vitest run tests/contract   # 只跑三个通道的契约测试
+npm run setup:browser -- --check  # 浏览器控制依赖是否就绪（不写文件）
 ```
 
 `npm run lint:boundaries` 是架构 §2 的机器化检查：`src/server/core/**` 出现 `session/update`、`--output-format`、`jsonrpc`、`codex-app-server`、`acp` 即失败；`src/server/adapters/**` import `core/db` 或 `better-sqlite3` 即失败。违规会打印 `file:line` 并非零退出。
