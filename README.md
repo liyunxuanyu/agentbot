@@ -195,8 +195,9 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 ### `messages.content` 是正文唯一权威副本
 
 页面加载时先用 `GET /api/channels/:id` 拿 `messages`（权威正文）与 `lastEventId`，
-再建 SSE 连接补增量。正常路径**不用事件累积重建正文**。只有该端点尚未实现
-（M3 阶段 404 `{"error":"not_found"}`）时才降级为事件累积，并在右面板明示端点待接入。
+再用 `GET /api/sessions/:id/events` 分页拉事件（含 `meta`），最后建 SSE 连接补增量。
+正常路径**不用事件累积重建正文**；事件端点只负责把 thought / tool_call / usage 这些非正文块补回来。
+（首连游标优先用事件回放返回的 `lastEventId`，群聊另按 Session 各开一条连接。）
 
 ## 状态目录
 
@@ -263,7 +264,7 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `POST /api/runtimes/:id/probe` | 是 | 只重探这一个运行时。内置引擎不跑 PATH 探测，而是按「有没有配供应商」刷新可用性；声明找不到回 `409 declaration_missing` |
 | `GET /api/bots` | 是 | Bot 列表，运行时**内联展开**；含 `providerId` / `role` / `enabledSkills` |
 | `GET /api/channels` | 是 | 渠道列表 |
-| `POST /api/channels` | 是 | 新建渠道：`{type:"dm"\|"group", participantBotIds, name?, hostBotId?}` → 201 `{channel}`。私聊**幂等**（同一 Bot 只有一条 dm，重复调用返回已有那条）；群聊限 2–5 个参与者，主持人必须在参与者里 |
+| `POST /api/channels` | 是 | 新建渠道：`{type:"dm"\|"group", participantBotIds, name?, hostBotId?, workspacePath?}` → 201 `{channel}`；私聊命中已有渠道时回 200 + 已有那条。私聊**幂等**（同一 Bot 只有一条 dm）；群聊限 2–5 个参与者，主持人必须在参与者里（缺省取第一个），参与者必须存在且未归档 |
 | `GET /api/channels/:id` | 是 | 渠道 + Session + 消息 + SSE 首连游标 `lastEventId` |
 | `PATCH /api/channels/:id` | 是 | `{workspacePath}`：渠道级工作区；字符串需存在/是目录/可写（不要求 git），`null`/空串清除回退链 |
 | `POST /api/messages` | 是 | 私聊：立刻返回 `{messageId, turnId, sessionId}`，锁被占则 `queued:true`。**群聊**：主持人决策后返回 `{speakers, calls, skipReason, degraded, notice, warnings}`，派发在后台依次执行 |
