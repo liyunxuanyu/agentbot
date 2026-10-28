@@ -808,7 +808,8 @@ tests/unit/            ingest/repo/sse/turn/process/permissions/lifecycle/contex
   同群 Bot A 写的记忆 Bot B 也能注入；记忆页用 `sourceBotId` / `sourceBotName` 标明来源。
 - **群聊写锁（G7）**：显式 @ 多个 Bot 并行派发时，`core/group/write-lock.ts` 按渠道串行化
   写类工具（write/exec/network/admin），读类不排队。
-- **auto 档越界（R5 方案 B）**：边界内写自动批准并写审计，越界**直接拒绝**、不弹卡。
+- **auto 档越界（R5 方案 B）**：边界内**写**自动批准并写审计，越界**直接拒绝**、不弹卡；
+  shell / network / admin 动作在 auto 档仍然弹卡。
 
 ## 会话控制（2026-10-27）
 
