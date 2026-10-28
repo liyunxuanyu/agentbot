@@ -1,6 +1,6 @@
 # AgentBot
 
-本机运行的 Web 工作台：把多个 Bot 编排到可插拔的 agent 运行时上（ACP / Codex app-server / OpenCode / Claude SDK / CLI 兜底）。
+本机运行的 Web 工作台：把多个 Bot 编排到可插拔的 agent 运行时上（四条通道：ACP / Codex app-server / CLI 兜底 / 内置引擎）。
 
 单进程本地服务：Node 22 + TypeScript（ESM）+ Fastify 5 + SQLite（better-sqlite3，WAL）+ SSE；前端 Vue 3 + Pinia + Vue Router。
 
@@ -11,11 +11,15 @@ git clone https://github.com/liyunxuanyu/agentbot.git
 cd agentbot
 git checkout continue-dev
 npm install
-npm run build && npm run start:local     # 控制台会打印带 token 的访问 URL
+npm run build && npm run start:local     # 控制台会打印登录页地址与带 token 的链接
 ```
 
-**两批待办已于 2026-10-28 全部完成**（分支 `continue-dev`）：
+启动后打开 `http://127.0.0.1:8787/login`，输入 `~/.agentbot/token` 里的令牌即可；
+登录成功会种下 30 天的 HttpOnly cookie（见下文「运行」与「登录与登录态」）。
 
+**已完成的批次**（分支 `continue-dev`，最新为 2026-10-28 的登录页与持久登录态）：
+
+- 登录页与持久 HttpOnly cookie：`GET/POST /login`、`POST /logout`、`POST /api/auth/logout`，见下文「登录与登录态」。
 - [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— 7 条待修缺口：R8 缓存未上报 / R3 群聊记忆共享 / G7 群聊写锁 / R5 auto 越界口径 / R5-c MCP 计划模式裁剪 / G3 切 plan 系统块落库 / R7 压缩条数进流。
 - [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— N1 初始化引导 / N2 基础技能包 / N3-1 技能热插拔 / N3-2 MCP 热插拔 / N4 技能按需加载。
 
@@ -31,7 +35,7 @@ npm run build && npm run start:local     # 控制台会打印带 token 的访问
 - [`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md) —— 7 条缺口（已修完，留作验收口径）。依据是 [`.forge/agentbot-17-requirements-audit.md`](.forge/agentbot-17-requirements-audit.md)。
 - [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md) —— N1 初始化引导 / N2 基础技能 / N3 热插拔 / N4 技能按需加载（已实现）。
 - [`.forge/agentbot-14-handoff.md`](.forge/agentbot-14-handoff.md) —— 上一轮的交接记录：迁移 v3 SQL、模块文件归属、验收门槛（已完成，留作参考）。口径源头是 [`.forge/agentbot-11-requirements-align.md`](.forge/agentbot-11-requirements-align.md)。
-- [`docs/memory/agentbot-project-state.md`](docs/memory/agentbot-project-state.md) —— 项目全貌 + 7 处真机踩过的坑（虚拟列表 transform 毁 sticky、CLI 人格注入、exit 0 误判 crashed、messages 同毫秒排序、pending Turn、最新轮不自动折叠…）。重复踩一遍要几个小时。
+- [`docs/memory/agentbot-project-state.md`](docs/memory/agentbot-project-state.md) —— 项目全貌 + 真机踩过的坑（虚拟列表 transform 毁 sticky、CLI 人格注入、exit 0 误判 crashed、messages 同毫秒排序、pending Turn、最新轮不自动折叠…）。重复踩一遍要几个小时。
 - [`.forge/`](.forge/) —— 产品文档全在这里：`agentbot-00-brief` / `01-prd` / `02-ux` / `03-ui` / `tokens.css` / `05-architecture` / `06-builtin-engine`（内置引擎设计）/ `07-review`（验收报告），以及 `agentbot-prototype-v2/index.html`（视觉权威原型）。
 
 **验证命令**（CI 与本地都用这四条）：
@@ -99,20 +103,23 @@ Vue 3（Composition API + `<script setup>`）+ Pinia + Vue Router 4，构建用 
 ```
 src/web/
   main.ts                 入口：bootstrapToken → createApp → pinia → 主题 → router
-  App.vue                 应用壳：240 侧栏 + 顶栏 + 主区（右面板属于 /chat 自己）
+  App.vue                 应用壳：240 侧栏 + 顶栏 + 主区（右面板属于 /chat 自己）；
+                          挂载后读 /api/setup/state 做首启跳转，顶栏右侧是退出登录
   index.html              Vite 的 root 模板（vite.config.ts 里 root = src/web）
-  router/index.ts         10 条路由，history 模式
+  router/index.ts         10 个页面路由（含 /setup）+ 根重定向与 404 兜底，history 模式
   pages/                  10 页全部接真实端点（见下表）
   components/
     common/               AppIcon / EmptyState / AppModal / Toast / CapBadge
     bot/                  BotCard / BotAvatar / BotStateChip / BotCapabilityBadges
-    chat/                 TurnItem / MessageBubble / EventRow / EventBlock
+    chat/                 TurnItem / TurnBodyItem / MessageBubble / EventRow / EventBlock
                           PermissionCard / PermissionBlock / Composer
                           SessionDivider / RoundFence / ActivityRow / StreamRowItem
-  stores/                 bots / channels / runtimes / sessions / events / permissions / ui
+  stores/                 bots / channels / runtimes / providers / mcp / skills / setup
+                          / sessions / events / permissions / ui
   composables/            useSseStream / useVirtualList / useHotkeys
   net/                    client.ts（REST）+ stream.ts（SSE）+ types.ts（DTO 契约）
-  lib/                    turnModel.ts（事件→渲染模型）/ format.ts / botVars.ts / icons.ts
+  lib/                    turnModel.ts（事件→渲染模型）/ format.ts / botVars.ts
+                          / runtime.ts / icons.ts
   styles/                 tokens.css（令牌）+ base.css（全局样式，逐字照抄原型）
 ```
 
@@ -120,16 +127,19 @@ src/web/
 
 | 页面 | 主要端点 | 四态 |
 |---|---|---|
-| `/setup` | `GET /api/runtimes` · `POST /api/bots` · `POST /api/channels` · `POST /api/messages` + SSE | 逐项探测骨架 / 全未安装给安装指引 / 探测失败横幅 / 正常 |
+| `/setup` | `GET /api/setup/state` · `GET /api/runtimes` · `POST /api/providers` · `POST /api/providers/:id/test` · `POST /api/bots`（可带 `role`）· `PATCH /api/bots/:id`（工作区）· `POST /api/skills/rescan` · `POST /api/channels` · `POST /api/messages` + SSE | 逐项探测骨架 / 全未安装给安装指引 / 探测失败横幅 / 正常；5 步 + 第 6 步演练，每步可跳过 |
 | `/bots` | `GET /api/bots` · `POST /api/bots` | 6 张骨架 / 引导建第一个 Bot / 读取失败重试 / 正常 |
-| `/bots/:id` | `GET /api/bots/:id` · `GET/POST/PATCH/DELETE …/memory` · `POST …/memory/summarize` · `PATCH /api/bots/:id` | 标签局部骨架 / 各标签独立空态 / 运行时不可用横幅 / 正常 |
+| `/bots/:id` | `GET /api/bots/:id` · `GET/POST/PATCH/DELETE …/memory` · `POST …/memory/summarize` · `PATCH /api/bots/:id`（边界 / 运行时 / `role` / `permissionMode` / `enabledSkills`）· `DELETE /api/bots/:id` | 标签局部骨架 / 各标签独立空态 / 运行时不可用横幅 / 正常 |
 | `/chats` | `GET /api/channels` · `POST /api/channels` | 5 行骨架 / 「还没有会话」/ 重试条 / 群聊 + 私聊分组 |
-| `/chat/:id` | `GET /api/channels/:id` · SSE · `GET /api/permissions` | 顶部历史骨架 / 人格 + 示例提问 / 断线横幅 / 正常 |
+| `/chat/:id` | `GET /api/channels/:id` · `GET /api/sessions/:id/events` · SSE · `GET /api/permissions` · `PATCH /api/channels/:id` · `PATCH /api/sessions/:id/controls` · `POST /api/sessions/:id/compact` · `POST /api/sessions/:id/cancel` | 顶部历史骨架 / 人格 + 示例提问 / 断线横幅 / 正常 |
 | `/assignments` | `GET /api/assignments` · `POST /api/assignments` | 分组骨架 / 「任务从会话里创建」/ 重试条 / 状态 chips + 表格 |
 | `/assignments/:id` | `GET /api/assignments/:id` · SSE 回放 | 排队等待原因 / 报告生成中骨架 / 失败原因 + 最后 50 条事件 / 报告四节 |
 | `/schedules` | `GET/POST/PATCH/DELETE /api/schedules` | 行骨架 / 「还没有定时任务」/ 调度器异常横幅 / 列表 |
 | `/usage` | `GET /api/usage` · `GET /api/usage/export.csv` | 表格骨架 / 「还没有可统计的调用」/ 查询失败（筛选保留）/ 行 + 合计 |
-| `/settings` | `GET /api/runtimes` · `GET/POST /api/token*` · `POST /api/admin/purge` · `GET /api/permissions` | 逐行骨架 / 无运行时给安装指引 / 单项失败只标该行 / 四个分区 |
+| `/settings` | `GET/POST/PATCH/DELETE /api/runtimes*` · `GET/POST/PATCH/DELETE /api/providers*`（含 catalog / models）· `GET/POST/PATCH/DELETE /api/mcp*` · `GET /api/skills` · `POST /api/skills/rescan` · `GET /api/token` · `POST /api/token/reset` · `GET/POST /api/admin/{bots,tidy}` · `POST /api/admin/purge` · `GET /api/permissions` | 逐行骨架 / 无运行时给安装指引 / 单项失败只标该行 / 八个分区 |
+
+**设置页是八个分区**（`SettingsPage.vue` 的 `TABS`）：运行时 / 模型供应商 / 模型映射表 /
+MCP / 技能 / 安全与 token / 数据与保留 / 权限审计。页头另有常驻的「初始化引导」入口（N1）。
 
 **群聊的 SSE 要按 Session 分别建连**：一轮里每个发言人各有一个 Session，主连接只覆盖
 一个；`ChatPage` 为其余 Session 各开一条只读连接（`extraConns`），游标用 0 从头回放。
@@ -199,11 +209,12 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `token` | 本地访问 token，权限收紧为仅当前用户 |
 | `providers.json` | 内置引擎的模型供应商（含 apiKey，权限 0600；接口只回掩码） |
 | `mcp.json` | MCP stdio server 配置（命令、参数、env、enabled） |
-| `skills/` | 技能目录：`<name>/SKILL.md`，索引进系统提示、全文由 `read_skill` 按需读取。首次启动自动装 4 个内置技能（`file/shell/search/web-basics`），带 `.agentbot-builtin` 标记 |
-| `secrets.json` | 自定义运行时 env（尚未落地） |
+| `skills/` | 技能目录：`<name>/SKILL.md`，索引进系统提示、全文由 `read_skill` 按需读取。首次启动自动装 4 个内置技能（`file-basics` / `shell-basics` / `search-basics` / `web-basics`），目录里带 `.agentbot-builtin` 标记 |
+| `model-catalog.json` | 模型能力表的**用户覆盖层**（可选）；与内置 `model-catalog.json` 合并，用户表优先命中 |
+| `secrets.json` | 自定义运行时 env（尚未落地，`config.ts` 只定义了路径） |
 | `wt/` | git worktree 根目录（`executionLocation=worktree` 的 Bot 在这里各有一个目录） |
 
-删除 `token` 后重启会重新生成，旧 token 立即失效。
+删除 `token` 后重启会重新生成，旧 token 立即失效（已登录的浏览器也会在下一次请求时 401 → 回登录页）。
 
 ## 环境变量
 
@@ -215,6 +226,12 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `AGENTBOT_MAX_HELD` | `5` | 同时挂起的权限请求上限 |
 | `AGENTBOT_BIN_<ID>` | — | 指定某运行时的可执行文件（不在 PATH 时用），如 `AGENTBOT_BIN_ZCODE` |
 | `AGENTBOT_GROUP_DECISION_MS` | `20000` | 群聊主持人决策超时（真实 CLI 一轮 20s+，见下文） |
+| `AGENTBOT_COMPACTION_RATIO` | `0.7` | 上下文占用比达到该值时自动压缩（0–1） |
+| `AGENTBOT_COMPACTION_KEEP_RECENT` | `12` | 压缩时保留的最近消息条数 |
+| `AGENTBOT_CONTEXT_WINDOW` | `128000` | 供应商未上报上下文窗口时的兜底值 |
+| `AGENTBOT_COOKIE_SECURE` | 自动 | 登录 cookie 的 `Secure` 开关：`1` 强制开（反代终止 TLS）、`0` 强制关（本机 `NODE_ENV=production` 跑 http）；不设时 HTTPS 或 `NODE_ENV=production` 才开 |
+
+`NODE_ENV` 也参与判定：`production` 下默认给登录 cookie 加 `Secure`。
 
 权限的两个时间窗口写在 `config.ts` 的 `timeouts` 里，不开放环境变量：
 `permissionRejectMs`（120s）、`permissionHoldMaxMs`（24h）、`grantTtlMs`（12h）。
