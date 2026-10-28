@@ -405,6 +405,10 @@ data: {"id":123,"sessionId":"…","turnId":"…","type":"message_delta","seq":7,
 四条通道驱动 + 每个运行时一个 YAML 声明（内置引擎的声明在代码里）。新增一个原生 ACP 运行时 = 放一个 YAML，
 不改核心代码（S4）。
 
+协议取值是 `acp` / `codex-app-server` / `cli-stdio` / `builtin` 四种有驱动；`opencode-http` 与
+`claude-sdk` 虽然在类型与「手动添加运行时」的下拉里存在，但**没有对应驱动** —— 它们会被交给
+Codex 原生驱动，握手必然失败、探测显示不可用。要支持得新增通道驱动。
+
 ```
 src/server/adapters/
   contract.ts              ChannelDriver / AdapterDeclaration 类型（唯一契约）
