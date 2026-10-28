@@ -1,6 +1,6 @@
 # AgentBot
 
-本机运行的 Web 工作台：把多个 Bot 编排到可插拔的 agent 运行时上（四条通道：ACP / Codex app-server / CLI 兜底 / 内置引擎）。
+本机运行的 Web 工作台：把多个 Bot 编排到可插拔的 agent 运行时上（ACP：Gemini CLI / Claude Code · Codex app-server · CLI 兜底：ZCode / DSH · 自带的内置引擎）。
 
 单进程本地服务：Node 22 + TypeScript（ESM）+ Fastify 5 + SQLite（better-sqlite3，WAL）+ SSE；前端 Vue 3 + Pinia + Vue Router。
 
@@ -256,18 +256,29 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | 端点 | 鉴权 | 说明 |
 |---|---|---|
 | `GET /api/health` | 否 | 探活，只返回 `{"ok":true}` |
-| `GET /api/meta` | 是 | 服务版本、schema 版本、已探测运行时列表 |
+| `GET /api/meta` | 是 | 服务版本、schema 版本、启动时间、已探测运行时列表（启动快照） |
 | `GET /api/stream?sessionId=` | 是 | SSE 事件流，按 `events.id` 续推 |
 | `GET /api/runtimes` | 是 | 运行时列表（含能力三态与事件掩码），读探测缓存 |
-| `GET /api/bots` | 是 | Bot 列表，运行时**内联展开** |
+| `POST /api/runtimes` | 是 | 手动添加自定义运行时 `{id, displayName, protocol, command, args?, env?, cwd?, detect?}` → 201；重复可执行文件回 `409 already_exists` + `existingId` |
+| `POST /api/runtimes/:id/probe` | 是 | 只重探这一个运行时；内置运行时缺声明回 `409 declaration_missing` |
+| `GET /api/bots` | 是 | Bot 列表，运行时**内联展开**；含 `providerId` / `role` / `enabledSkills` |
 | `GET /api/channels` | 是 | 渠道列表 |
 | `POST /api/channels` | 是 | 新建渠道：`{type:"dm"\|"group", participantBotIds, name?, hostBotId?}` → 201 `{channel}`。私聊**幂等**（同一 Bot 只有一条 dm，重复调用返回已有那条）；群聊限 2–5 个参与者，主持人必须在参与者里 |
 | `GET /api/channels/:id` | 是 | 渠道 + Session + 消息 + SSE 首连游标 `lastEventId` |
+| `PATCH /api/channels/:id` | 是 | `{workspacePath}`：渠道级工作区；字符串需存在/是目录/可写（不要求 git），`null`/空串清除回退链 |
 | `POST /api/messages` | 是 | 私聊：立刻返回 `{messageId, turnId, sessionId}`，锁被占则 `queued:true`。**群聊**：主持人决策后返回 `{speakers, calls, skipReason, degraded, notice, warnings}`，派发在后台依次执行 |
+| `GET /api/sessions/:id/events?afterSeq=&limit=` | 是 | 事件回放（含 `meta`），`{events, hasMore, lastEventId}`；`lastEventId` 可直接当 SSE 首连游标 |
+| `PATCH /api/sessions/:id/controls` | 是 | `{providerId?, model?, permissionMode?, workspacePath?}`：会话级覆盖；切 `plan` 时挂起的写类请求直接拒绝并回 `rejectedPending`；跨协议切换回 `warning` |
+| `POST /api/sessions/:id/compact` | 是 | 手动压缩（仅内置引擎）`{force?}`（缺省 true）；进程不在/通道不支持回 `409 compact_unavailable` |
 | `POST /api/sessions/:id/cancel` | 是 | 中断当前轮（`{turnId}`）；运行时 1s 内不响应则树杀进程 |
 | `GET /api/bots/:id` | 是 | Bot 详情 + 权限边界 + 预授权列表 |
-| `POST /api/bots` | 是 | 新建 Bot：`{name, persona?, runtimeId?, executionLocation?, repoPath?}` → 201。**绑定无权限通道的运行时**（`requiresWorktree`）时执行位置强制 `worktree` 且 `repoPath` 必填，否则 `400 invalid_bot` |
-| `PATCH /api/bots/:id` | 是 | 改边界（`allowDirs`/`allowShell`/`allowNetwork`/`autoApproveWrite`）、运行时（`runtimeId`）与执行位置（`executionLocation`/`repoPath`）；校验失败回 400 + 字段级错误。**把无权限通道的运行时放到 local** 必须带 `confirmRisk:true`，否则 `400 risk_confirmation_required` |
+| `POST /api/bots` | 是 | 新建 Bot：`{name, persona?, runtimeId?, providerId?, role?, executionLocation?, repoPath?}` → 201。**绑定无权限通道的运行时**（`requiresWorktree`）时执行位置强制 `worktree` 且 `repoPath` 必填，否则 `400 invalid_bot` |
+| `PATCH /api/bots/:id` | 是 | 改边界（`allowDirs`/`allowShell`/`allowNetwork`/`autoApproveWrite`）、运行时（`runtimeId`）、执行位置（`executionLocation`/`repoPath`）、`providerId`、`role`、`permissionMode`、`persona`、`enabledSkills`（`null`=全部启用 / `[]`=全停 / 数组=白名单）；校验失败回 400 + 字段级错误。**把无权限通道的运行时放到 local** 必须带 `confirmRisk:true`，否则 `400 risk_confirmation_required` |
+| `DELETE /api/bots/:id` | 是 | `{confirmName, mode:"cascade"\|"archive"}`；名称不符 `400 name_mismatch`，模式缺失 `400 mode_required`。`archive` 只改 `status`；`cascade` 按外键序清理，但**保留** `usage_records` |
+| `GET /api/bots/:id/memory?sessionId=` | 是 | 记忆条目；群聊 `scope='channel'` 跨 Bot 共享，带 `sourceBotId` / `sourceBotName` |
+| `POST /api/bots/:id/memory` | 是 | `{content, kind?, injected?, sourceSessionId?, scope?, channelId?}` |
+| `PATCH /api/bots/:id/memory/:memId` · `DELETE …` | 是 | `{content?, injected?}`；删除 → 204 |
+| `POST /api/bots/:id/memory/summarize` | 是 | 立即摘要 `{sessionId?}` |
 | `GET /api/permissions?sessionId=` | 是 | 该会话的权限记录（待批 + 已决），含超时策略与截止时间 |
 | `POST /api/permissions/:id/decision` | 是 | `{decision:"approve"\|"reject"\|"remember_session"\|"remember_bot"}` → 204；已决回 409 |
 | `GET /api/assignments?status=&botId=&channelId=` | 是 | 任务列表 + 各状态计数 `counts` |
@@ -278,12 +289,16 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `POST /api/schedules` | 是 | `{name, botId, channelId, prompt, triggerType, delayMinutes?\|intervalMinutes?\|atTime?}` → 201；周期 <5 分钟回 `400 interval_too_small` |
 | `PATCH /api/schedules/:id` | 是 | `{enabled?, name?, prompt?}`；暂停清 `nextRunAt`，恢复重算下次触发并清失败计数 |
 | `DELETE /api/schedules/:id` | 是 | 删除 → 204；不存在回 404 |
+| `GET /api/usage` · `GET /api/usage/export.csv` | 是 | 用量聚合与 CSV 导出（含缓存命中率，未上报为 `null`） |
+| `DELETE /api/usage?botId=` | 是 | 按 Bot 删除用量记录；缺 `botId` 回 `400 bot_id_required`（全量删除走 purge） |
 | `GET /login` | 否 | 登录表单页（服务端渲染，`no-store`，不回显 token）。已登录时 303 回 `next`；带有效 `?t=` 时种持久 cookie 后放行 |
 | `POST /login` | 否 | 表单 `{token, next?}` → 303 回原路径并种 `agentbot_token`（持久 HttpOnly cookie）；失败 401 重渲染表单，锁定 429 |
 | `POST /api/auth/logout` | 否 | 清 cookie → 204（只删凭证，不读业务数据） |
 | `POST /logout` | 否 | 清 cookie → 303 到 `/login`（无 JS 兜底） |
 | `GET /api/token` | 是 | 当前 token 状态：`{preview, url, activeStreams}`（脱敏预览 + 带 token 的完整地址 + 活跃 SSE 连接数） |
 | `POST /api/token/reset` | 是 | 重置 token → `{token, url, closedStreams}`。**先删 token 文件再生成**（否则 `ensureToken()` 会读回旧值），随后 `closeAllStreams()` 主动断开所有 SSE。旧 token 立刻 401 |
+| `GET /api/admin/bots` | 是 | 管理员 Bot 列表 + `totalBots` |
+| `GET /api/admin/tidy` · `POST /api/admin/tidy` | 是 | 孤儿数据预览 / 按 `targets` 整理（`channels`/`orphanSessions`/`memories`/`orphanUsage`，默认不含用量）；执行需 `confirm:true` |
 | `POST /api/admin/purge` | 是 | 全量删除：`{confirm:"删除全部数据"}` → `{ok, deleted:{每表行数}, closedStreams}`。确认短语不符回 `400 confirm_required`；保留 `runtime_definitions`（探测缓存）与 `schema_meta` |
 
 其余所有请求（含静态资源）都要过 token 校验：无 token 或错误 token 时，`/api/*` 与
@@ -492,16 +507,18 @@ src/server/
     provider.ts        纯接口（ChatMessage / ToolCall / ProviderDelta / ProviderClient）
     loop.ts            调模型 → 执行工具 → 回灌 → 循环（maxIterations 20 / maxToolCalls 40）
     prompt.ts          人格记忆（编排层已拼好）+ 运行规则 + 技能索引
-    skills.ts          ~/.agentbot/skills/<name>/SKILL.md 扫描与索引
-    tools/             registry + paths（realpath 防逃逸）+ truncate + builtin 八个工具
-  adapters/providers/  openai-chat / anthropic / providers.json 读写
-  adapters/mcp/        stdio JSON-RPC 客户端 + 管理器 + mcp.json
+    skills.ts          ~/.agentbot/skills/<name>/SKILL.md 扫描（mtime 缓存）+ 按启用列表过滤 + 索引
+    skills/install.ts  内置技能包安装（幂等、不覆盖用户改动、删了会补装）
+    skills/builtin/    4 份随代码分发的 SKILL.md
+    tools/             registry + paths（realpath 防逃逸）+ truncate + builtin 十个工具
+  adapters/providers/  openai-chat / anthropic / providers.json 读写 / model-catalog.json
+  adapters/mcp/        stdio JSON-RPC 客户端 + 管理器（支持运行期 add/replace/remove）+ mcp.json
   adapters/channels/builtin/driver.ts   无进程 ChannelDriver
 ```
 
-**可用性**：内置引擎在运行时列表里常驻首位；没有配置任何供应商时置灰（`probeDetail` 提示去设置页添加），配置后立即变为 ready。它**不参与 PATH 探测**。
+**可用性**：内置引擎常驻运行时列表（与其它运行时一起按显示名排序），但**不参与 PATH 探测**；没有配置任何供应商时置灰（`probeDetail` 提示去设置页添加），配置后立即变为 ready。
 
-**工具与权限**：`read_file` / `list_dir` / `grep` / `read_skill` 只读；`write_file` / `edit_file`（write）、`run_shell`（exec）、`web_fetch`（network）执行前必须经权限裁决。MCP 工具统一按 `exec` 处理，名字为 `mcp__<server>__<tool>`。用户拒绝后回灌的话术明确要求模型换做法，不会让它死循环重试同一调用。
+**工具与权限**：`read_file` / `list_dir` / `grep` / `read_skill` / `list_skills` 只读；`write_file` / `edit_file`（write）、`run_shell`（exec）、`web_fetch`（network）执行前必须经权限裁决；管理员 Bot 另有 `create_bot`（admin 动作，走权限卡）。MCP 工具名字为 `mcp__<server>__<tool>`，权限取 `mcp.json` 的 `permission`（缺省 `exec`）；计划模式下所有写类工具（含 `mcp__*`）在注册表里就被裁掉。用户拒绝后回灌的话术明确要求模型换做法，不会让它死循环重试同一调用。
 
 **边界**：所有文件工具走 `resolveInside(cwd, path)`，`..` 与符号链接逃逸都会被拒；`run_shell` 的 cwd 固定为会话 cwd，超时/取消走树杀；`web_fetch` 只允许 http(s) GET。
 
@@ -514,11 +531,14 @@ src/server/
 | `GET/POST /api/providers` · `PATCH/DELETE /api/providers/:id` | 供应商 CRUD；响应只含 `apiKeyMasked` |
 | `POST /api/providers/:id/test` | 发一次最小请求，返回 `{ok,latencyMs,model,error?}` |
 | `POST /api/providers/:id/default` | 设为默认供应商 |
-| `GET/POST /api/mcp` · `PATCH/DELETE /api/mcp/:id` · `POST /api/mcp/:id/reconnect` | MCP 配置与连接状态 |
-| `GET /api/skills` · `POST /api/skills/rescan` | 技能索引（带 `builtin` 标记）与重扫（顺带补装被删的内置技能） |
-| `GET /api/setup/state` | 初始化引导 5 步完成度与 `needsSetup`（N1） |
+| `GET /api/providers/available` | `{count, defaultId}`（引导页判断「有没有配过供应商」） |
+| `GET/PUT /api/providers/catalog` · `POST /api/providers/catalog/test` | 模型能力表：`GET` 返回内置表 + 用户覆盖表 + 路径/来源；`PUT` 整表替换用户表（≤200 条）；`test` 校验一条 `match` 正则对 `modelId` 是否命中 |
+| `POST /api/providers/models` | 用表单里正在填的 `protocol`/`baseUrl`/`apiKey`（编辑时给 `id`）拉模型清单，带上下文窗口与最大输出默认值 |
+| `GET/POST /api/mcp` · `PATCH/DELETE /api/mcp/:id` · `POST /api/mcp/:id/reconnect` | MCP 配置与连接状态；增删改**只动受影响的那一个连接**（N3-2 热插拔），`mcp.json` 支持 `permission`（缺省 exec） |
+| `GET /api/skills` · `POST /api/skills/rescan` | 技能索引（带 `builtin` 标记）与重扫（顺带补装被删的内置技能，额外返回 `installed[]`） |
+| `GET /api/setup/state` | 初始化引导 5 步完成度与 `needsSetup`（N1）；`needsSetup` 只看前三项必需项 |
 
-**Bot 绑定**：`POST/PATCH /api/bots` 接受 `providerId`（可空，空则用默认供应商）；`GET /api/bots` 的 DTO 带 `providerId`。设置页「模型供应商 / MCP / 技能」三个分区负责配置。
+**Bot 绑定**：`POST/PATCH /api/bots` 接受 `providerId`（可空，空则用默认供应商）与 `role`；`GET /api/bots` 的 DTO 带 `providerId` / `role` / `enabledSkills`。设置页的「模型供应商 / 模型映射表 / MCP / 技能」四个分区负责配置。
 
 **冒烟**：`npm run smoke:builtin` 会起一个假 OpenAI 网关、启动服务、建 Bot、发消息、批准权限卡、校验工具落盘与事件链，全程不访问真实模型。
 
@@ -737,20 +757,24 @@ npx vitest run tests/contract   # 只跑三个通道的契约测试
 
 ```
 src/server/
-  main.ts              启动序：状态目录 → 迁移 → token → 声明探测 → Supervisor + 权限
-                       → 僵尸清扫 → 编排器 → 调度器 → HTTP
+  main.ts              启动序：状态目录 → 迁移 → 内置技能安装 → token → 声明探测
+                       → MCP 连接 → 管理员种子 → Supervisor + 权限 → 僵尸清扫
+                       → 编排器 → Assignment → 调度器 → HTTP
   config.ts            路径、默认值、超时与保留策略
   http/                鉴权钩子、登录页（login.ts）、SSE、REST 路由、DTO 装配、静态资源
   core/                编排/权限/存储，不含任何协议字符串
+    agent/             内置引擎：loop.ts / prompt.ts / skills.ts + skills/（内置包）
+                       + tools/（内置工具、MCP 桥、list_skills）
     orchestrator/      turn.ts（一轮完整流程）+ session-lock.ts（同 Session 串行）
                        + context.ts（resume 失败时的产品层重建）
     process/           supervisor.ts（进程唯一管理者）+ kill-tree.ts（树杀）+ pid-registry.ts
     permissions/       boundary.ts（Bot 边界）+ resolver.ts（裁决）+ policy.ts（三档超时）
-                       + grants.ts（授权记忆）
+                       + grants.ts（授权记忆）+ worktree-guard.ts（CLI 强制 worktree）
     group/             host.ts（主持人决策 + @ 合并 + 截断）+ dispatcher.ts（依次/并行派发）
-                       + notices.ts（群内系统提示）
+                       + notices.ts（群内系统提示）+ write-lock.ts（渠道级写锁）
     assignment/        runner.ts（队列 + 独立线程执行）+ report.ts（Markdown 报告）
                        + worktree.ts（local/worktree 校验、创建、改动统计）
+    bots/              create.ts（创建与校验）+ seed.ts（管理员种子）+ runtime-lookup.ts
   adapters/            唯一允许出现协议细节的地方；声明 YAML 放 declarations/
 src/shared/            前后端共用的事件类型与 DTO
 src/web/               Vue 3 前端（见上文「前端」）
@@ -758,6 +782,8 @@ fixtures/              契约测试用的原始协议样本
 tests/contract/        三个通道的契约回放（FakeTransport + fixture）
 tests/unit/            ingest/repo/sse/turn/process/permissions/lifecycle/context/http-permissions
                        /group/assignment/http-group/http-assignments/http-login/http-auth-page
+                       /skills/setup-state/write-lock/divider-text/usage-cache-reporting
+                       /provider-models/worktree-guard/…
 ```
 
 新增一个 ACP 运行时 = 往 `src/server/adapters/declarations/` 放一个 YAML，不改核心代码。
