@@ -251,3 +251,35 @@ R1–R8 已实现并验收：迁移 v3、会话/渠道工作区、记忆作用�
 `npm run build` 通过。真机/浏览器验证：本机直连 + cloudflared 隧道各跑一遍；
 `npm run e2e:mobile` 在 390×844 视口全过（权限卡 4.9s 出现、布局断言通过、
 切 full 后 82ms 出 diff、文件面板详情在视口内）。
+
+## 2026-10-28（第三轮）：浏览器控制的授权口径 + MCP 外部配置
+
+**浏览器控制实测发现的三个问题（都已修）**
+
+1. **`npm run setup:browser` 装完不重启看不到**（服务端）
+   - `McpManager.configs` 是启动快照，`reconnect()` 只从盘上找**已有**的 id；
+     脚本直接写 `mcp.json`（不经过 POST /api/mcp），新条目永远进不来。
+   - 修法：`reconnect()` 以盘上为准（合并/摘除），新增 `syncFromFile()` +
+     `POST /api/mcp/sync`；设置页「刷新」改为先 sync。实测：启动后写盘 →
+     sync → `added:['playwright']`、connected、25 工具，无需重启。
+
+2. **「记住（本会话）」后同站下一页仍弹卡**（授权指纹）
+   - `actionKeyOf` 对 network 用完整 URL：`https://example.com/` 与
+     `/index.html` 是两条授权，卡片长得一样，用户以为「记住」坏了。
+   - 改为按主机（含端口）归一化。实测第二页变成 `decidedBy: system`（命中 grant）。
+
+3. **卡片「目标」显示 `mcp__playwright__browser_evaluate`**（目标推导）
+   - `toolTarget` 顺序是 path → command → url → name，而浏览器工具大多只有 `url`
+     或什么目标都没有。改为 url 优先；无目标参数仍退回工具名（无法预判访问哪）。
+   - 注意：这类「无目标」的 MCP 工具**无法按站点记授权**，每个不同的工具仍会
+     单独弹一次卡。想让连续操作不中断，用「完全访问」或对每个工具各点一次「记住」。
+
+**浏览器控制可用性结论（真机）**
+- 确认模式 + 允许联网：`browser_navigate` 弹卡（`boundaryVerdict: allowed`），
+  批准后拿到 `Page Title: Example Domain`；同站第二页命中授权自动放行。
+- 未开「允许联网」：直接 `denied_boundary`，不弹卡、不转发运行时（安全默认）。
+- 一次完整任务（打开两页 → evaluate 读标题 → 看网络请求 → 总结）全链路通过，
+  模型如实报告第二页是 404（没有把 404 页当成正常页面）。
+
+**门禁**：tsc / vue-tsc / boundaries 全绿；vitest **546 passed / 1 skipped（42 文件）**；
+`npm run build` 通过；`npm run e2e:mobile` 在本机与 cloudflared 隧道下均全过。
