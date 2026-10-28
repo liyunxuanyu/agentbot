@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { killTree } from "../../core/process/kill-tree.js";
+import { config } from "../../config.js";
 import type { McpServerConfig } from "./config.js";
 
 /**
@@ -54,7 +55,9 @@ export class McpClient {
     this.error = null;
     try {
       this.child = spawn(this.cfg.command, this.cfg.args, {
-        cwd: process.cwd(),
+        // cwd 用 HOME 而不是服务进程的 cwd：MCP server（例如 Playwright）会以 cwd
+        // 作为默认工作目录，落在仓库里会写出临时文件、也会被仓库的 git 状态污染。
+        cwd: config.home,
         env: { ...process.env, ...(this.cfg.env ?? {}) },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
