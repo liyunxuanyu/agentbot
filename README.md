@@ -290,8 +290,8 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `POST /api/bots/:id/memory/summarize` | 是 | 立即摘要 `{sessionId?}` |
 | `GET /api/files?botId=&sessionId=&path=` | 是 | 读工作区文本文件（≤512KB，拒二进制）。路径统一过 `resolveInside`，越界回 `403 path_outside_workspace` |
 | `GET /api/files/tree?botId=&sessionId=&path=` | 是 | 工作区目录树（跳过 `.git` / `node_modules`，上限 500 项） |
-| `GET /api/files/changes?botId=&sessionId=` | 是 | 改动列表（`git status`）；非 git 目录如实回 `{git:false}`，不编造改动 |
-| `GET /api/files/changes?botId=&sessionId=&path=` | 是 | 单文件 unified diff；未跟踪文件按「全文新增」合成 |
+| `GET /api/files/changes?botId=&sessionId=` | 是 | 改动列表（`git status`）；非 git 目录如实回 `{git:false}`，不编造改动。**只为列表回路径与增删行数**，不生成 diff |
+| `GET /api/files/changes?botId=&sessionId=&path=` | 是 | 单文件 unified diff（只为这一个文件跑 git）；未跟踪文件合成 `--- /dev/null` 头 + 全文新增，并补齐增删行数 |
 | `GET /api/permissions?sessionId=` | 是 | 该会话的权限记录（待批 + 已决），含超时策略与截止时间 |
 | `POST /api/permissions/:id/decision` | 是 | `{decision:"approve"\|"reject"\|"remember_session"\|"remember_bot"}` → 204；已决回 409 |
 | `GET /api/assignments?status=&botId=&channelId=` | 是 | 任务列表 + 各状态计数 `counts` |
@@ -310,6 +310,7 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `GET/PUT /api/providers/catalog` · `POST /api/providers/catalog/test` | 是 | 模型能力表：读内置表 + 用户覆盖表 / 整表替换用户表（≤200 条）/ 试算一条规则是否命中模型名 |
 | `POST /api/providers/models` | 是 | 用表单里正在填的 `protocol`/`baseUrl`/`apiKey` 拉模型清单（编辑已有供应商只传 `id`），返回上下文窗口与最大输出默认值 |
 | `GET/POST /api/mcp` · `PATCH/DELETE /api/mcp/:id` · `POST /api/mcp/:id/reconnect` | 是 | MCP server 配置与连接状态；增删改**只动受影响的那一个连接**（N3-2 热插拔），`mcp.json` 支持 `permission`（缺省 `exec`） |
+| `POST /api/mcp/sync` | 是 | 把 `mcp.json` 里**外部新增**的条目热接进来（`npm run setup:browser` 直接写盘后用它，不用重启）；返回 `{added, servers}` |
 | `GET /api/skills` · `POST /api/skills/rescan` | 是 | 技能索引（带 `builtin` 标记）与重扫（顺带补装被删的内置技能，返回 `installed[]`） |
 | `GET /api/setup/state` | 是 | 初始化引导 5 步完成度、`needsSetup`、`skillCount`、`skillsDir`（N1） |
 | `GET /login` | 否 | 登录表单页（服务端渲染，`no-store`，不回显 token）。已登录时 303 回 `next`；带有效 `?t=` 时种持久 cookie 后放行 |
