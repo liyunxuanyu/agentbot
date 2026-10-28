@@ -454,11 +454,20 @@ export function buildTurnView(input: BuildTurnInput): TurnView {
           break;
         }
         const action = p["action"];
+        const requestId = str(p["requestId"]) ?? "";
+        // 同一个 requestId 可能落多帧 permission_request（驱动重放、REST 轮询与
+        // SSE 重叠、裁决后由 resolver 再推一条「状态已变」的通知）。它们代表
+        // **同一张卡**，不能各画一份 —— 实测手机上批准一次会出现两条
+        // 「已批准 · 你」的审计行（截图见 2026-10-28 修复记录）。
+        const dup = display.some(
+          (d) => d.kind === "permission" && d.requestId === requestId && requestId.length > 0,
+        );
+        if (dup) break;
         display.push({
           kind: "permission",
           seq: ev.seq,
           ts: ev.createdAt,
-          requestId: str(p["requestId"]) ?? "",
+          requestId,
           action:
             action === "write" ||
             action === "read" ||

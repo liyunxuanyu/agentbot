@@ -97,7 +97,44 @@ export const useBotsStore = defineStore("bots", () => {
     }
   }
 
-  /** 单个 Bot 的待批数变化（SSE 的 permission_request 驱动）。 */
+  /**
+   * 待批权限数：**以服务端为准**，不在前端做加减法。
+   *
+   * 旧实现只在 `permission_request` 到达时 `+1`，批准/拒绝/超时后从不减 ——
+   * 真机实测：批准之后顶栏仍显示「待批 2」，直到整页刷新才归零。
+   * 待批数是「此刻还有几件事等你决定」，它必须反映权威状态，而不是事件计数：
+   * 事件会重放、轮询与 SSE 会重叠、超时由服务端定时器收口。
+   *
+   * 因此这里只做一件事：拉一次 `/api/bots`，只合并 `pendingPermissions`
+   * （不动 status / errorText —— 这不是一次「加载页面」，失败也不该把列表打成错误态）。
+   * 并发调用合并成一次（一轮里可能连着来好几条 permission_request）。
+   */
+  let pendingRefresh: Promise<void> | null = null;
+  function refreshPending(): Promise<void> {
+    if (pendingRefresh) return pendingRefresh;
+    pendingRefresh = (async () => {
+      try {
+        const res = await api.bots();
+        const byId = new Map(res.bots.map((b) => [b.id, b.pendingPermissions]));
+        for (const bot of bots.value) {
+          const next = byId.get(bot.id);
+          if (next !== undefined) bot.pendingPermissions = next;
+        }
+      } catch {
+        // 拉不到就沿用旧值：下一次权限事件或页面刷新会校正
+      } finally {
+        pendingRefresh = null;
+      }
+    })();
+    return pendingRefresh;
+  }
+
+  /**
+   * 单个 Bot 的待批数变化（SSE 的 permission_request 驱动）。
+   *
+   * @deprecated 前端加减法不可靠（批准后减不回来）。新代码用 `refreshPending()`；
+   * 保留它是为了不破坏外部调用与测试，行为保持不变。
+   */
   function bumpPending(botId: string, delta: number): void {
     const bot = bots.value.find((b) => b.id === botId);
     if (!bot) return;
@@ -138,6 +175,7 @@ export const useBotsStore = defineStore("bots", () => {
     findBot,
     load,
     bumpPending,
+    refreshPending,
     sendBlockReason,
     canSend,
     remove,

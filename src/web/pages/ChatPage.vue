@@ -18,6 +18,7 @@ import { useHotkeys } from "../composables/useHotkeys";
 import { useVirtualList } from "../composables/useVirtualList";
 import { botVars } from "../lib/botVars";
 import { clockTime, num } from "../lib/format";
+import { createPollScheduler } from "../lib/pollScheduler";
 import AppIcon from "../components/common/AppIcon.vue";
 import BotAvatar from "../components/bot/BotAvatar.vue";
 import Composer from "../components/chat/Composer.vue";
@@ -538,7 +539,8 @@ function ingestFrame(frame: SseFrame, source: "live" | "history" | "poll"): bool
       // 必须按**帧自己的 Session** 拉：群聊 / 新建会话时它可能不是 activeSessionId。
       // 轮询路径也走这里：占位不给，但卡片要由权威状态补出来。
       void permissions.load(frame.sessionId);
-      if (source === "live") bots.bumpPending(botId, 1);
+      // 顶栏「待批 N」以服务端计数为准（前端加减法在批准后减不回来，实测踩到）
+      void bots.refreshPending();
     }
   }
 
@@ -776,8 +778,8 @@ const POLL_MS_HEALTHY = 5000;
 /** SSE 不健康（隧道缓冲 / 半死连接）时的间隔：接近实时。 */
 const POLL_MS_DEGRADED = 1200;
 const POLL_MAX_MS = 90_000;
-let pollTimer: number | null = null;
-let pollStartedAt = 0;
+/** 收口后留 3s 收尾（补最后一次增量）再停。 */
+const POLL_TAIL_MS = 3000;
 
 /** SSE 是否可信：连接已 open 且最近 3s 内收到过帧。 */
 function sseHealthy(): boolean {
@@ -795,7 +797,8 @@ function pollTargets(): string[] {
   return [...ids];
 }
 
-async function pollOnce(): Promise<void> {
+/** 拉一轮增量；返回是否有新帧。 */
+async function pollOnce(): Promise<boolean> {
   let got = false;
   for (const sessionId of pollTargets()) {
     const afterSeq = sessionMaxSeq.value.get(sessionId) ?? 0;
@@ -808,32 +811,28 @@ async function pollOnce(): Promise<void> {
       // 轮询失败不弹错：SSE 或下一次轮询会补上
     }
   }
-  if (got && pinnedToBottom.value) scrollToBottomSoon();
+  return got;
 }
 
-function schedulePoll(): void {
-  if (pollTimer !== null) return;
-  pollStartedAt = Date.now();
-  const tick = (): void => {
-    pollTimer = null;
-    if (!activeSessionId.value) return;
-    void pollOnce();
-    const active = hasLiveTurn();
-    const expired = Date.now() - pollStartedAt > POLL_MAX_MS;
-    if (active && !expired && pollTimer === null) {
-      pollTimer = window.setTimeout(tick, sseHealthy() ? POLL_MS_HEALTHY : POLL_MS_DEGRADED);
-    }
-  };
-  pollTimer = window.setTimeout(tick, sseHealthy() ? POLL_MS_HEALTHY : POLL_MS_DEGRADED);
-  void pollOnce();
-}
-
-function stopPoll(): void {
-  if (pollTimer !== null) {
-    window.clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-}
+/**
+ * 兜底轮询调度（见 `lib/pollScheduler.ts` 的文件头）。
+ *
+ * 之前的实现用裸 `setTimeout`，收口时排的「3s 后停」会误杀下一轮刚起的轮询
+ * ——公网隧道下 SSE 被缓冲，这就是「批准权限后 diff / 回复永远不出现」的根因。
+ * 现在把「停止」也做成可取消的预约，由调度器统一管理。
+ */
+const poller = createPollScheduler({
+  poll: pollOnce,
+  isActive: () => hasLiveTurn(),
+  isHealthy: sseHealthy,
+  healthyMs: POLL_MS_HEALTHY,
+  degradedMs: POLL_MS_DEGRADED,
+  maxMs: POLL_MAX_MS,
+  tailMs: POLL_TAIL_MS,
+  onFrames: () => {
+    if (pinnedToBottom.value) scrollToBottomSoon();
+  },
+});
 
 /**
  * 「还有事在发生」：pending / streaming / waiting 都算。
@@ -847,21 +846,19 @@ function hasLiveTurn(): boolean {
   );
 }
 
-// 有进行中的 Turn 就开轮询，收口后 3s 再停（留出最后一次增量）
+// 有进行中的 Turn 就开轮询，收口后 3s 再停（留出最后一次增量）。
+// start() 会作废上一轮排的停止预约，所以「收口后 3s 内又发一条」不会被误杀。
 watch(
   hasLiveTurn,
   (active) => {
     if (!activeSessionId.value) return;
-    if (active) schedulePoll();
-    else {
-      void pollOnce();
-      window.setTimeout(stopPoll, 3000);
-    }
+    if (active) poller.start();
+    else poller.finish();
   },
   { immediate: true },
 );
 
-onBeforeUnmount(stopPoll);
+onBeforeUnmount(() => poller.stop());
 
 
 
@@ -1546,7 +1543,7 @@ async function sendText(text: string, mentionBotIds: string[] = []): Promise<boo
     pinnedToBottom.value = true;
     scrollToBottomSoon();
     // 立刻起一次兜底轮询：SSE 被代理缓冲时，事件只能靠 REST 拉回来
-    schedulePoll();
+    poller.start();
     if (res.queued) ui.toast(`已排队 · 前面还有 ${res.position ?? 0} 个`);
     // 群聊：主持人可能已经降级并写了系统提示（REST 才有），补拉一次让「为什么没人说话」可见
     if (channel.value?.type === "group") {
@@ -1805,6 +1802,8 @@ async function onDecide(
             ? "已批准 · 记住本会话"
             : "已批准 · 记住本 Bot";
     permissions.markDecided(requestId, text);
+    // 顶栏「待批 N」要立刻回落：服务端已经把它算作已决，重新拉一次即可
+    void bots.refreshPending();
     ui.toast(text);
   } catch (err) {
     if (isMissingEndpoint(err)) {

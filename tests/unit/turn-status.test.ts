@@ -104,3 +104,35 @@ describe("buildTurnView · 状态推导", () => {
     expect(v.status).toBe("waiting");
   });
 });
+
+/**
+ * 同一 requestId 的多帧 permission_request（2026-10-28 真机截图）。
+ *
+ * 驱动会重放、REST 轮询与 SSE 会重叠、resolver 在裁决后还会再推一条
+ * 「状态已变」的通知 —— 它们代表**同一张卡**。旧实现每帧都 push 一个
+ * permission item，批准一次后界面上出现两条「已批准 · 你」的审计行。
+ */
+describe("buildTurnView · 权限请求去重", () => {
+  function perm(seq: number, requestId: string, verdict = "allowed"): RawEvent {
+    return ev(seq, "permission_request", {
+      requestId,
+      action: "write",
+      target: "/tmp/a.txt",
+      boundaryVerdict: verdict,
+    });
+  }
+
+  it("同一 requestId 的多帧只渲染一张卡", () => {
+    const v = build([perm(1, "builtin_perm_3"), perm(2, "builtin_perm_3"), perm(3, "builtin_perm_3")]);
+    const perms = v.items.filter((i) => i.kind === "permission");
+    expect(perms).toHaveLength(1);
+    // 保留第一帧的 seq：卡片应该出现在「请求发生」的位置，而不是最后一次通知的位置
+    expect(perms[0]?.seq).toBe(1);
+  });
+
+  it("不同 requestId 各自保留", () => {
+    const v = build([perm(1, "p1"), perm(2, "p2"), perm(3, "p1")]);
+    const ids = v.items.filter((i) => i.kind === "permission").map((i) => (i.kind === "permission" ? i.requestId : ""));
+    expect(ids).toEqual(["p1", "p2"]);
+  });
+});
