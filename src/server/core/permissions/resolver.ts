@@ -132,6 +132,19 @@ export interface PermissionResolver {
    * 返回被拒绝的条数；读类请求不动。
    */
   rejectPendingWrites(sessionId: string, reason: string): number;
+  /**
+   * 切到「完全访问」时，把该会话挂起的请求全部批准（2026-10-28 真机反馈）。
+   *
+   * 为什么必须处理：权限卡挂起期间运行时在等回传，会话锁一直被这一轮占着。
+   * 用户改成「完全访问」后，**已经在等的那张卡不会自己消失** —— 旧实现要等
+   * 120s 超时拒绝才放行，期间用户看到的是「界面一直转、命令很久才执行」，
+   * 而且新消息只能排在锁后面。完全访问的语义是「全部自动批准」，那么已经
+   * 挂起的请求也应当按同一口径批准，而不是让用户再点一次（卡片此时甚至可能
+   * 因为前端切档而不再高亮）。
+   *
+   * 只动 `pending`；已决/已失效的审计不改写。返回被批准的条数。
+   */
+  approvePending(sessionId: string, reason: string): number;
   /** 扫一次过期（启动序 + 定时器）。 */
   sweep(): SweepResult;
   /** 清定时器（关服）。 */
@@ -1021,6 +1034,61 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     return changed;
   }
 
+  /**
+   * 切到「完全访问」：挂起中的请求全部批准（见接口上的说明）。
+   *
+   * 实现刻意与 `rejectPendingWrites` 同构：逐条「先落终态、再回传运行时」，
+   * 回传失败（进程已退出）不回滚 —— 审计以落库为准，`syncHold` 会解除保活。
+   */
+  function approvePending(sessionId: string, reason: string): number {
+    const rows = deps.db
+      .prepare(
+        `SELECT id, session_id, turn_id, action, target FROM permission_requests
+          WHERE session_id = ? AND status = 'pending'`,
+      )
+      .all(sessionId) as {
+      id: string;
+      session_id: string;
+      turn_id: string;
+      action: string;
+      target: string;
+    }[];
+
+    if (rows.length === 0) return 0;
+    const now = Date.now();
+    const update = deps.db.prepare(
+      `UPDATE permission_requests
+          SET status = 'decided', decision = 'approve',
+              decided_by = 'mode:full', decided_at = ?
+        WHERE id = ? AND status = 'pending'`,
+    );
+    let changed = 0;
+    for (const row of rows) {
+      if (update.run(now, row.id).changes === 0) continue;
+      changed += 1;
+      clearTimer(row.id);
+      void deps
+        .respond(sessionId, runtimeRequestIdOf(row.id), { kind: "approve", scope: "once" })
+        .catch(() => undefined);
+      emitEvent(
+        {
+          id: row.id,
+          sessionId,
+          turnId: row.turn_id,
+          action: row.action as PermissionAction,
+          target: row.target,
+        },
+        "allowed",
+      );
+    }
+    if (changed > 0) {
+      log(`会话 ${sessionId} 切到完全访问：${changed} 个挂起请求已批准（${reason}）`);
+      pendingBySession.set(sessionId, countPending(sessionId));
+      syncHold(sessionId);
+    }
+    return changed;
+  }
+
   function invalidateSession(sessionId: string, reason: string): number {
     const rows = deps.db
       .prepare(
@@ -1098,6 +1166,7 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
     get,
     invalidateSession,
     rejectPendingWrites,
+    approvePending,
     sweep,
     dispose() {
       disposed = true;

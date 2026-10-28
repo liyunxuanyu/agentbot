@@ -275,6 +275,45 @@ describe("四档权限模式矩阵", () => {
       f.close();
     }
   });
+
+  /**
+   * 2026-10-28 真机反馈：「改成完全访问后叫它建文件，界面一直等、很久才执行」。
+   *
+   * 根因：卡挂起时运行时在等回传、会话锁被这一轮占着；切档旧实现什么都不做，
+   * 只能等 120s 超时拒绝。切到 full 必须把挂起的请求按同一口径批准。
+   */
+  it("切到 full 时挂起的请求全部批准并回传 approve", async () => {
+    const f = await fixtureFor("confirm");
+    try {
+      await f.request("write", join(allowedDir, "a.md"));
+      await f.request("network", "example.com");
+      expect(f.rowOf("r1").status).toBe("pending");
+      expect(f.rowOf("r2").status).toBe("pending");
+
+      f.db.prepare("UPDATE sessions SET permission_mode = 'full' WHERE id = 's1'").run();
+      const approved = f.resolver.approvePending("s1", "已切换到完全访问");
+      expect(approved).toBe(2);
+      for (const id of ["r1", "r2"]) {
+        const row = f.rowOf(id);
+        expect(row.status).toBe("decided");
+        expect(row.decision).toBe("approve");
+        expect(row.decided_by).toBe("mode:full");
+      }
+      expect(f.responded.map((r) => r.decision.kind)).toEqual(["approve", "approve"]);
+    } finally {
+      f.close();
+    }
+  });
+
+  it("没有挂起请求时切 full 是空操作（不产生审计噪音）", async () => {
+    const f = await fixtureFor("confirm");
+    try {
+      expect(f.resolver.approvePending("s1", "已切换到完全访问")).toBe(0);
+      expect(f.responded).toHaveLength(0);
+    } finally {
+      f.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

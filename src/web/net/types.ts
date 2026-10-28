@@ -854,6 +854,8 @@ export interface SessionControlsResponse {
   warning?: string;
   /** 切到 plan 时被拒绝的挂起写请求数。 */
   rejectedPending?: number;
+  /** 切到 full 时被自动批准的挂起请求数（2026-10-28）。 */
+  approvedPending?: number;
 }
 
 /** `PATCH /api/channels/:id` 的响应。 */

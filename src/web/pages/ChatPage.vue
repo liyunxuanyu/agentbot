@@ -2153,6 +2153,19 @@ async function changePermissionMode(mode: PermissionMode): Promise<void> {
     const res = await api.patchSessionControls(session.id, { permissionMode: mode });
     if (res.session) sessions.patchSession(res.session);
 
+    // 切到 full：后端已把挂起请求全部批准（否则卡片要等 120s 超时，
+    // 期间会话锁被占着，用户看到的是「一直转、命令很久才执行」）。
+    // 这里同步本地卡片状态并补拉一次权威状态，卡片立刻收成审计行。
+    if (res.approvedPending && res.approvedPending > 0) {
+      for (const p of permissions.pending) {
+        if (p.sessionId === session.id) permissions.markDecided(p.requestId, "已按完全访问批准");
+      }
+      void permissions.load(session.id);
+      void bots.refreshPending();
+      ui.toast(`已自动批准 ${res.approvedPending} 个挂起的请求`);
+      if (pinnedToBottom.value) scrollToBottomSoon();
+    }
+
     // 切到 plan：后端已把挂起写请求置 rejected，并落一条带 rejectedPending 的
     // config_update meta（G3）。分隔条由这条 meta 生成 —— 刷新后仍在、其它标签页
     // 也能看到。这里只同步本地卡片状态，不再本地插块（否则就是重复两条）。

@@ -268,14 +268,29 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: ServerContext):
         );
       }
 
+      // 切到 full：挂起的请求全部批准（2026-10-28 真机反馈）。
+      //
+      // 「界面一直显示等待、命令很久才执行」的一个根因就是这里：卡挂起时
+      // 运行时在等回传，会话锁被这一轮占着；用户改成「完全访问」后旧实现
+      // 什么也不做，只能等 120s 超时拒绝 —— 期间新消息全部排在锁后面。
+      let approvedPending = 0;
+      if (requestedMode === "full") {
+        approvedPending = ctx.permissions.approvePending(
+          sessionId,
+          "已切换到完全访问（自动批准挂起请求）",
+        );
+      }
+
       auditControls(sessionId, {
         providerId: after.provider_id,
         model: after.model,
         permissionMode: after.permission_mode,
         workspacePath: after.workspace_path,
         rejectedPending,
+        approvedPending,
         // G3：只有真的拒绝了才带上，0 不产生分隔条（避免每次切档都插一条噪音）
         ...(rejectedPending > 0 ? { modeSwitchedTo: "plan" } : {}),
+        ...(approvedPending > 0 ? { modeSwitchedTo: "full" } : {}),
       });
 
       const dto =
@@ -285,6 +300,7 @@ export function registerSessionRoutes(app: FastifyInstance, ctx: ServerContext):
         session: dto,
         ...(warning === undefined ? {} : { warning }),
         ...(rejectedPending > 0 ? { rejectedPending } : {}),
+        ...(approvedPending > 0 ? { approvedPending } : {}),
       };
     },
   );
