@@ -505,7 +505,7 @@ pending ──approve/deny/remember──→ decided
 
 **cwd 解析**：`sessions.workspace_path` → `channels.workspace_path` → `bots.repo_path` → `process.cwd()`。内置引擎不使用 worktree；CLI 路径不变。
 
-**并发**：同 Bot 会话并发仍为 1；群聊共用 cwd，写类工具按主持人串行。
+**并发**：同 Bot 会话并发仍为 1；群聊共用 cwd 时默认由主持人串行派发，显式 @ 多个 Bot 的并行派发由渠道级写锁（`core/group/write-lock.ts`，G7）串行化写类工具。
 
 ## 迁移 v4 与新增能力（2026-10-28）
 
