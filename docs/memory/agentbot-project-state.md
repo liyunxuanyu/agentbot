@@ -195,3 +195,59 @@ R1–R8 已实现并验收：迁移 v3、会话/渠道工作区、记忆作用�
 
 **门禁**：tsc / vue-tsc / boundaries 全绿；vitest **529 passed / 1 skipped（41 文件）**；`npm run build` 通过。
 真机验证：本机 + 真 cloudflared 隧道各跑了一遍「弹卡 → 批准 → 写文件 → diff → 文件面板」，均通过。
+
+## 2026-10-28（第二轮）：切档卡死 / 手机布局 / diff 计数
+
+**背景**：上一轮修完后用户复测，仍报「改成完全访问后界面一直等」「弹卡时点不到东西」。
+这一轮用 Playwright 移动视口（390×844）+ 命中测试逐帧查，找到四个新根因。
+
+**根因与修法**
+
+1. **切到「完全访问」不重新裁决挂起请求**（服务端）
+   - 卡挂起时运行时在等回传、会话锁被这一轮占着。`PATCH /api/sessions/:id/controls`
+     只处理了 `plan`（`rejectPendingWrites`），`full` 什么都不做 —— 已挂起的卡要等
+     120s 超时才被拒绝放行，期间新消息全部排在锁后面。
+   - 修法：新增 `PermissionResolver.approvePending()`（与 rejectPendingWrites 同构：
+     逐条落终态 → 回传运行时 → emitEvent → syncHold）。路由写 `approvedPending` +
+     `modeSwitchedTo:'full'` 审计 meta；前端同步本地卡片并 toast。
+   - 实测：切档后 **1s 内**文件写出（修复前 30s 仍无、120s 才超时）。
+
+2. **窄屏权限卡盖住输入区**（前端布局）
+   - 390×844：卡片 `fixed; bottom:58px` 高 316px（top≈470），输入区从 y=714 起 ——
+     卡片盖住整个输入区，**权限胶囊点不到**（`elementFromPoint` 命中的是 `.perm-note`）。
+     用户弹卡时无法切档，只能去改 Bot 默认值；而已有会话不继承默认值 → 又回到 1。
+   - 修法：卡片 `bottom: calc(58px + var(--composer-h))`，贴在输入区上方；
+     `--composer-h` 由 `Composer.vue` 的 ResizeObserver 实测写入 `:root`
+     （多行输入/提示条会改变高度，写死任何值都会错位）。
+
+3. **胶囊菜单被卡片压住**（层叠上下文）
+   - `.composer-wrap` z-index 30 < 卡片 120，`.perm-menu`（z-index 40）被困在 30 层里。
+   - 修法：`.composer-wrap` → 130。改这里要连带看 `.sidebar`(40)、`.tabbar`(60)、
+     `.overlay`(100)、`.toast-wrap`(200) 的相对顺序。
+
+4. **diff 把末尾换行多算一行**
+   - `"a\n".split("\n")` = `['a','']`：新建文件写 1 行显示 `+2`，DiffBlock 多画一条空 `+`。
+   - 修法：`splitLines` 去掉末尾空串；但「末行有无换行」本身是差异，所以末行无换行时
+     加不可见标记参与比较、渲染前摘掉（否则 `a\n` → `a` 会被判成没变化）。
+   - `tests/unit/diff.test.ts` 原来把 `+3` 写成期望值（把 bug 当契约），已改成 `+2`。
+
+5. **未跟踪文件的 diff 三处错**：尾部多空行、缺 `--- /dev/null` 头、增删计数为 null
+   （git numstat 不统计未跟踪文件）。已修；同时把列表视图改成**不再为每个文件跑 git diff**
+   （N 文件 = N 子进程，手机上打开面板要等好几秒），只有带 `path` 的单文件查询才生成 diff。
+
+6. **文件面板在手机上「点了没反应」**：窄屏单列时详情在列表下方，选中后
+   `scrollIntoView`；详情头路径改为独占一行可换行（原来压成 `bro…`）。
+
+**新增的坑**
+- **Bot 默认权限模式只影响新会话**：会话建立时复制一份自己的值，之后改 Bot 默认值
+  不影响已有会话。用户「在 Bot 详情改成完全访问」不会解决当前会话的卡死 —— 要用会话里的胶囊。
+- **`@playwright/mcp` 的 exports 不暴露 `playwright-core` 子路径**：e2e 脚本要从
+  MCP 的 `cli.js` 位置 `createRequire` 再 require，不能直接 `import "playwright"`
+  （那只是传递依赖，不是本项目的 devDependency）。
+- 判断「这一轮结束了」不能靠页面文本包含「本轮结束」—— 历史轮次也有，会误判。
+  e2e 里要盯**本轮新增的** `.file-diff` 或按钮状态。
+
+**门禁**：tsc / vue-tsc / boundaries 全绿；vitest **542 passed / 1 skipped（42 文件）**；
+`npm run build` 通过。真机/浏览器验证：本机直连 + cloudflared 隧道各跑一遍；
+`npm run e2e:mobile` 在 390×844 视口全过（权限卡 4.9s 出现、布局断言通过、
+切 full 后 82ms 出 diff、文件面板详情在视口内）。
