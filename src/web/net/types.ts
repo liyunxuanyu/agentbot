@@ -431,6 +431,57 @@ export interface PermissionsResponse {
 }
 
 // ---------------------------------------------------------------------------
+// 文件查看 / 改动 diff（GET /api/files、GET /api/files/changes）
+// ---------------------------------------------------------------------------
+
+export interface FileContentDto {
+  path: string;
+  workspace: string;
+  size: number;
+  content: string;
+  truncated: boolean;
+}
+
+export interface ChangedFileDto {
+  path: string;
+  status: string;
+  insertions: number | null;
+  deletions: number | null;
+}
+
+export interface FileChangesDto {
+  git: boolean;
+  workspace: string;
+  files: ChangedFileDto[];
+  message?: string;
+}
+
+export interface FileTreeEntryDto {
+  path: string;
+  name: string;
+  type: "file" | "dir";
+  size: number;
+}
+
+export interface FileTreeDto {
+  workspace: string;
+  path: string;
+  entries: FileTreeEntryDto[];
+  truncated: boolean;
+}
+
+export interface FileDiffDto {
+  git: boolean;
+  workspace: string;
+  path: string;
+  status: string;
+  diff: string;
+  insertions: number | null;
+  deletions: number | null;
+  message?: string;
+}
+
+// ---------------------------------------------------------------------------
 // 发送 / 取消 / 转任务
 // ---------------------------------------------------------------------------
 

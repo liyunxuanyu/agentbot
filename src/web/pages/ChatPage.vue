@@ -25,6 +25,8 @@ import StreamRowItem from "../components/chat/StreamRowItem.vue";
 import PermissionBlock from "../components/chat/PermissionBlock.vue";
 import EmptyState from "../components/common/EmptyState.vue";
 import AppModal from "../components/common/AppModal.vue";
+import WorkspacePanel from "../components/chat/WorkspacePanel.vue";
+import { useFilesUiStore } from "../stores/filesUi";
 
 /**
  * /chat/:channelId —— 会话视图（UX §4.4，最复杂页）。
@@ -52,6 +54,7 @@ const events = useEventsStore();
 const permissions = usePermissionsStore();
 const providers = useProvidersStore();
 const ui = useUiStore();
+const filesUi = useFilesUiStore();
 
 const { channel, status, errorText, connection, endpointMissing, currentSession } =
   storeToRefs(sessions);
@@ -59,6 +62,9 @@ const { dividers, frameCount } = storeToRefs(events);
 const { blocking, all: allPermissions, hasBlocking } = storeToRefs(permissions);
 
 const streamEl = ref<HTMLElement | null>(null);
+/** 工作区文件面板（查看内容 / diff）。 */
+const filesOpen = ref(false);
+const filesInitialPath = ref<string | null>(null);
 /** 用户是否贴着底部（决定新帧要不要自动滚）。 */
 const pinnedToBottom = ref(true);
 /** 折叠的 Turn（默认完成的收起，生成中的展开）。 */
@@ -2109,6 +2115,22 @@ watch(
 // 会话头变化后刷新吸顶判定
 watch([status, connection], () => nextTick(markStuck));
 
+// diff 块里的「查看完整文件」：由深层组件写进 filesUi store，这里统一打开面板
+watch(
+  () => filesUi.pendingPath,
+  (path) => {
+    if (!path) return;
+    filesUi.consume();
+    filesInitialPath.value = path;
+    filesOpen.value = true;
+  },
+);
+
+function openFiles(): void {
+  filesInitialPath.value = null;
+  filesOpen.value = true;
+}
+
 // 这些绑定只在模板里用（SFC 模板引用不让 TS 认为已使用），保留显式 void 以免误删。
 void sse;
 void botVars;
@@ -2180,6 +2202,7 @@ void allPermissions;
         </div>
 
         <div class="spacer" />
+        <button class="btn btn--sm btn--ghost" @click="openFiles">文件</button>
         <button class="btn btn--sm btn--ghost" @click="openSettings">会话设置</button>
         <button
           class="btn btn--sm btn--ghost"
@@ -2482,6 +2505,14 @@ void allPermissions;
         </button>
       </template>
     </AppModal>
+
+    <!-- 工作区文件面板：改动 diff + 文件内容（移动端反馈） -->
+    <WorkspacePanel
+      v-model:open="filesOpen"
+      :bot-id="primaryBot?.id ?? null"
+      :session-id="activeSessionId"
+      :initial-path="filesInitialPath"
+    />
 
     <!-- 会话设置（R2 / R4 / R7）：工作区 + 模型两级 + 权限模式 + 手动压缩 -->
     <AppModal v-model:open="settingsOpen" title="会话设置">

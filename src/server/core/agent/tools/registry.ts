@@ -39,6 +39,14 @@ export interface ToolResult {
   error?: string;
   truncated?: boolean;
   durationMs: number;
+  /**
+   * 附带的结构化结果（可选）。
+   *
+   * 目前只有写类工具用它带 `fileChange`（改动前后的文本 + diff），
+   * 驱动把它原样塞进 `tool_result` 事件的 payload，前端据此渲染 diff 块。
+   * 不回灌给模型 —— 模型看 `output` 就够了，避免上下文翻倍。
+   */
+  data?: unknown;
 }
 
 export interface ToolDefinition {

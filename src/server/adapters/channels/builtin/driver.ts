@@ -577,6 +577,14 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
             );
           },
           onToolResult: (call, toolResult) => {
+            // 写类工具会带 `data.fileChange`：原样交给事件流，前端渲染 diff 块。
+            // 形状由 ingest 校验（不合格就当没有），这里不做二次判断。
+            const fileChange =
+              toolResult.data !== null &&
+              typeof toolResult.data === "object" &&
+              (toolResult.data as { kind?: unknown }).kind === "file_change"
+                ? (toolResult.data as Record<string, unknown>)
+                : null;
             emit(
               state,
               makeEvent("tool_result", turnId, {
@@ -584,7 +592,8 @@ export function createBuiltinDriver(opts: BuiltinDriverOptions = {}): ChannelDri
                 status: toolResult.ok ? "ok" : "error",
                 output: toolResult.output,
                 ...(toolResult.truncated ? { truncated: true } : {}),
-              }),
+                ...(fileChange === null ? {} : { fileChange }),
+              } as CanonicalEvent["payload"]),
             );
           },
           onUsage: (sample) => {

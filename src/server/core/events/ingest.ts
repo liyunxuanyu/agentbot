@@ -1,7 +1,11 @@
 import type { DB } from "../db/db.js";
 import { getDb } from "../db/db.js";
 import { isRenderableType } from "../../../shared/events.js";
-import type { CanonicalEvent, StoredEventType } from "../../../shared/events.js";
+import type {
+  CanonicalEvent,
+  FileChangePayload,
+  StoredEventType,
+} from "../../../shared/events.js";
 import * as eventsRepo from "../repo/events.js";
 import * as messagesRepo from "../repo/messages.js";
 import { eventBus, type EventBus } from "./bus.js";
@@ -204,6 +208,31 @@ function asEnum<T extends string>(
   return fallback;
 }
 
+/**
+ * 校验写类工具附带的 `fileChange`。
+ *
+ * 只认「有 path 且 before/after 是字符串」的形状：diff 是展示用的，
+ * 形状不对就当没有（返回 null），而不是让整条 tool_result 降级成未知事件。
+ */
+function normalizeFileChange(
+  v: unknown,
+  missing: Missing,
+): FileChangePayload | null {
+  if (!isRecord(v)) return null;
+  if (typeof v["path"] !== "string" || v["path"].length === 0) return null;
+  const before = typeof v["before"] === "string" ? v["before"] : "";
+  const after = typeof v["after"] === "string" ? v["after"] : "";
+  return {
+    path: v["path"],
+    before,
+    after,
+    added: typeof v["added"] === "number" && Number.isFinite(v["added"]) ? v["added"] : 0,
+    removed: typeof v["removed"] === "number" && Number.isFinite(v["removed"]) ? v["removed"] : 0,
+    diff: typeof v["diff"] === "string" ? v["diff"] : "",
+    ...(v["truncated"] === true ? { truncated: true } : {}),
+  };
+}
+
 const PHASES = ["start", "delta", "end"] as const;
 
 function normalizePayload(type: StoredEventType, payload: unknown, adapterRaw: unknown): Normalized {
@@ -244,6 +273,12 @@ function normalizePayload(type: StoredEventType, payload: unknown, adapterRaw: u
         output: asString(p["output"], "", "output", missing),
         exitCode: typeof p["exitCode"] === "number" ? p["exitCode"] : undefined,
         truncated: typeof p["truncated"] === "boolean" ? p["truncated"] : undefined,
+        // 写类工具附带的改动（diff 块的数据源）。缺字段的旧事件没有它，
+        // 前端据此决定是否显示「查看 diff」；形状不对就当没有，绝不丢整条事件。
+        ...(() => {
+          const fc = normalizeFileChange(p["fileChange"], missing);
+          return fc === null ? {} : { fileChange: fc };
+        })(),
       };
       break;
 

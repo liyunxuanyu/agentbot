@@ -264,6 +264,10 @@ import type {
   DeleteBotRequest,
   DeleteBotResponse,
   ExecutionLocation,
+  FileChangesDto,
+  FileContentDto,
+  FileDiffDto,
+  FileTreeDto,
   MemoryMutateResponse,
   MemoryResponse,
   MemoryScope,
@@ -389,6 +393,46 @@ export const api = {
     request<PermissionsResponse>(
       `/api/permissions?sessionId=${encodeURIComponent(sessionId)}`,
       { signal },
+    ),
+
+  /**
+   * 读工作区文件内容（移动端反馈：界面上看不到文件）。
+   *
+   * 服务端按 Bot/Session 解析工作区并做 `resolveInside` 边界检查，
+   * 前端只传相对路径；路径越界回 403，不静默降级。
+   */
+  file: (input: { botId: string; sessionId?: string | null; path: string }) =>
+    request<FileContentDto>(
+      `/api/files?botId=${encodeURIComponent(input.botId)}` +
+        (input.sessionId ? `&sessionId=${encodeURIComponent(input.sessionId)}` : "") +
+        `&path=${encodeURIComponent(input.path)}`,
+      { timeoutMs: 20_000 },
+    ),
+
+  /** 工作区目录树（有上限，服务端跳过 .git / node_modules）。 */
+  fileTree: (input: { botId: string; sessionId?: string | null; path?: string }) =>
+    request<FileTreeDto>(
+      `/api/files/tree?botId=${encodeURIComponent(input.botId)}` +
+        (input.sessionId ? `&sessionId=${encodeURIComponent(input.sessionId)}` : "") +
+        (input.path ? `&path=${encodeURIComponent(input.path)}` : ""),
+      { timeoutMs: 20_000 },
+    ),
+
+  /** 工作区改动列表（git status）；非 git 目录回 `{git:false}`。 */
+  fileChanges: (input: { botId: string; sessionId?: string | null }) =>
+    request<FileChangesDto>(
+      `/api/files/changes?botId=${encodeURIComponent(input.botId)}` +
+        (input.sessionId ? `&sessionId=${encodeURIComponent(input.sessionId)}` : ""),
+      { timeoutMs: 20_000 },
+    ),
+
+  /** 单文件 unified diff（未跟踪文件按全文新增合成）。 */
+  fileDiff: (input: { botId: string; sessionId?: string | null; path: string }) =>
+    request<FileDiffDto>(
+      `/api/files/changes?botId=${encodeURIComponent(input.botId)}` +
+        (input.sessionId ? `&sessionId=${encodeURIComponent(input.sessionId)}` : "") +
+        `&path=${encodeURIComponent(input.path)}`,
+      { timeoutMs: 20_000 },
     ),
 
   decidePermission: (requestId: string, decision: string) =>

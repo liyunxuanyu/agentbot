@@ -20,12 +20,42 @@ import type {
 } from "@shared/events";
 import type { MessageDto, MessageStatus } from "../net/types";
 
+/** 写类工具附带的改动（与 shared 的 FileChangePayload 同形）。 */
+export interface FileChangeView {
+  path: string;
+  before: string;
+  after: string;
+  added: number;
+  removed: number;
+  diff: string;
+  truncated: boolean;
+}
+
 /** 工具结果视图：payload 的 tool_result 是扁平结构，这里只取展示需要的字段。 */
 export interface ToolResultView {
   status: "ok" | "error";
   output: string;
   exitCode: number | null;
   truncated: boolean;
+  /** 本次调用改动的文件；没有时为 null（读类工具、旧事件）。 */
+  fileChange: FileChangeView | null;
+}
+
+/** 校验并收窄 `fileChange`：形状不对就当没有，绝不因此丢掉整条结果。 */
+function fileChangeOf(v: unknown): FileChangeView | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const rec = v as Record<string, unknown>;
+  const path = typeof rec["path"] === "string" ? rec["path"] : "";
+  if (path.length === 0) return null;
+  return {
+    path,
+    before: typeof rec["before"] === "string" ? rec["before"] : "",
+    after: typeof rec["after"] === "string" ? rec["after"] : "",
+    added: typeof rec["added"] === "number" ? rec["added"] : 0,
+    removed: typeof rec["removed"] === "number" ? rec["removed"] : 0,
+    diff: typeof rec["diff"] === "string" ? rec["diff"] : "",
+    truncated: rec["truncated"] === true,
+  };
 }
 
 /** 计划条目与 shared 的 PlanEntry 同形（全量替换语义由 replace 标记表达）。 */
@@ -379,6 +409,7 @@ export function buildTurnView(input: BuildTurnInput): TurnView {
           output: typeof p["output"] === "string" ? p["output"] : "",
           exitCode: typeof p["exitCode"] === "number" ? p["exitCode"] : null,
           truncated: p["truncated"] === true,
+          fileChange: fileChangeOf(p["fileChange"]),
         };
         const idx = callIndex.get(callId);
         const target = idx === undefined ? undefined : display[idx];

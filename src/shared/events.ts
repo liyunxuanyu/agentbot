@@ -49,12 +49,36 @@ export interface ToolCallPayload {
   status: "pending" | "running";
 }
 
+/**
+ * 文件改动（内置引擎的 write_file / edit_file 附带）。
+ *
+ * 为什么放进 tool_result 而不是新造一类事件：改动是「这次工具调用产生了什么」
+ * 的直接结果，挂在一起才能在同一行里展开 diff；新事件类型会让能力掩码、前端
+ * 渲染分支、以及所有运行时的声明表都要跟着改一遍。
+ *
+ * `before` / `after` 只保留文本（≤32KB），超长部分由工具侧截断并标 truncated。
+ */
+export interface FileChangePayload {
+  /** 工作区相对路径（POSIX 分隔符）。 */
+  path: string;
+  /** 新建文件时为空串。 */
+  before: string;
+  after: string;
+  added: number;
+  removed: number;
+  /** unified diff 文本（可能因长度截断）。 */
+  diff: string;
+  truncated?: boolean;
+}
+
 export interface ToolResultPayload {
   callId: string;
   status: "ok" | "error";
   output: string;
   exitCode?: number;
   truncated?: boolean;
+  /** 本次调用改动的文件（写类工具才有）。 */
+  fileChange?: FileChangePayload;
 }
 
 export interface PlanEntry {

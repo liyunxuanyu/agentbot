@@ -4,6 +4,8 @@ import type { BotDto } from "../../net/types";
 import type { DisplayEvent } from "../../lib/turnModel";
 import { botVars } from "../../lib/botVars";
 import EventBlock from "./EventBlock.vue";
+import DiffBlock from "./DiffBlock.vue";
+import { useFilesUiStore } from "../../stores/filesUi";
 
 /**
  * 单条事件渲染器（原型 evHtml() 的 switch）。
@@ -26,6 +28,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ resend: [] }>();
+
+/** 「查看完整文件」直接写进 filesUi store：它挂在四层组件里，逐层 emit 容易漏。 */
+const filesUi = useFilesUiStore();
 
 const detailOpen = ref(false);
 
@@ -114,6 +119,12 @@ function prettyJson(v: unknown): string {
       >
         <pre>{{ prettyJson(event.input ?? {}) }}</pre>
       </EventBlock>
+      <!-- 写类工具：改动 diff 直接挂在结果行下面（移动端也能看清改了什么） -->
+      <DiffBlock
+        v-if="event.result?.fileChange"
+        :change="event.result.fileChange"
+        @view="(p) => filesUi.requestOpen(p)"
+      />
       <EventBlock
         v-if="resultView"
         :uid="`${uid}-r`"

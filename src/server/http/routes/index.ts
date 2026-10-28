@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { eventBus } from "../../core/events/bus.js";
 import { createBotIdEnricher } from "../dto.js";
 import { registerSseRoutes } from "../sse.js";
+import { registerFileRoutes } from "./files.js";
 import type { ServerContext } from "../server.js";
 import { registerBotRoutes } from "./bots.js";
 import { registerChannelRoutes } from "./channels.js";
@@ -58,6 +59,8 @@ export function registerRoutes(app: FastifyInstance, ctx: ServerContext): void {
   // P0-04/P0-05：刷新后重建事件流（含 meta 与用量），SSE 只负责增量
   registerEventRoutes(app, ctx);
   registerMessageRoutes(app, ctx);
+  // 文件内容 / 改动 diff（移动端反馈：界面上看不到改了什么）
+  registerFileRoutes(app, ctx);
   // R2/R4/R5/R7：会话工作区、会话级模型、四档权限模式、手动压缩
   registerSessionRoutes(app, ctx);
   registerPermissionRoutes(app, ctx);

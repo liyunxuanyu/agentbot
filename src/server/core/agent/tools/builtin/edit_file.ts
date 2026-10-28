@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { FILE_CHANGE_MAX_CHARS, renderUnifiedDiff, unifiedDiff } from "../diff.js";
 import type { ToolDefinition, ToolResult } from "../registry.js";
 import { resolveInside } from "../paths.js";
 
@@ -52,8 +53,29 @@ export const editFileTool: ToolDefinition = {
         const message = `oldText 在 ${resolved.relative} 中出现了 ${count} 次，不唯一。请带上更多上下文让它唯一。`;
         return { ok: false, output: message, error: message, durationMs: Date.now() - started };
       }
-      writeFileSync(resolved.abs, current.replace(oldText, newText), "utf8");
-      return { ok: true, output: `已更新 ${resolved.relative}`, durationMs: Date.now() - started };
+      const next = current.replace(oldText, newText);
+      writeFileSync(resolved.abs, next, "utf8");
+      // diff 数据（超长截断）：前端据此在同一行展开「改了什么」
+      const beforeText = current.slice(0, FILE_CHANGE_MAX_CHARS);
+      const afterText = next.slice(0, FILE_CHANGE_MAX_CHARS);
+      const change = unifiedDiff(beforeText, afterText);
+      return {
+        ok: true,
+        output: `已更新 ${resolved.relative}`,
+        durationMs: Date.now() - started,
+        data: {
+          kind: "file_change",
+          path: resolved.relative,
+          before: beforeText,
+          after: afterText,
+          added: change.added,
+          removed: change.removed,
+          diff: renderUnifiedDiff(resolved.relative, change),
+          ...(current.length > FILE_CHANGE_MAX_CHARS || next.length > FILE_CHANGE_MAX_CHARS || change.truncated
+            ? { truncated: true }
+            : {}),
+        },
+      };
     } catch (err) {
       const message = `编辑失败：${err instanceof Error ? err.message : String(err)}`;
       return { ok: false, output: message, error: message, durationMs: Date.now() - started };
