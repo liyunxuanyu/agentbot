@@ -291,6 +291,14 @@ cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/l
 | `DELETE /api/schedules/:id` | 是 | 删除 → 204；不存在回 404 |
 | `GET /api/usage` · `GET /api/usage/export.csv` | 是 | 用量聚合与 CSV 导出（含缓存命中率，未上报为 `null`） |
 | `DELETE /api/usage?botId=` | 是 | 按 Bot 删除用量记录；缺 `botId` 回 `400 bot_id_required`（全量删除走 purge） |
+| `GET/POST /api/providers` · `PATCH/DELETE /api/providers/:id` | 是 | 模型供应商 CRUD；响应只含 `apiKeyMasked` |
+| `POST /api/providers/:id/test` · `POST /api/providers/:id/default` | 是 | 连通性测试 / 设为默认供应商 |
+| `GET /api/providers/available` | 是 | `{count, defaultId}`（引导页判断有没有配过供应商） |
+| `GET/PUT /api/providers/catalog` · `POST /api/providers/catalog/test` | 是 | 模型能力表：读内置表 + 用户覆盖表 / 整表替换用户表（≤200 条）/ 试算一条规则是否命中模型名 |
+| `POST /api/providers/models` | 是 | 用表单里正在填的 `protocol`/`baseUrl`/`apiKey` 拉模型清单（编辑已有供应商只传 `id`），返回上下文窗口与最大输出默认值 |
+| `GET/POST /api/mcp` · `PATCH/DELETE /api/mcp/:id` · `POST /api/mcp/:id/reconnect` | 是 | MCP server 配置与连接状态；增删改**只动受影响的那一个连接**（N3-2 热插拔），`mcp.json` 支持 `permission`（缺省 `exec`） |
+| `GET /api/skills` · `POST /api/skills/rescan` | 是 | 技能索引（带 `builtin` 标记）与重扫（顺带补装被删的内置技能，返回 `installed[]`） |
+| `GET /api/setup/state` | 是 | 初始化引导 5 步完成度、`needsSetup`、`skillCount`、`skillsDir`（N1） |
 | `GET /login` | 否 | 登录表单页（服务端渲染，`no-store`，不回显 token）。已登录时 303 回 `next`；带有效 `?t=` 时种持久 cookie 后放行 |
 | `POST /login` | 否 | 表单 `{token, next?}` → 303 回原路径并种 `agentbot_token`（持久 HttpOnly cookie）；失败 401 重渲染表单，锁定 429 |
 | `POST /api/auth/logout` | 否 | 清 cookie → 204（只删凭证，不读业务数据） |
@@ -387,7 +395,7 @@ data: {"id":123,"sessionId":"…","turnId":"…","type":"message_delta","seq":7,
 
 ## 运行时接入（Adapter 层）
 
-三个通道驱动 + 每个运行时一个 YAML 声明。新增一个原生 ACP 运行时 = 放一个 YAML，
+四条通道驱动 + 每个运行时一个 YAML 声明（内置引擎的声明在代码里）。新增一个原生 ACP 运行时 = 放一个 YAML，
 不改核心代码（S4）。
 
 ```
@@ -507,7 +515,7 @@ src/server/
     provider.ts        纯接口（ChatMessage / ToolCall / ProviderDelta / ProviderClient）
     loop.ts            调模型 → 执行工具 → 回灌 → 循环（maxIterations 20 / maxToolCalls 40）
     prompt.ts          人格记忆（编排层已拼好）+ 运行规则 + 技能索引
-    skills.ts          ~/.agentbot/skills/<name>/SKILL.md 扫描（mtime 缓存）+ 按启用列表过滤 + 索引
+    skills.ts          ~/.agentbot/skills/<name>/SKILL.md 扫描 + mtime 签名缓存 + 按启用列表过滤 + 索引
     skills/install.ts  内置技能包安装（幂等、不覆盖用户改动、删了会补装）
     skills/builtin/    4 份随代码分发的 SKILL.md
     tools/             registry + paths（realpath 防逃逸）+ truncate + builtin 十个工具
@@ -516,29 +524,21 @@ src/server/
   adapters/channels/builtin/driver.ts   无进程 ChannelDriver
 ```
 
-**可用性**：内置引擎常驻运行时列表（与其它运行时一起按显示名排序），但**不参与 PATH 探测**；没有配置任何供应商时置灰（`probeDetail` 提示去设置页添加），配置后立即变为 ready。
+**可用性**：内置引擎常驻运行时列表，但**不参与 PATH 探测**；没有配置任何供应商时置灰（`probeDetail` 提示去设置页添加），配置后立即变为 ready。
 
 **工具与权限**：`read_file` / `list_dir` / `grep` / `read_skill` / `list_skills` 只读；`write_file` / `edit_file`（write）、`run_shell`（exec）、`web_fetch`（network）执行前必须经权限裁决；管理员 Bot 另有 `create_bot`（admin 动作，走权限卡）。MCP 工具名字为 `mcp__<server>__<tool>`，权限取 `mcp.json` 的 `permission`（缺省 `exec`）；计划模式下所有写类工具（含 `mcp__*`）在注册表里就被裁掉。用户拒绝后回灌的话术明确要求模型换做法，不会让它死循环重试同一调用。
+
+**技能**：系统提示只放**已启用**技能的 `name + 一行描述`（≤800 字符、≤12 条），超限时补一句「另有 M 个，可用 `list_skills` 查看」。新建 Bot 默认启用 4 个基础技能（`enabled_skills` 写默认集合）；`null` = 全部启用（迁移前的老 Bot），`[]` = 全停。停用只影响索引，模型仍可用 `list_skills` 发现、`read_skill` 读全文。扫描按目录 mtime/size 签名缓存，文件一变下一轮即生效，不需要重启。
 
 **边界**：所有文件工具走 `resolveInside(cwd, path)`，`..` 与符号链接逃逸都会被拒；`run_shell` 的 cwd 固定为会话 cwd，超时/取消走树杀；`web_fetch` 只允许 http(s) GET。
 
 **失败处理**：流被网关掐断 → 自动降级一次非流式；429/5xx 退避 2 次（1s、3s）；工具参数不是合法 JSON → 回灌原文让模型重试；上下文溢出 → 丢掉最旧的一半重试一次；达到上限 → 非致命 error + done，用户可继续发消息接着做。
 
-**REST**：
+**REST**：供应商 / MCP / 技能 / 初始化引导的端点都在上文「接口」表里（`/api/providers*`、
+`/api/mcp*`、`/api/skills*`、`/api/setup/state`）。设置页的「模型供应商 / 模型映射表 /
+MCP / 技能」四个分区负责配置。
 
-| 端点 | 说明 |
-|---|---|
-| `GET/POST /api/providers` · `PATCH/DELETE /api/providers/:id` | 供应商 CRUD；响应只含 `apiKeyMasked` |
-| `POST /api/providers/:id/test` | 发一次最小请求，返回 `{ok,latencyMs,model,error?}` |
-| `POST /api/providers/:id/default` | 设为默认供应商 |
-| `GET /api/providers/available` | `{count, defaultId}`（引导页判断「有没有配过供应商」） |
-| `GET/PUT /api/providers/catalog` · `POST /api/providers/catalog/test` | 模型能力表：`GET` 返回内置表 + 用户覆盖表 + 路径/来源；`PUT` 整表替换用户表（≤200 条）；`test` 校验一条 `match` 正则对 `modelId` 是否命中 |
-| `POST /api/providers/models` | 用表单里正在填的 `protocol`/`baseUrl`/`apiKey`（编辑时给 `id`）拉模型清单，带上下文窗口与最大输出默认值 |
-| `GET/POST /api/mcp` · `PATCH/DELETE /api/mcp/:id` · `POST /api/mcp/:id/reconnect` | MCP 配置与连接状态；增删改**只动受影响的那一个连接**（N3-2 热插拔），`mcp.json` 支持 `permission`（缺省 exec） |
-| `GET /api/skills` · `POST /api/skills/rescan` | 技能索引（带 `builtin` 标记）与重扫（顺带补装被删的内置技能，额外返回 `installed[]`） |
-| `GET /api/setup/state` | 初始化引导 5 步完成度与 `needsSetup`（N1）；`needsSetup` 只看前三项必需项 |
-
-**Bot 绑定**：`POST/PATCH /api/bots` 接受 `providerId`（可空，空则用默认供应商）与 `role`；`GET /api/bots` 的 DTO 带 `providerId` / `role` / `enabledSkills`。设置页的「模型供应商 / 模型映射表 / MCP / 技能」四个分区负责配置。
+**Bot 绑定**：`POST/PATCH /api/bots` 接受 `providerId`（可空，空则用默认供应商）与 `role`；`GET /api/bots` 的 DTO 带 `providerId` / `role` / `enabledSkills`。
 
 **冒烟**：`npm run smoke:builtin` 会起一个假 OpenAI 网关、启动服务、建 Bot、发消息、批准权限卡、校验工具落盘与事件链，全程不访问真实模型。
 
@@ -787,6 +787,28 @@ tests/unit/            ingest/repo/sse/turn/process/permissions/lifecycle/contex
 ```
 
 新增一个 ACP 运行时 = 往 `src/server/adapters/declarations/` 放一个 YAML，不改核心代码。
+
+## 初始化引导 / 技能 / 热插拔（2026-10-28）
+
+对应 [`.forge/agentbot-19-new-requirements.md`](.forge/agentbot-19-new-requirements.md)（N1–N4）与
+[`.forge/agentbot-18-fix-list.md`](.forge/agentbot-18-fix-list.md)（R1–R8 / G1–G9）。
+
+- **首启引导（N1）**：`GET /api/setup/state` 由服务端算五步完成度（运行时 / 供应商 / 管理员为必需，
+  工作区 / 技能可选）。`needsSetup` **只看必需项**；`App.vue` 挂载后跳一次 `/setup`，
+  「稍后再说」后本次会话不再自动跳，侧栏保留「初始化待完成 N」入口。
+  设置页页头的「初始化引导」可随时重入。
+- **基础技能包（N2）**：4 份 `SKILL.md` 随代码分发，启动时装进 `~/.agentbot/skills/`；
+  已存在跳过（不覆盖用户改动）、删了会补装、目录里写 `.agentbot-builtin` 标记。
+  `POST /api/skills/rescan` 也能补装。
+- **技能热插拔（N3-1）+ 按需加载（N4）**：扫描按 mtime/size 签名缓存，改文件下一轮生效；
+  Bot 级 `enabledSkills` 过滤索引；新建 Bot 默认启用基础 4 个；`list_skills` 让模型发现未启用的技能。
+- **MCP 热插拔（N3-2）**：`McpManager` 的 `add` / `replace` / `remove` 只动受影响的连接，
+  增删改后下一轮对话即可用/不可用，不需要重启服务。
+- **群聊记忆跨 Bot 共享（R3 方案 A）**：`scope='channel'` 只按 `channel_id` 过滤，
+  同群 Bot A 写的记忆 Bot B 也能注入；记忆页用 `sourceBotId` / `sourceBotName` 标明来源。
+- **群聊写锁（G7）**：显式 @ 多个 Bot 并行派发时，`core/group/write-lock.ts` 按渠道串行化
+  写类工具（write/exec/network/admin），读类不排队。
+- **auto 档越界（R5 方案 B）**：边界内写自动批准并写审计，越界**直接拒绝**、不弹卡。
 
 ## 会话控制（2026-10-27）
 
