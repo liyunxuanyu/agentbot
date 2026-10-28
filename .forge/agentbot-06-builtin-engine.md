@@ -360,7 +360,7 @@ ALTER TABLE bots ADD COLUMN provider_id TEXT;
 | **N3** 内置工具 + 权限门禁 | `core/agent/tools/**` | N2 | 与 N4/N5 并行 |
 | **N4** MCP | `adapters/mcp/*`、`http/routes/mcp.ts`、registry 桥接 | N2 | 与 N3/N5 并行 |
 | **N5** 技能 | `core/agent/skills.ts`、`read_skill` 工具、`http/routes/skills.ts` | N2（与 N3 同一 registry，需约定接口） | 与 N4 并行，与 N3 有 registry 交汇 |
-| **N6** 前端 | Bot 表单运行时下拉 + provider 选择、Settings 三块（供应商/MCP/技能） | N1 的 API | 可在 N1 后开始 |
+| **N6** 前端 | Bot 表单运行时下拉 + provider 选择、Settings 三块（供应商/MCP/技能；2026-10-28 后扩为八个分区） | N1 的 API | 可在 N1 后开始 |
 
 **并行约束**：N3 与 N5 都会动 `tools/registry.ts`。约定：N3 负责 registry 本身与内置工具；N5 只**注册**一个 `read_skill`，不改 registry 结构。若同时开工，N5 等 N3 交付 registry 后再接线。
 

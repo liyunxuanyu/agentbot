@@ -183,7 +183,8 @@ node node_modules/vitest/vitest.mjs run
 
 端到端：`node scripts/smoke-builtin.mjs`。
 
-**注意**：vitest 偶发失败（契约测试时序），连跑三次确认；当前基线 421 passed。
+**注意**：vitest 偶发失败（契约测试时序），连跑三次确认。本文写作时的基线是 421 passed；
+18 号 + 19 号全部落地后为 **500 passed / 1 skipped（38 个测试文件）**。
 
 ## 10. 开工前要先拍板的两件事
 

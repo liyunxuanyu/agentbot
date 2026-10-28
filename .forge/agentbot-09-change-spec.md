@@ -22,13 +22,13 @@
 | B-P0-03 | 内置运行时注册 | 运行时列表常驻「内置引擎」；不参与 PATH 探测；无供应商时置灰并给出原因；有供应商时 ready |
 | B-P0-04 | Bot 绑定 | Bot 可绑定 `providerId`；为空时回退默认供应商；供应商删除后回退默认；无任何供应商时发送被阻止 |
 | B-P0-05 | Agent loop | 流式文本、推理文本、工具调用、usage、finish 全链路；最多 20 轮模型调用 / 40 次工具调用 |
-| B-P0-06 | 内置工具 | `read_file` / `write_file` / `edit_file` / `list_dir` / `grep` / `run_shell` / `web_fetch` / `read_skill` 八个工具可用 |
+| B-P0-06 | 内置工具 | `read_file` / `write_file` / `edit_file` / `list_dir` / `grep` / `run_shell` / `web_fetch` / `read_skill` 八个工具可用（2026-10-28 起另有 `list_skills`，管理员 Bot 另有 `create_bot`） |
 | B-P0-07 | 路径安全 | 所有文件工具经 `resolveInside`：拒绝 `..`、外部绝对路径、符号链接逃逸；`run_shell` cwd 固定会话 cwd |
 | B-P0-08 | 权限门禁 | write/exec/network 工具执行前调用 `askPermission`；拒绝后回灌可操作话术；只读工具不弹卡 |
 | B-P0-09 | 权限复用 | 内置引擎权限走现有 resolver 三档（reject 120s / hold 24h / preauth），不新增策略 |
-| B-P0-10 | MCP | `mcp.json` 配置 stdio server；initialize → tools/list → tools/call；工具名 `mcp__<server>__<tool>`，默认权限 exec；单 server 失败隔离 |
-| B-P0-11 | 技能 | 扫描 `~/.agentbot/skills/<name>/SKILL.md`；索引 ≤800 字符进系统提示；`read_skill` 按需读全文 |
-| B-P0-12 | 设置页 | 模型供应商 / MCP / 技能三个分区；空/加载/错误态齐备；供应商测试、设默认、编辑、删除 |
+| B-P0-10 | MCP | `mcp.json` 配置 stdio server；initialize → tools/list → tools/call；工具名 `mcp__<server>__<tool>`，权限可声明（缺省 exec）；单 server 失败隔离；2026-10-28 起支持运行期增删改热插拔 |
+| B-P0-11 | 技能 | 扫描 `~/.agentbot/skills/<name>/SKILL.md`；索引 ≤800 字符进系统提示；`read_skill` 按需读全文（2026-10-28 起索引按 Bot 的 `enabledSkills` 过滤、≤12 条、带 4 个内置技能包） |
+| B-P0-12 | 设置页 | 模型供应商 / MCP / 技能三个分区（现为八个分区，另含运行时 / 模型映射表 / 安全与 token / 数据与保留 / 权限审计）；空/加载/错误态齐备；供应商测试、设默认、编辑、删除 |
 | B-P0-13 | Bot 表单 | 新建 Bot 选内置引擎时可选供应商；Bot 详情可改绑供应商并显示当前供应商 |
 | B-P0-14 | 失败处理 | 流中断降级非流式；429/5xx 退避 2 次；工具参数 JSON 非法回灌原文；上下文溢出裁剪重试；上限非致命收口 |
 | B-P0-15 | 回归 | 既有 ACP/CLI/native 契约、HTTP 路由、SSE、权限、worktree guard、boundaries 不回归 |
@@ -53,7 +53,7 @@
 | 历史恢复 | 内存 history + 重启后 `newSession(systemPrompt)` 重建 | adapters 禁止 import core/db；产品层 messages 表是真相 |
 | 流中断 | 已产出文本保留，降级一次非流式；仍失败则 fatal `stream_interrupted` | pix 网关已知会掐流 |
 | 上下文溢出 | 丢最旧一半（保留 system + 最近 4 条）重试一次 | 设计 §8.7 |
-| MCP 权限 | 默认 `exec`，每次问 | 无法预判 MCP 工具行为 |
+| MCP 权限 | 默认 `exec`，每次问（2026-10-28 起可按 server 声明 `read`/`write`/`exec`/`network`，plan 下按它裁剪） | 无法预判 MCP 工具行为 |
 
 ## 5. 边界处理
 
