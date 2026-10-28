@@ -67,24 +67,30 @@ npm run build:server     # 产出 dist/server.js
 npm start                # 等价于 node dist/server.js，静态资源由 Fastify 直接提供
 ```
 
-启动后控制台会打印带 token 的访问地址：
+启动后控制台会打印登录页地址：
 
 ```
-  用浏览器打开（含 token，仅本机可访问）：
-  http://127.0.0.1:8787/?t=<token>
+  用浏览器打开（仅本机可访问）：
+  http://127.0.0.1:8787/login
 ```
 
-打开一次即可，token 会写成 HttpOnly + SameSite=Strict cookie，之后刷新不用再带 `?t=`。
+在登录页输入访问令牌（`~/.agentbot/token` 里的那串字符）即可。登录成功后服务端种下
+**持久 HttpOnly cookie**（30 天、SameSite=Strict；HTTPS/生产环境自动加 Secure，
+可用 `AGENTBOT_COOKIE_SECURE=1|0` 强制开关），之后刷新、重开浏览器都不再需要 token。
+右上角的退出按钮会清除 cookie 并回到登录页。
 
-开发态前端跑在 5173（Vite HMR），`/api` 由 Vite 代理到后端 8787。两边都要起：
+旧的 `?t=<token>` 方式仍然有效：打开一次就会种下同一枚持久 cookie，之后可正常使用。
+
+开发态前端跑在 5173（Vite HMR），`/api`、`/login`、`/logout` 由 Vite 代理到后端 8787。
+两边都要起：
 
 ```bash
 npm run dev              # concurrently：dev:server + dev:web
 ```
 
-首次开发访问需要带 token，否则 `/api/meta` 会 401：从后端控制台复制 `?t=<token>`，
-拼到 `http://localhost:5173/?t=<token>`。token 会存进 sessionStorage 并从地址栏抹掉，
-之后刷新不用再带（见下文「前端 token 引导」）。
+首次开发访问打开 `http://localhost:5173/login` 输入 token 即可（也可以沿用
+`http://localhost:5173/?t=<token>`；token 会存进 sessionStorage 并从地址栏抹掉，
+见下文「前端 token 引导」）。
 
 ## 前端
 
@@ -147,10 +153,24 @@ src/web/
 `main.ts` 的函数体里 —— ESM import 求值早于模块体，router 会把 token 带进
 `/bots?t=...`（实测踩到）。
 
-之后每个 REST/SSE 请求都把 token 作为 `?t=` 附在 URL 上：后端 `extractToken()`
-只认 `?t=` 与 `agentbot_token` cookie，自定义 header 会被忽略；而开发态 HTML 由 Vite
-提供，cookie 种不下来，所以 URL 携带是两种环境都能用的方式。cookie 仍会在第一次
-带 `?t=` 的 API 请求后种下，作为双保险。
+之后每个 REST/SSE 请求仍会把 sessionStorage 里的 token 作为 `?t=` 附在 URL 上：
+后端 `tokenCandidates()` 认 `?t=` 与 `agentbot_token` cookie，自定义 header 会被忽略。
+登录页种下的持久 cookie 是主凭证，URL 携带只是「同一标签页里 cookie 被清掉」时的兜底。
+两者都校验，**任一有效即放行** —— 这样 sessionStorage 里残留的旧 token 不会把有效的
+cookie 拖成 401。收到 401 时前端会清掉本地副本并整页跳到 `/login`（token 重置流程除外）。
+
+### 登录与登录态
+
+- `GET /login` 是服务端渲染的表单页（免鉴权、`no-store`、不回显任何 token）；未登录的
+  浏览器导航会被 302 到 `/login?next=<原路径>`。登录成功 303 回原路径。
+- `POST /login` 校验失败沿用鉴权限流（同来源 10 次 / 60s），锁定期间表单禁用。
+- `next` 只接受站内绝对路径，且剥掉 `?t=`、拒绝指回 `/login` 与 `/logout`（防开放重定向与回跳死循环）。
+- cookie：`HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`，HTTPS 或
+  `NODE_ENV=production` 时加 `Secure`（`AGENTBOT_COOKIE_SECURE=1|0` 可覆盖）。
+- 退出：`POST /api/auth/logout`（204，清 cookie，前端按钮用）、`POST /logout`
+  （303 回登录页，无 JS 兜底）。两者都免鉴权 —— 只删凭证、不读数据。
+- 为什么登录页不是 Vue 路由页：鉴权钩子覆盖所有路径（含静态资源），未登录时
+  SPA 的 index.html 与 JS 包都拿不到，前端路由页没有机会渲染。
 
 ### 事件流与性能
 
@@ -241,11 +261,18 @@ src/web/
 | `POST /api/schedules` | 是 | `{name, botId, channelId, prompt, triggerType, delayMinutes?\|intervalMinutes?\|atTime?}` → 201；周期 <5 分钟回 `400 interval_too_small` |
 | `PATCH /api/schedules/:id` | 是 | `{enabled?, name?, prompt?}`；暂停清 `nextRunAt`，恢复重算下次触发并清失败计数 |
 | `DELETE /api/schedules/:id` | 是 | 删除 → 204；不存在回 404 |
+| `GET /login` | 否 | 登录表单页（服务端渲染，`no-store`，不回显 token）。已登录时 303 回 `next`；带有效 `?t=` 时种持久 cookie 后放行 |
+| `POST /login` | 否 | 表单 `{token, next?}` → 303 回原路径并种 `agentbot_token`（持久 HttpOnly cookie）；失败 401 重渲染表单，锁定 429 |
+| `POST /api/auth/logout` | 否 | 清 cookie → 204（只删凭证，不读业务数据） |
+| `POST /logout` | 否 | 清 cookie → 303 到 `/login`（无 JS 兜底） |
 | `GET /api/token` | 是 | 当前 token 状态：`{preview, url, activeStreams}`（脱敏预览 + 带 token 的完整地址 + 活跃 SSE 连接数） |
 | `POST /api/token/reset` | 是 | 重置 token → `{token, url, closedStreams}`。**先删 token 文件再生成**（否则 `ensureToken()` 会读回旧值），随后 `closeAllStreams()` 主动断开所有 SSE。旧 token 立刻 401 |
 | `POST /api/admin/purge` | 是 | 全量删除：`{confirm:"删除全部数据"}` → `{ok, deleted:{每表行数}, closedStreams}`。确认短语不符回 `400 confirm_required`；保留 `runtime_definitions`（探测缓存）与 `schema_meta` |
 
-其余所有请求（含静态资源）都要过 token 校验：无 token 或错误 token 返回 `401 {"error":"unauthorized"}`，响应体不含任何业务数据；同一来源连续 10 次失败后 60s 内返回 `429`。
+其余所有请求（含静态资源）都要过 token 校验：无 token 或错误 token 时，`/api/*` 与
+fetch/EventSource 返回 `401 {"error":"unauthorized"}`（响应体不含任何业务数据），
+浏览器导航（`Accept` 含 `text/html`）则 302 到 `/login?next=<原路径>`；
+同一来源连续 10 次失败后 60s 内返回 `429`。
 
 未注册的 `/api/*` 统一返回 `404 {"error":"not_found"}`。前端用这个 code（而不是任意 404）
 判断「端点还没实现」并降级为空态；已实现端点查不到资源时应回更具体的 code
@@ -696,7 +723,7 @@ src/server/
   main.ts              启动序：状态目录 → 迁移 → token → 声明探测 → Supervisor + 权限
                        → 僵尸清扫 → 编排器 → 调度器 → HTTP
   config.ts            路径、默认值、超时与保留策略
-  http/                鉴权钩子、SSE、REST 路由、DTO 装配、静态资源
+  http/                鉴权钩子、登录页（login.ts）、SSE、REST 路由、DTO 装配、静态资源
   core/                编排/权限/存储，不含任何协议字符串
     orchestrator/      turn.ts（一轮完整流程）+ session-lock.ts（同 Session 串行）
                        + context.ts（resume 失败时的产品层重建）
@@ -713,7 +740,7 @@ src/web/               Vue 3 前端（见上文「前端」）
 fixtures/              契约测试用的原始协议样本
 tests/contract/        三个通道的契约回放（FakeTransport + fixture）
 tests/unit/            ingest/repo/sse/turn/process/permissions/lifecycle/context/http-permissions
-                       /group/assignment/http-group/http-assignments
+                       /group/assignment/http-group/http-assignments/http-login/http-auth-page
 ```
 
 新增一个 ACP 运行时 = 往 `src/server/adapters/declarations/` 放一个 YAML，不改核心代码。
