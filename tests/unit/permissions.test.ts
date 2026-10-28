@@ -365,7 +365,7 @@ const SESSION = "sess_perm";
 const BOT = "bot_perm";
 
 describe("裁决器 · 超出边界直接拒绝、不转发运行时", () => {
-  it("越界写 → status=denied_boundary，且 respond 收到 deny（先落库后回传）", async () => {
+  it("已配置允许目录但目标在外 → 直接拒绝（明确的边界，不弹卡）", async () => {
     const f = setup();
     await f.resolver.handle({
       sessionId: SESSION,
@@ -386,7 +386,7 @@ describe("裁决器 · 超出边界直接拒绝、不转发运行时", () => {
     f.close();
   });
 
-  it("越界请求不占 120s：expiresAt 为 null，没有 pending 状态", async () => {
+  it("已配置边界时越界请求不占 120s：expiresAt 为 null，没有 pending 状态", async () => {
     const f = setup();
     await f.resolver.handle({
       sessionId: SESSION,
@@ -398,6 +398,80 @@ describe("裁决器 · 超出边界直接拒绝、不转发运行时", () => {
     const row = f.resolver.get("perm_out2");
     expect(row?.expiresAt).toBeNull();
     expect(row?.heldSince).toBeNull();
+    f.close();
+  });
+
+  it("**未配置允许目录**（默认状态）→ confirm 模式弹卡等用户决定，不再静默拒绝", async () => {
+    // 2026-10-28 真机反馈的根因：新建 Bot 的 allow_dirs 是空数组，
+    // 写请求被直接判成 denied_boundary、不落 pending —— 手机上没有任何确认框。
+    // PRD P0-09 的默认口径本就是「只读 + 写需批准」，这里对齐它。
+    const f = setup({ allowDirs: [] });
+    await f.resolver.handle({
+      sessionId: SESSION,
+      botId: BOT,
+      turnId: "turn_1",
+      source: "interactive",
+      request: { requestId: "perm_unset", action: "write", target: join(outsideDir, "u.md") },
+    });
+
+    const row = f.resolver.get("perm_unset");
+    expect(row?.status).toBe("pending");
+    expect(row?.boundaryVerdict).toBe("denied");
+    expect(row?.timeoutPolicy).toBe("reject");
+    expect(row?.expiresAt).not.toBeNull();
+    // 还没人做决定：绝不提前回传，否则卡片点了也没用
+    expect(f.responded).toHaveLength(0);
+
+    const decided = await f.resolver.decide("perm_unset", "approve");
+    expect(decided.ok).toBe(true);
+    expect(f.resolver.get("perm_unset")?.status).toBe("decided");
+    expect(f.responded[0]?.decision.kind).toBe("approve");
+    f.close();
+  });
+
+  it("未配置允许目录 + 用户不点批准 → 120s 超时自动拒绝（安全默认不变）", async () => {
+    const f = setup({ allowDirs: [] }, { rejectTimeoutMs: 120 });
+    await f.resolver.handle({
+      sessionId: SESSION,
+      botId: BOT,
+      turnId: "turn_1",
+      source: "interactive",
+      request: { requestId: "perm_unset_timeout", action: "write", target: join(outsideDir, "t.md") },
+    });
+    expect(f.resolver.get("perm_unset_timeout")?.status).toBe("pending");
+    await new Promise((r) => setTimeout(r, 260));
+    const row = f.resolver.get("perm_unset_timeout")!;
+    expect(row.status).toBe("denied_timeout");
+    expect(f.responded[0]?.decision.kind).toBe("deny");
+    f.close();
+  });
+
+  it("auto 模式越界写 → 直接拒绝、不弹卡（R5 口径 B 不变）", async () => {
+    const f = setup();
+    f.db.prepare("UPDATE sessions SET permission_mode = 'auto' WHERE id = ?").run(SESSION);
+    await f.resolver.handle({
+      sessionId: SESSION,
+      botId: BOT,
+      turnId: "turn_auto",
+      source: "interactive",
+      request: { requestId: "perm_auto_out", action: "write", target: join(outsideDir, "a.md") },
+    });
+    const row = f.resolver.get("perm_auto_out")!;
+    expect(row.status).toBe("denied_boundary");
+    expect(f.responded[0]?.decision.kind).toBe("deny");
+    f.close();
+  });
+
+  it("越界 exec（未开启 shell）仍直接拒绝，不弹卡", async () => {
+    const f = setup();
+    await f.resolver.handle({
+      sessionId: SESSION,
+      botId: BOT,
+      turnId: "turn_exec",
+      source: "interactive",
+      request: { requestId: "perm_exec_out", action: "exec", target: "rm -rf /" },
+    });
+    expect(f.resolver.get("perm_exec_out")?.status).toBe("denied_boundary");
     f.close();
   });
 

@@ -203,6 +203,11 @@ function openStream(
     "x-accel-buffering": "no",
   });
   raw.flushHeaders?.();
+  // 立刻写一帧注释：反向代理（cloudflared / nginx）在收到首块响应体之前
+  // 不会把响应头交给客户端，EventSource 的 `open` 就会一直等 —— 实测手机通过
+  // cloudflared 隧道时，没有这一行要等 15s（第一次心跳）才连上，期间界面停在
+  // 「正在连接运行时…」、权限卡也不出现。注释帧不是事件，不影响 Last-Event-ID。
+  raw.write(": connected\n\n");
 
   let lastSentId = cursor ?? 0;
   /** 重放期间到达的实时事件先攒着，重放完再按 id 顺序补发，避免乱序。 */

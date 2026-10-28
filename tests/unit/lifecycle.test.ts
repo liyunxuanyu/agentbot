@@ -383,7 +383,7 @@ describe("权限接线：驱动上报 → 裁决 → 卡片 DTO", () => {
     f.close();
   }, 20000);
 
-  it("越界写 → 卡片标 denied_boundary，且不经过 respondPermission 之外任何转发", async () => {
+  it("越界写（已配置边界）→ 卡片标 denied_boundary，直接拒绝不转发", async () => {
     const driver = createRealDriver();
     const f = setup(driver);
 

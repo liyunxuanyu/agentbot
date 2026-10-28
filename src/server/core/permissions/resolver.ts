@@ -559,7 +559,25 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
       ...(check.reason === undefined ? {} : { reason: check.reason }),
     };
 
-    if (check.verdict === "denied") {
+    // 「还没配边界」和「明确配了边界但这次越界」要区别对待（2026-10-28 真机反馈）：
+    //
+    //   默认新建的 Bot `allow_dirs` 是空数组。旧实现把写请求直接判成
+    //   denied_boundary、**不弹卡**，用户在手机上只看到 Bot 说「被拒绝了」，
+    //   既没有确认框、也不知道要去配置边界 —— 这就是「权限弹窗不弹出」的根因。
+    //
+    //   confirm 模式下，**未配置允许目录**的写请求改为落 pending 卡片：
+    //   边界判定仍记 `denied`（卡片与审计都提示「超出边界」），
+    //   用户批准只放行这一次，不批按 120s 超时拒绝 —— 安全默认不变。
+    //
+    //   auto / full 不变：auto 直接拒绝（「别烦我」的语义），full 绕过边界。
+    //   已经配置了允许目录、但目标不在其中的请求仍直接拒绝：那是**明确的**边界。
+    const promptUnconfiguredWrite =
+      check.verdict === "denied" &&
+      mode === "confirm" &&
+      request.action === "write" &&
+      boundary.allowDirs.length === 0;
+
+    if (check.verdict === "denied" && !promptUnconfiguredWrite) {
       rejectOutOfBoundary(
         input,
         rowId,
@@ -571,9 +589,13 @@ export function createPermissionResolver(deps: PermissionResolverDeps): Permissi
       return;
     }
 
+    if (promptUnconfiguredWrite) {
+      log(`请求 ${rowId} 超出边界（未配置允许目录），confirm 模式转人工确认`);
+    }
+
     // 自动模式（R5 口径 B，2026-10-28 定稿）：只自动批「边界内的写」；
-    // shell/network/admin 仍然弹卡。越界写在上面的 check.verdict==='denied'
-    // 分支就已被直接拒绝（不弹卡）—— auto 的语义是「别烦我」，越界弹卡等于退回 confirm。
+    // shell/network/admin 仍然弹卡。auto 下的越界写已在上面直接拒绝（不弹卡）——
+    // auto 的语义是「别烦我」，越界弹卡等于退回 confirm。
     if (mode === "auto" && request.action === "write" && check.verdict === "allowed") {
       const autoSnapshot: SnapshotPayload = {
         ...snapshot,

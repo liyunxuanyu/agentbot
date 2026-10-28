@@ -205,7 +205,11 @@ interface Ctx {
   close: () => Promise<void>;
 }
 
-async function boot(boundary: { dirs: string[]; shell?: boolean }): Promise<Ctx> {
+async function boot(boundary: {
+  dirs: string[];
+  shell?: boolean;
+  permissionMode?: "confirm" | "auto" | "plan" | "full";
+}): Promise<Ctx> {
   const db = openDb(":memory:");
   const now = Date.now();
   const botId = "bot_http";
@@ -301,9 +305,10 @@ async function boot(boundary: { dirs: string[]; shell?: boolean }): Promise<Ctx>
 
   // 预建 Session（首次发送会自动建，但这里显式建方便断言）
   db.prepare(
-    `INSERT INTO sessions (id, bot_id, channel_id, runtime_id, resume_state, status, started_at)
-     VALUES (?, ?, ?, 'rt_http', 'fresh', 'created', ?)`,
-  ).run(sessionId, botId, channelId, now);
+    `INSERT INTO sessions
+       (id, bot_id, channel_id, runtime_id, resume_state, status, permission_mode, started_at)
+     VALUES (?, ?, ?, 'rt_http', 'fresh', 'created', ?, ?)`,
+  ).run(sessionId, botId, channelId, boundary.permissionMode ?? "confirm", now);
 
   return {
     app,
@@ -550,6 +555,26 @@ describe("HTTP · 权限卡片端到端", () => {
     });
     expect(decide.status).toBe(409);
 
+    await ctx.close();
+  }, 30000);
+
+  it("越界写（auto）：直接拒绝，运行时收到 deny，不产生待批卡片", async () => {
+    const ctx = await boot({ dirs: [workDir], permissionMode: "auto" });
+    ctx.driver.nextPermission = {
+      requestId: "perm_http_auto_out",
+      action: "write",
+      target: OUTSIDE_TARGET,
+    };
+
+    await sendMessage(ctx, "写到系统目录");
+    await waitFor(() => ctx.driver.respondCount() > 0);
+
+    const body = (await (
+      await fetch(`${ctx.base}/api/permissions?sessionId=${ctx.sessionId}`)
+    ).json()) as { permissions: { id: string; status: string }[] };
+    const row = body.permissions.find((p) => p.id === "perm_http_auto_out")!;
+    expect(row.status).toBe("denied_boundary");
+    expect(ctx.driver.responded[0]?.decision.kind).toBe("deny");
     await ctx.close();
   }, 30000);
 

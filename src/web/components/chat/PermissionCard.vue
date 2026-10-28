@@ -92,6 +92,9 @@ const heldFor = computed(() => {
 const auditOpen = ref(false);
 
 const note = computed(() => {
+  if (props.perm.outOfBoundary && (kind.value === "block" || kind.value === "hold")) {
+    return "这个目标不在 Bot 的允许目录里。批准只放行这一次；要长期允许，请到 Bot 详情 › 权限边界把目录加进去。";
+  }
   switch (kind.value) {
     case "boundary":
       return "这个动作没有转发给运行时。边界变更只影响之后的请求。";
@@ -154,6 +157,12 @@ function decide(decision: "approve" | "reject" | "remember" | "forever"): void {
         </div>
         <div class="perm-field">
           <span class="k">来源</span><span class="v">{{ sourceLabel }}</span>
+        </div>
+        <div v-if="perm.outOfBoundary && (kind === 'block' || kind === 'hold')" class="perm-field">
+          <span class="k">边界</span>
+          <span class="v" style="color: var(--color-warning-ink)">
+            超出 Bot 允许目录 · 批准只放行这一次
+          </span>
         </div>
 
         <template v-if="kind === 'hold'">

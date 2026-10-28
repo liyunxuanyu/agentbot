@@ -36,11 +36,28 @@ export interface PermissionView {
   /** 倒计时终点（block 型）；null 表示无倒计时（hold / invalid / boundary / decided）。 */
   expiresAt: number | null;
   createdAt: number;
+  /**
+   * 请求落在 Bot 边界之外（confirm 模式下的越界写会弹卡让人当场决定）。
+   *
+   * 单独一个字段而不是新增 kind：卡片的形状（倒计时、四个按钮、吸附位置）
+   * 与普通待批完全一致，只有一行警示文案不同。
+   */
+  outOfBoundary: boolean;
 }
 
 function kindOf(row: PermissionDto): PermissionKind {
   if (row.status === "decided" || row.status.startsWith("denied")) return "decided";
   if (row.status === "invalidated") return "invalid";
+  // 待批一律是阻断卡 —— 包括 confirm 模式下的越界写。
+  //
+  // 旧实现按 `boundaryVerdict === 'denied'` 直接判成 boundary 行（无按钮、
+  // 「已自动拒绝」），而服务端在越界时本来就不落 pending，于是「默认 Bot 没配
+  // 允许目录 → 写文件被静默拒绝、手机上看不到任何确认框」。现在服务端把越界写
+  // 落成 pending（boundaryVerdict 仍记 denied），这里必须跟着渲染成可操作的卡片，
+  // 越界信息由 `outOfBoundary` 单独标注。
+  if (row.status === "pending") {
+    return row.timeoutPolicy === "hold" ? "hold" : "block";
+  }
   if (row.boundaryVerdict === "denied") return "boundary";
   if (row.timeoutPolicy === "hold") return "hold";
   return "block";
@@ -115,6 +132,7 @@ export const usePermissionsStore = defineStore("permissions", () => {
         heldSince: row.heldSince,
         expiresAt: row.expiresAt,
         createdAt: row.createdAt,
+        outOfBoundary: row.boundaryVerdict === "denied",
       },
     };
   }
@@ -134,8 +152,7 @@ export const usePermissionsStore = defineStore("permissions", () => {
     createdAt: number;
   }): void {
     if (items.value[input.requestId]) return;
-    const kind: PermissionKind =
-      input.boundaryVerdict === "denied" ? "boundary" : "block";
+    const kind: PermissionKind = "block";
     items.value = {
       ...items.value,
       [input.requestId]: {
@@ -149,8 +166,9 @@ export const usePermissionsStore = defineStore("permissions", () => {
         decisionText: null,
         heldSince: null,
         // 兜底 120s：端点缺失时卡片至少有个倒计时，不会永远挂着
-        expiresAt: kind === "block" ? input.createdAt + FALLBACK_TIMEOUT_MS : null,
+        expiresAt: input.createdAt + FALLBACK_TIMEOUT_MS,
         createdAt: input.createdAt,
+        outOfBoundary: input.boundaryVerdict === "denied",
       },
     };
   }
@@ -173,6 +191,7 @@ export const usePermissionsStore = defineStore("permissions", () => {
           heldSince: row.heldSince,
           expiresAt: row.expiresAt,
           createdAt: row.createdAt,
+          outOfBoundary: row.boundaryVerdict === "denied",
         };
       }
       items.value = next;
