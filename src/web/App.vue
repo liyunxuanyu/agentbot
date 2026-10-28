@@ -121,7 +121,8 @@ async function onLogout(): Promise<void> {
   } catch {
     // 网络错误/已过期都无所谓，下面的跳转才是目的
   }
-  redirectToLogin();
+  // force：即使之前因「重置 token」关掉过自动跳转，退出也必须离开
+  redirectToLogin(true);
 }
 
 void toasts;

@@ -428,7 +428,10 @@ async function main(): Promise<void> {
 
   log(`启动耗时 ${Date.now() - startedAt}ms`);
   console.log("");
-  console.log("  用浏览器打开（含 token，仅本机可访问）：");
+  console.log("  用浏览器打开（仅本机可访问）：");
+  console.log(`  http://${config.http.host}:${config.http.port}/login`);
+  console.log("");
+  console.log("  登录页输入访问令牌即可；令牌也会打印在下面这条链接里（打开一次即长期记住）：");
   console.log(`  ${accessUrl(token)}`);
   console.log("");
   console.log(`  探活：http://${config.http.host}:${config.http.port}/api/health`);

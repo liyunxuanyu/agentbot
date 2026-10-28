@@ -155,8 +155,8 @@ export function suppressLoginRedirect(): void {
   authRedirectSuppressed = true;
 }
 
-export function redirectToLogin(): void {
-  if (redirectingToLogin || authRedirectSuppressed) return;
+export function redirectToLogin(force = false): void {
+  if (redirectingToLogin || (authRedirectSuppressed && !force)) return;
   redirectingToLogin = true;
   clearToken();
   // 已在登录页就不再跳，避免刷新循环

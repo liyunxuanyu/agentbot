@@ -16,8 +16,8 @@ import {
   clearAuthFailures,
   cookieSecure,
   currentToken,
-  extractToken,
   recordAuthFailure,
+  tokenCandidates,
   tokenCookie,
   verifyToken,
 } from "./auth.js";
@@ -277,9 +277,11 @@ export function buildServer(ctx: ServerContext, opts: BuildServerOptions = {}): 
 
     const query = req.query as Record<string, unknown>;
     const headers = req.headers as unknown as Record<string, unknown>;
-    const token = extractToken(headers, query);
+    // 多个来源逐个校验：前端残留的旧 ?t= 不该把有效的 cookie 拖成 401
+    const candidates = tokenCandidates(headers, query);
+    const matched = candidates.find((c) => verifyToken(c)) ?? null;
 
-    if (!verifyToken(token)) {
+    if (!matched) {
       recordAuthFailure(source);
       if (wantsHtml(req)) {
         // 浏览器导航：送去登录页，登录成功后回到原地址（保留路径与查询串）
@@ -298,9 +300,11 @@ export function buildServer(ctx: ServerContext, opts: BuildServerOptions = {}): 
     }
 
     clearAuthFailures(source);
-    // 首次带 ?t= 访问：种下持久 HttpOnly cookie，后续 fetch/EventSource 都用它
-    if (typeof query["t"] === "string") {
-      reply.header("set-cookie", tokenCookie(token as string, cookieSecure(req.protocol)));
+    // 首次带 ?t= 访问：种下持久 HttpOnly cookie，后续 fetch/EventSource 都用它。
+    // 只在 URL 里的值本身有效时种，避免把错误 token 写进 cookie。
+    const fromQuery = typeof query["t"] === "string" ? query["t"] : null;
+    if (fromQuery && verifyToken(fromQuery)) {
+      reply.header("set-cookie", tokenCookie(fromQuery, cookieSecure(req.protocol)));
     }
     return done();
   });

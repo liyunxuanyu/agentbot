@@ -71,15 +71,39 @@ export function verifyToken(candidate: string | undefined | null): boolean {
 
 /** 从 `?t=` 或 cookie 取 token。 */
 export function extractToken(headers: Record<string, unknown>, query: Record<string, unknown>): string | null {
-  const q = query["t"];
-  if (typeof q === "string" && q.length > 0) return q;
+  return tokenCandidates(headers, query)[0] ?? null;
+}
 
+/** 从 Cookie 头里取 `agentbot_token`（解码失败按没有处理）。 */
+export function cookieToken(headers: Record<string, unknown>): string | null {
   const cookie = headers["cookie"];
-  if (typeof cookie === "string") {
-    const m = /(?:^|;\s*)agentbot_token=([^;]+)/.exec(cookie);
-    if (m && m[1]) return decodeURIComponent(m[1]);
+  if (typeof cookie !== "string") return null;
+  const m = /(?:^|;\s*)agentbot_token=([^;]+)/.exec(cookie);
+  if (!m || !m[1]) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
   }
-  return null;
+}
+
+/**
+ * 按优先级列出请求里的 token 候选：`?t=` → cookie。
+ *
+ * 为什么是列表而不是单个：前端在 sessionStorage 里可能残留一个旧 token
+ * （token 重置前存下的），它会随每个请求拼成 `?t=`。只看第一个会让「cookie
+ * 明明有效」的请求被旧参数拖成 401。调用方逐个校验，任一通过即视为已登录。
+ */
+export function tokenCandidates(
+  headers: Record<string, unknown>,
+  query: Record<string, unknown>,
+): string[] {
+  const out: string[] = [];
+  const q = query["t"];
+  if (typeof q === "string" && q.length > 0) out.push(q);
+  const fromCookie = cookieToken(headers);
+  if (fromCookie) out.push(fromCookie);
+  return out;
 }
 
 /** 登录态 cookie 的有效期：30 天。持久 cookie，浏览器重启后仍在。 */

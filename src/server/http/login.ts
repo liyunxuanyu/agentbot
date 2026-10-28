@@ -4,6 +4,7 @@ import {
   clearAuthFailures,
   clearTokenCookie,
   cookieSecure,
+  cookieToken,
   recordAuthFailure,
   tokenCookie,
   verifyToken,
@@ -52,6 +53,10 @@ export function safeNext(raw: unknown): string {
  */
 export function nextFromUrl(raw: unknown): string {
   const path = safeNext(raw);
+  // 回跳目标本身是登录/登出会成环：GET /login 带 cookie 时又 303 回 /login…
+  if (path === "/login" || path.startsWith("/login?") || path.startsWith("/logout")) {
+    return "/";
+  }
   const qIndex = path.indexOf("?");
   if (qIndex < 0) return path;
   const base = path.slice(0, qIndex);
@@ -228,16 +233,18 @@ export function registerLoginRoutes(app: FastifyInstance, opts: LoginRoutesOptio
 
     // 已经登录（cookie 或 ?t=）就直接放行；带 ?t= 时顺手种下持久 cookie。
     // 这让 `?t=` 老链接依然能「一次登录、长期记住」。
+    // 优先级：有效 cookie > ?t=。这样地址栏里残留一个过期 token 时，
+    // 已登录的浏览器不会被重新拦到登录页。
     const fromQuery = typeof query["t"] === "string" ? (query["t"] as string) : null;
-    const cookie = (req.headers as unknown as Record<string, unknown>)["cookie"];
-    const cookieToken =
-      typeof cookie === "string"
-        ? /(?:^|;\s*)agentbot_token=([^;]+)/.exec(cookie)?.[1]
-        : undefined;
-    const candidate = fromQuery ?? (cookieToken ? decodeURIComponent(cookieToken) : null);
-    if (candidate && verifyToken(candidate)) {
+    const cookieValue = cookieToken(req.headers as unknown as Record<string, unknown>);
+
+    if (verifyToken(cookieValue)) {
       clearAuthFailures(clientSource(req));
-      if (fromQuery) reply.header("set-cookie", tokenCookie(fromQuery, cookieSecure(req.protocol)));
+      return reply.redirect(next, 303);
+    }
+    if (fromQuery && verifyToken(fromQuery)) {
+      clearAuthFailures(clientSource(req));
+      reply.header("set-cookie", tokenCookie(fromQuery, cookieSecure(req.protocol)));
       return reply.redirect(next, 303);
     }
 
