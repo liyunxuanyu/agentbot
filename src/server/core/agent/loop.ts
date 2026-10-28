@@ -81,9 +81,24 @@ export interface AgentLoopResult {
   toolCalls: number;
 }
 
+/**
+ * 权限卡上的「目标」与授权指纹的来源。
+ *
+ * 顺序：url → path → command → name。
+ *
+ * 为什么 url 排第一：MCP 的浏览器工具大多没有 path/command，只有 `url`（navigate）
+ * 或什么目标参数都没有（evaluate / snapshot / click）。旧顺序把 `path` 放第一、
+ * 且只认这几个键，于是：
+ *   - `browser_evaluate` 没有 url 参数 → 目标退化成工具名
+ *     `mcp__playwright__browser_evaluate`，卡片上「目标」显示的是一串工具名；
+ *   - 「记住（本会话）」按工具名记指纹，看起来对整类浏览器动作生效、
+ *     实际只对「这个工具 + 这个空目标」生效，换个页面又要批。
+ * 对这类「没有具体目标」的 MCP 工具，退回**工具名**仍是对的（无法预判它要访问哪），
+ * 但至少把带 url 的排到前面，让 navigate 这类能按主机归一化。
+ */
 function toolTarget(call: ToolCall): string {
   const args = call.args ?? {};
-  const candidate = args["path"] ?? args["command"] ?? args["url"] ?? args["name"];
+  const candidate = args["url"] ?? args["path"] ?? args["command"] ?? args["name"];
   return typeof candidate === "string" ? candidate : call.name;
 }
 

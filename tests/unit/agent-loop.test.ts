@@ -116,6 +116,76 @@ describe("agent loop", () => {
     expect(toolMessage?.content).toContain("不要重复");
   });
 
+  it("权限请求的目标优先取 url（MCP 浏览器工具只有 url，没有 path）", async () => {
+    const executed: Record<string, unknown>[] = [];
+    const asked: { action: string; target: string }[] = [];
+    const provider = new ScriptedProvider([
+      [
+        {
+          kind: "tool_call",
+          call: {
+            id: "c1",
+            name: "mcp__playwright__browser_navigate",
+            args: { url: "https://example.com/a" },
+            rawArguments: '{"url":"https://example.com/a"}',
+          },
+        },
+        { kind: "finish", reason: "tool_calls" },
+      ],
+      [{ kind: "finish", reason: "stop" }],
+    ]);
+    const opts = baseOptions(provider, [toolOf("network", executed, "mcp__playwright__browser_navigate")], {
+      callbacks: {
+        onTextDelta: () => undefined,
+        onReasoningDelta: () => undefined,
+        onToolCall: () => undefined,
+        onToolResult: () => undefined,
+        onUsage: () => undefined,
+        askPermission: async (req: { action: string; target: string }) => {
+          asked.push(req);
+          return true;
+        },
+      },
+    });
+    await runAgentLoop(opts);
+    // 旧顺序先看 path：navigate 只有 url，目标会退化成工具名，卡片上「目标」
+    // 显示一串 mcp__... 而不是网址，授权指纹也无法按主机归一化。
+    expect(asked[0]?.target).toBe("https://example.com/a");
+
+    // 什么目标参数都没有的 MCP 工具：退回工具名（无法预判它要访问哪）
+    const asked2: { target: string }[] = [];
+    const provider2 = new ScriptedProvider([
+      [
+        {
+          kind: "tool_call",
+          call: {
+            id: "c2",
+            name: "mcp__playwright__browser_evaluate",
+            args: { code: "document.title" },
+            rawArguments: '{"code":"document.title"}',
+          },
+        },
+        { kind: "finish", reason: "tool_calls" },
+      ],
+      [{ kind: "finish", reason: "stop" }],
+    ]);
+    const opts2 = baseOptions(provider2, [toolOf("network", executed, "mcp__playwright__browser_evaluate")], {
+      callbacks: {
+        onTextDelta: () => undefined,
+        onReasoningDelta: () => undefined,
+        onToolCall: () => undefined,
+        onToolResult: () => undefined,
+        onUsage: () => undefined,
+        askPermission: async (req: { target: string }) => {
+          asked2.push(req);
+          return true;
+        },
+      },
+    });
+    await runAgentLoop(opts2);
+    expect(asked2[0]?.target).toBe("mcp__playwright__browser_evaluate");
+  });
+
   it("只读工具不需要权限", async () => {
     const executed: Record<string, unknown>[] = [];
     let asked = 0;

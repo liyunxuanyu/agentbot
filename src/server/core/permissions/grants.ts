@@ -62,14 +62,44 @@ function toRow(raw: RawGrant): GrantRow {
  * 路径统一小写（Windows）并去掉尾部分隔符 —— 与 boundary 的 canonical 规则一致，
  * 否则同一文件两种写法会各自命中一次，等于把「记住」变成「每次都要批准」。
  */
+/**
+ * 动作指纹。
+ *
+ * 路径统一小写（Windows）并去掉尾部分隔符 —— 与 boundary 的 canonical 规则一致，
+ * 否则同一文件两种写法会各自命中一次，等于把「记住」变成「每次都要批准」。
+ */
 export function actionKeyOf(action: PermissionAction, target: string): string {
   const normalized = normalizeTarget(action, target);
   return `${action}:${normalized}`;
 }
 
+/**
+ * 联网动作按「主机」归一化，而不是完整 URL。
+ *
+ * 为什么：浏览器控制一次任务会连续访问同一站点的多个页面
+ * （`https://example.com/` → `/about` → `/docs`）。按完整 URL 记指纹的话，
+ * 用户在卡上点「记住（本会话）」只对**那一个 URL** 生效，下一页又弹一张 ——
+ * 实测一次「打开两个页面读标题」的任务要批两次，且卡片看起来一模一样，
+ * 用户会以为「记住」坏了。
+ *
+ * 按主机（含端口）记：`https://example.com/a?x=1` → `example.com`。
+ * 主机内部的路径差异不再是权限边界（同一个站点本来就能互相跳转）。
+ * 没有主机（例如模型传了个裸词）就退回原文，保持旧行为。
+ */
+function normalizeNetwork(target: string): string {
+  const raw = target.trim().toLowerCase();
+  if (raw.length === 0) return raw;
+  try {
+    const url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    return url.host.length > 0 ? url.host : raw;
+  } catch {
+    return raw;
+  }
+}
+
 function normalizeTarget(action: PermissionAction, target: string): string {
   if (action === "exec") return target.trim();
-  if (action === "network") return target.trim().toLowerCase();
+  if (action === "network") return normalizeNetwork(target);
   let p = target.trim();
   // 与 boundary 用同一套归一化：realpath + 去尾分隔符 + 小写。
   // 少了 realpath 这一步，Windows 上「长名/短名（liyunx~1）」会被算成两个动作，

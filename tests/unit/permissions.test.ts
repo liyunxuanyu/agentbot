@@ -553,6 +553,22 @@ describe("裁决器 · 授权命中自动批准", () => {
     expect(a).toBe(b);
   });
 
+  it("联网授权按主机归一化：同站不同页面只记一次（浏览器连续操作）", () => {
+    // 浏览器控制一次任务会连续访问同站多个页面；按完整 URL 记指纹的话，
+    // 用户点「记住（本会话）」只对那一个 URL 生效，下一页又弹卡（实测）。
+    const a = actionKeyOf("network", "https://example.com/");
+    const b = actionKeyOf("network", "https://example.com/about?x=1");
+    const c = actionKeyOf("network", "EXAMPLE.com:443");
+    expect(a).toBe("network:example.com");
+    expect(b).toBe(a);
+    // 不同站点 / 不同端口仍是不同授权
+    expect(actionKeyOf("network", "https://example.org/")).not.toBe(a);
+    expect(actionKeyOf("network", "http://example.com:8080/")).not.toBe(a);
+    // 裸词（没有 scheme）按 https 解析；解析不了就退回原文
+    expect(actionKeyOf("network", "example.net")).toBe("network:example.net");
+    expect(c).toBe(a);
+  });
+
   it("grant 的 action_key 去掉尾部分隔符（同一路径只记一次）", () => {
     const a = actionKeyOf("write", join(allowedDir, "same.md"));
     const b = actionKeyOf("write", join(allowedDir, "same.md") + "/");
