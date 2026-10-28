@@ -1,6 +1,6 @@
 ---
 name: agentbot-project-state
-description: agentbot（本地多 Bot 工作台）全流程走完并交付可用——10 页 Vue 3 前端 + Node/Fastify/SQLite 后端 + 五运行时适配；含 CLI 通道强制 worktree 安全裁定与几处实测契约坑
+description: agentbot（本地多 Bot 工作台）全流程走完并交付可用——10 页 Vue 3 前端 + Node/Fastify/SQLite 后端 + 四条运行时通道（含内置引擎）；含 CLI 通道强制 worktree 安全裁定、服务端登录页 + 持久 HttpOnly cookie、以及几处实测契约坑
 metadata:
   node_type: memory
   type: project
