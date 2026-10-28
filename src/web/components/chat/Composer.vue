@@ -251,6 +251,41 @@ function onDocPointerDown(e: PointerEvent): void {
 onMounted(() => document.addEventListener("pointerdown", onDocPointerDown, true));
 onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocPointerDown, true));
 
+/**
+ * 把输入区实际高度写成 CSS 变量 `--composer-h`（挂在 documentElement 上）。
+ *
+ * 为什么：窄屏的阻断型权限卡是 `position: fixed` 贴在视口底部的。旧实现写死
+ * `bottom: 58px`（只让开底部导航），390×844 实测卡片直接盖住整个输入区 ——
+ * 连权限胶囊都点不到，用户没法把会话切到「完全访问」（真机反馈的形态）。
+ * 输入区高度随多行输入、提示条变化，写死任何一个值都会在某种情况下错位，
+ * 所以用 ResizeObserver 量真实高度。
+ */
+let composerObserver: ResizeObserver | null = null;
+
+function publishComposerHeight(): void {
+  const el = rootEl.value;
+  if (!el) return;
+  const h = Math.round(el.getBoundingClientRect().height);
+  if (h > 0) document.documentElement.style.setProperty("--composer-h", `${h}px`);
+}
+
+onMounted(() => {
+  publishComposerHeight();
+  const el = rootEl.value;
+  if (el && typeof ResizeObserver !== "undefined") {
+    composerObserver = new ResizeObserver(() => publishComposerHeight());
+    composerObserver.observe(el);
+  }
+  window.addEventListener("resize", publishComposerHeight);
+});
+
+onBeforeUnmount(() => {
+  composerObserver?.disconnect();
+  composerObserver = null;
+  window.removeEventListener("resize", publishComposerHeight);
+  document.documentElement.style.removeProperty("--composer-h");
+});
+
 function submit(): void {
   if (!canSend.value) return;
   const value = text.value.trim();
