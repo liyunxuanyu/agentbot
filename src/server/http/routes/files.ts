@@ -94,22 +94,46 @@ interface ChangedFile {
   diff: string;
 }
 
-/** 未跟踪文件：git diff 看不到，按「全文都是新增」合成一份 diff。 */
-function untrackedDiff(absPath: string): string {
+/**
+ * 未跟踪文件：git diff 看不到，按「全文都是新增」合成一份 diff。
+ *
+ * 三个容易画错的细节（真机验证时都踩到了）：
+ *   ① 文件以换行结尾时 `split("\n")` 会多出一个空串 —— 直接 `+` 上去就是一条
+ *      凭空多出来的空新增行，增删计数也跟着多 1。去掉末尾那个空串。
+ *   ② 必须带 `--- /dev/null` / `+++ b/<path>` 头：前端的 diff 行解析与用户对
+ *      「这是新文件」的判断都依赖它；没有头会渲染成一大片无归属的加号。
+ *   ③ 增删计数要一起回：git 的 `--numstat` 不统计未跟踪文件，前端只能显示
+ *      「+null」。全文新增就是 ins = 行数、del = 0。
+ */
+function untrackedDiff(absPath: string, userPath: string): { diff: string; ins: number; del: number } {
   let text = "";
   try {
     const stat = statSync(absPath);
-    if (stat.size > MAX_FILE_BYTES) return "（文件过大，未生成 diff）";
+    if (stat.size > MAX_FILE_BYTES) return { diff: "（文件过大，未生成 diff）", ins: 0, del: 0 };
     text = readFileSync(absPath, "utf8");
   } catch {
-    return "（无法读取文件）";
+    return { diff: "（无法读取文件）", ins: 0, del: 0 };
   }
-  if (isBinary(text)) return "（二进制文件，不生成 diff）";
-  const lines = text.split("\n").map((line) => `+${line}`);
-  return lines.join("\n");
+  if (isBinary(text)) return { diff: "（二进制文件，不生成 diff）", ins: 0, del: 0 };
+
+  const lines = text.split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  const body = lines.map((line) => `+${line}`).join("\n");
+  const diff = `--- /dev/null\n+++ b/${toPosix(userPath)}\n${body}`;
+  return { diff, ins: lines.length, del: 0 };
 }
 
-function listChanges(workspace: string): { git: boolean; message?: string; files: ChangedFile[] } {
+/**
+ * 列出工作区改动。
+ *
+ * `only` 非空时**只为这一个文件**生成 diff：面板打开时只列路径与增删行数，
+ * 点中某个文件才拉它的 diff。旧实现不管调用方要不要，对每个改动文件都跑一次
+ * `git diff`（N 个文件 = N 个子进程），改动一多，手机上打开面板要等好几秒。
+ */
+function listChanges(
+  workspace: string,
+  only?: string | null,
+): { git: boolean; message?: string; files: ChangedFile[] } {
   const inside = git(["rev-parse", "--is-inside-work-tree"], workspace);
   if (!inside.ok || inside.stdout.trim() !== "true") {
     return { git: false, files: [], message: "工作区不是 git 仓库，无法统计改动" };
@@ -152,19 +176,42 @@ function listChanges(workspace: string): { git: boolean; message?: string; files
       ? repoPath.slice(prefix.length)
       : repoPath;
     const untracked = state === "??";
+    const userPathPosix = toPosix(userPath);
+    // 只要 diff 的调用方只关心一个文件：其余文件跳过子进程
+    const wanted = only === null || only === undefined || toPosix(only) === userPathPosix;
 
     let diff = "";
+    let stat = numstat.get(repoPath);
+    if (!wanted) {
+      // 不生成 diff，但增删行数仍要给（列表视图显示 +N −M）
+      files.push({
+        path: userPathPosix,
+        status: state.trim() || "?",
+        insertions: stat?.ins ?? null,
+        deletions: stat?.del ?? null,
+        diff: "",
+      });
+      continue;
+    }
     if (untracked) {
       const resolved = resolveInside(workspace, userPath);
-      diff = resolved.ok ? untrackedDiff(resolved.abs) : "（路径越界，已跳过）";
+      if (resolved.ok) {
+        const synthesized = untrackedDiff(resolved.abs, userPath);
+        diff = synthesized.diff;
+        // numstat 不统计未跟踪文件：用合成结果补上增删行数（否则前端显示 +null）
+        if (stat === undefined && diff.startsWith("--- /dev/null")) {
+          stat = { ins: synthesized.ins, del: synthesized.del };
+        }
+      } else {
+        diff = "（路径越界，已跳过）";
+      }
     } else {
       const out = git(["diff", "--no-color", "HEAD", "--", repoPath], workspace);
       diff = out.ok ? out.stdout : out.stderr.slice(0, 4000);
     }
 
-    const stat = numstat.get(repoPath);
     files.push({
-      path: toPosix(userPath),
+      path: userPathPosix,
       status: state.trim() || "?",
       insertions: stat?.ins ?? null,
       deletions: stat?.del ?? null,
@@ -317,16 +364,22 @@ export function registerFileRoutes(app: FastifyInstance, ctx: ServerContext): vo
       return json(reply, 409, { error: "workspace_missing", message: `工作区不存在：${workspace}` });
     }
 
-    const changes = listChanges(workspace);
+    // 单文件查询先校验路径，再只给它生成 diff（避免为列表里其它文件白跑 git）
+    let onlyRel: string | null = null;
     if (only !== null) {
       const target = resolveInside(workspace, only);
       if (!target.ok) return json(reply, 403, { error: "path_outside_workspace", message: target.error });
-      const hit = changes.files.find((f) => f.path === target.relative);
+      onlyRel = toPosix(target.relative);
+    }
+
+    const changes = listChanges(workspace, onlyRel);
+    if (onlyRel !== null) {
+      const hit = changes.files.find((f) => f.path === onlyRel);
       if (!hit) {
         return {
           git: changes.git,
           workspace,
-          path: target.relative,
+          path: onlyRel,
           status: "unchanged",
           diff: "",
           insertions: null,

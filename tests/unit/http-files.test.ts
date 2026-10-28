@@ -330,10 +330,29 @@ describe("GET /api/files/changes（git 仓库）", () => {
     expect(diffBody.diff).toContain("-one");
     expect(diffBody.diff).toContain("+two");
 
-    // 未跟踪文件按「全文新增」合成 diff
+    // 未跟踪文件按「全文新增」合成 diff：必须带 /dev/null 头、不能多出尾部空行、
+    // 增删行数要一起给（git 的 numstat 不统计未跟踪文件）
     const untracked = await fetch(`${base}/api/files/changes?botId=bot_repo&sessionId=sess_repo&path=new.txt`);
-    const untrackedBody = (await untracked.json()) as { diff: string };
+    const untrackedBody = (await untracked.json()) as {
+      diff: string;
+      insertions: number | null;
+      deletions: number | null;
+    };
     expect(untrackedBody.diff).toContain("+fresh");
+    expect(untrackedBody.diff.startsWith("--- /dev/null\n+++ b/new.txt\n")).toBe(true);
+    // 文件以换行结尾：只有一行新增，不能凭空多出一条空 `+`
+    expect(untrackedBody.diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"))).toEqual([
+      "+fresh",
+    ]);
+    expect(untrackedBody.insertions).toBe(1);
+    expect(untrackedBody.deletions).toBe(0);
+
+    // 列表视图不应为每个文件跑 git diff：只回路径与增删行数（diff 字段不出现）
+    const listBody2 = (await (await fetch(`${base}/api/files/changes?botId=bot_repo&sessionId=sess_repo`)).json()) as {
+      files: { path: string; insertions: number | null }[];
+    };
+    const newEntry = listBody2.files.find((f) => f.path === "new.txt");
+    expect(newEntry?.insertions).toBe(1);
 
     await app.close();
     permissions.dispose();
