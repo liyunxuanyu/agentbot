@@ -76,10 +76,11 @@
 
 ## 遗留
 
-> **后续进展（2026-10-27 / 2026-10-28）**：两处 Windows 环境假失败已修（`%TEMP%` 祖先仓库、
-> 8.3 短名路径比较，见 15 号变更日志 §4）；本机当前全量 **500 passed / 1 skipped / 0 failed**。
-> 上下文窗口未配置时已用 `AGENTBOT_CONTEXT_WINDOW`（默认 128k）兜底。**仍未做**：MCP 的
-> HTTP/SSE 传输、图片输入、真实模型 live smoke（仍只有假网关冒烟）。
+> **后续进展（2026-10-27 / 2026-10-28）**：两处 Windows 环境假失败的成因已修（`%TEMP%` 祖先仓库、
+> 8.3 短名路径比较，见 15 号变更日志 §4）。在 Linux 上实跑全量为 **500 passed / 1 skipped / 0 failed**；
+> Windows 本机的 7 条历史失败是否全部消失未在新机器上复测。上下文窗口未配置时已用
+> `AGENTBOT_CONTEXT_WINDOW`（默认 128k）兜底。**仍未做**：MCP 的 HTTP/SSE 传输、图片输入、
+> 真实模型 live smoke（仍只有假网关冒烟）。
 
 - 既有 7 个 Windows 环境失败未修（路径大小写、taskkill、git 根判定）→ 2026-10-27 已修两处主要成因。
 - 内置引擎未做真实模型 live smoke（无用户提供的 key）。

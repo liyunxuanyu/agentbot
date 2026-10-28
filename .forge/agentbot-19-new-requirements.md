@@ -95,7 +95,7 @@ Agent 自带最基本的文件读写技能；能力和技能都能热插拔；Bo
 | 新建 `src/server/core/agent/skills/builtin/*.md` | 4 份 SKILL.md（打包进产物） |
 | 新建 `src/server/core/agent/skills/install.ts` | 首次启动时把内置技能写入 `~/.agentbot/skills/`；已存在则跳过，不覆盖用户改动 |
 | `src/server/main.ts` | 启动时调用 install |
-| `src/web/pages/SettingsPage.vue` 技能分区 | 标注「内置」徽标；显示「已被哪些 Bot 启用」 |
+| `src/web/pages/SettingsPage.vue` 技能分区 | 标注「内置」徽标；**实际落地**：显示目录、技能列表（内置徽标）与重扫；「哪个 Bot 启用哪些技能」改为一句指引（去 Bot 详情的「技能」标签设置），没有做反向的「已被哪些 Bot 启用」列表 |
 
 **验收**
 
@@ -172,7 +172,7 @@ Agent 自带最基本的文件读写技能；能力和技能都能热插拔；Bo
 
 | 文件 | 改什么 |
 |---|---|
-| `src/server/core/db/migrate.ts` | v4：`bots.enabled_skills TEXT DEFAULT NULL`（NULL = 默认集合） |
+| `src/server/core/db/migrate.ts` | v4：`bots.enabled_skills TEXT DEFAULT NULL`（**实现口径**：NULL = 全部启用，迁移前的老 Bot 行为不变；`[]` = 全停；数组 = 白名单） |
 | `src/server/core/bots/create.ts` | 新建时写默认集合（N2 的 4 个） |
 | `src/server/core/agent/prompt.ts` | 索引按 enabled_skills 过滤；超限时只列前 N 个 + 「还有 M 个，用 list_skills 查看」 |
 | 新建 `src/server/core/agent/tools/builtin/list_skills.ts` | `list_skills` 工具：返回全部技能名 + 一行描述（不进系统提示） |
@@ -201,7 +201,8 @@ N2 和 N4 改同一批文件（skills / prompt / migrate），一起做最省；
 
 ## 7. 不可逆项
 
-- **迁移 v4**：`bots.enabled_skills TEXT`（可空，回填 NULL 表示「用默认集合」，不改变现有 Bot 行为）
+- **迁移 v4**：`bots.enabled_skills TEXT`（可空，回填 NULL 表示「全部启用」，不改变现有 Bot 行为；
+  新建 Bot 由 `core/bots/create.ts` 显式写默认的 4 个基础技能）
 - **内置技能首次安装**：会往 `~/.agentbot/skills/` 写 4 个目录。若用户已有同名目录，跳过不覆盖。
 
 ## 8. 明确不做
