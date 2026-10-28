@@ -1602,3 +1602,15 @@ body.is-chat .toast-wrap { bottom: 112px; }
   .ws-detail { max-height: 45vh; }
 }
 
+
+/* ---------------- 单文件内容查看器 ---------------- */
+.file-viewer { display: flex; flex-direction: column; gap: var(--space-2); min-height: 0; }
+.file-viewer-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--font-size-caption); }
+.file-viewer-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-viewer-body {
+  margin: 0; padding: 10px 12px; max-height: 62vh; overflow: auto;
+  background: var(--color-surface-2); border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.55;
+  white-space: pre; tab-size: 2;
+}
+.file-line { display: block; }

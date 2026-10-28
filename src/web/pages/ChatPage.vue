@@ -26,6 +26,7 @@ import PermissionBlock from "../components/chat/PermissionBlock.vue";
 import EmptyState from "../components/common/EmptyState.vue";
 import AppModal from "../components/common/AppModal.vue";
 import WorkspacePanel from "../components/chat/WorkspacePanel.vue";
+import FileViewer from "../components/chat/FileViewer.vue";
 import { useFilesUiStore } from "../stores/filesUi";
 
 /**
@@ -65,6 +66,9 @@ const streamEl = ref<HTMLElement | null>(null);
 /** 工作区文件面板（查看内容 / diff）。 */
 const filesOpen = ref(false);
 const filesInitialPath = ref<string | null>(null);
+/** 单文件内容查看器（diff 块 / 文件面板里的「查看完整文件」）。 */
+const viewerOpen = ref(false);
+const viewerPath = ref<string | null>(null);
 /** 用户是否贴着底部（决定新帧要不要自动滚）。 */
 const pinnedToBottom = ref(true);
 /** 折叠的 Turn（默认完成的收起，生成中的展开）。 */
@@ -134,6 +138,13 @@ function runtimeStreams(botId: string): boolean {
  * 只回放主 Session 会让其他发言人的思考/工具/用量块刷新后消失。
  */
 const replayedSessions = ref<Set<string>>(new Set());
+/**
+ * sessionId → 已收最大 `seq`（轮询补帧的游标）。
+ *
+ * SSE 与轮询共用 `ingestFrame`；事件 store 按 id 去重，所以两条路重叠也不会重复渲染。
+ * 用 `seq` 而不是 `id` 做游标：REST 端点的分页键就是会话内单调的 `seq`。
+ */
+const sessionMaxSeq = ref<Map<string, number>>(new Map());
 /** sessionId → 已回放到的最大全局 event id（SSE 首连游标）。 */
 const sessionCursors = ref<Map<string, number>>(new Map());
 /** 同一 Session 的并发回放合并成一次（主连接 + 额外连接可能同时要求）。 */
@@ -220,6 +231,7 @@ async function loadChannel(): Promise<void> {
   failedSends.value = [];
   replayedSessions.value = new Set();
   sessionCursors.value = new Map();
+  sessionMaxSeq.value = new Map();
 
   await sessions.load(props.channelId, loadAbort.signal);
   if (status.value === "error") return;
@@ -242,8 +254,18 @@ async function loadChannel(): Promise<void> {
 
   // 权限权威状态：必须在回放之后拉，否则历史 permission_request 的占位会盖住
   // 已经 decided / denied 的真实状态。
+  //
+  // 群聊里每个发言人一个 Session，历史卡片分散在各自 Session 上 —— 只拉当前会话
+  // 会让别的会话的历史占位永远留着（表现为一张 0s 的幽灵「等待批准」卡，
+  // 还会锁住输入框）。这里把所有已知 Session 都拉一遍（数量是个位数）。
+  const permSessionIds = new Set<string>();
+  for (const s of sessions.sessions) permSessionIds.add(s.id);
   const sid = activeSessionId.value ?? currentSession.value?.id;
-  if (sid) await permissions.load(sid, loadAbort.signal);
+  if (sid) permSessionIds.add(sid);
+  const permSignal = loadAbort.signal;
+  await Promise.all(
+    [...permSessionIds].map((id) => permissions.load(id, permSignal).catch(() => undefined)),
+  );
 
   // 历史 Turn 默认收起（原型：已完成折叠；生成中展开）
   await nextTick();
@@ -279,20 +301,23 @@ async function refreshMessages(): Promise<void> {
  *
  * 来源优先级从高到低：
  *   ① URL 的 `?session=`（UX §2.1：只读会话透镜）；
- *   ② 渠道详情返回的 Session 列表最新一条（主路径）；
- *   ③ 本次发送响应里带回的 Session（新建会话时 ② 还没有，见下）；
+ *   ② **本次发送响应里带回的 Session**；
+ *   ③ 渠道详情返回的 Session 列表最新一条；
  *   ④ null —— 不建连接（渠道还没加载完，或确实没有 Session）。
  *
- * ③ 为什么必须有：新建的群里还没人说过话，`/api/channels/:id` 的 `sessions` 是空的，
- * 发送响应才第一次带回 sessionId。不记下来，这个会话就**永远**连不上事件流，
- * 第一条消息的流式内容全部丢失（实测踩到）。刷新后以 ② 的权威值为准。
+ * ② 为什么排在 ③ 前面：`currentSession` 是渠道详情里**最近开始**的那个会话，
+ * 而编排层在「已有会话 + 上一轮已收口」时可能新建一个会话（例如进程被回收、
+ * 或用户重发）。发送后不刷新渠道详情的话 `currentSession` 还是旧的，
+ * 事件流与兜底轮询会一直盯着旧 Session —— 新会话里的权限请求永远看不到
+ * （实测：手机上点了发送、Bot 卡在写文件，但没有任何卡片）。刷新页面后
+ * 渠道详情更新，② 与 ③ 一致，不会打架。
  */
 const sentSessionId = ref<string | null>(null);
 
 const activeSessionId = computed(() => {
   const fromQuery = route.query["session"];
   if (typeof fromQuery === "string" && fromQuery.length > 0) return fromQuery;
-  return currentSession.value?.id ?? sentSessionId.value;
+  return sentSessionId.value ?? currentSession.value?.id ?? null;
 });
 
 /**
@@ -450,6 +475,10 @@ function ingestFrame(frame: SseFrame, source: "live" | "history"): boolean {
   if (!isSessionOfThisChannel(frame.sessionId)) return false;
 
   const botId = resolveBotId(frame);
+  const prevSeq = sessionMaxSeq.value.get(frame.sessionId) ?? 0;
+  if (frame.seq > prevSeq) {
+    sessionMaxSeq.value = new Map(sessionMaxSeq.value).set(frame.sessionId, frame.seq);
+  }
   const raw: RawEvent = {
     id: frame.id,
     sessionId: frame.sessionId,
@@ -477,7 +506,9 @@ function ingestFrame(frame: SseFrame, source: "live" | "history"): boolean {
       boundaryVerdict?: unknown;
     };
     const requestId = typeof p.requestId === "string" ? p.requestId : "";
-    if (requestId) {
+    // 历史回放不占位：那些请求绝大多数早已 decided / denied，占位会变成一张
+    // 幽灵「等待批准」卡（还锁输入框）。权威状态由回放后的 permissions.load() 给。
+    if (requestId && source === "live") {
       permissions.placeholder({
         requestId,
         sessionId: frame.sessionId,
@@ -496,12 +527,10 @@ function ingestFrame(frame: SseFrame, source: "live" | "history"): boolean {
           p.boundaryVerdict === "denied" ? "denied" : p.boundaryVerdict === "allowed" ? "allowed" : "pending",
         createdAt: frame.createdAt,
       });
-      if (source === "live") {
-        // 端点存在时拉权威状态（超时策略/截止时间/已决状态只有它有）
-        const sid = activeSessionId.value;
-        if (sid) void permissions.load(sid);
-        bots.bumpPending(botId, 1);
-      }
+      // 端点存在时拉权威状态（超时策略/截止时间/已决状态只有它有）。
+      // 必须按**帧自己的 Session** 拉：群聊 / 新建会话时它可能不是 activeSessionId。
+      void permissions.load(frame.sessionId);
+      bots.bumpPending(botId, 1);
     }
   }
 
@@ -716,6 +745,117 @@ const turnViews = computed<TurnView[]>(() =>
 const latestTurnId = computed<string | null>(
   () => turnViews.value[turnViews.value.length - 1]?.turnId ?? null,
 );
+
+// ---------------------------------------------------------------------------
+// SSE 兜底轮询（2026-10-28 公网实测）
+// ---------------------------------------------------------------------------
+/**
+ * 为什么需要它：cloudflared（以及不少反代 / 运营商中间层）会**缓冲 SSE 响应体**，
+ * 实测通过隧道时 `GET /api/stream` 的响应头能立刻回来（200 + text/event-stream），
+ * 但响应体要攒到约 128KB 才放行，而且放行一次之后后续小帧仍然不推 ——
+ * 表现就是「手机端一切都在转圈：没有流式文本、没有权限卡、没有 diff」，
+ * 而本机直连完全正常。
+ *
+ * 因此把 SSE 降级为「快路径」：它照常工作（本机 / 不缓冲的代理下是实时的），
+ * 同时开一个低频轮询走普通 REST（`/api/sessions/:id/events?afterSeq=`），
+ * 只在「有进行中的 Turn」时开，收口后停。REST 是普通响应，任何代理都不会缓冲。
+ *
+ * 轮询只拉增量（afterSeq = 本 Session 已收最大 seq），并走同一个 `ingestFrame`：
+ * 事件 store 按 id 去重，SSE 与轮询重叠不会重复渲染。
+ */
+/** SSE 看起来健康（已 open 且 3s 内有帧）时的轮询间隔：只做兜底，别浪费请求。 */
+const POLL_MS_HEALTHY = 5000;
+/** SSE 不健康（隧道缓冲 / 半死连接）时的间隔：接近实时。 */
+const POLL_MS_DEGRADED = 1200;
+const POLL_MAX_MS = 90_000;
+let pollTimer: number | null = null;
+let pollStartedAt = 0;
+
+/** SSE 是否可信：连接已 open 且最近 3s 内收到过帧。 */
+function sseHealthy(): boolean {
+  if (sse.state.value !== "open") return false;
+  return Date.now() - sse.lastFrameAt.value < 3000;
+}
+
+/** 需要轮询的 Session：当前会话 + 本渠道里其它 Session（群聊发言人各有一个）。 */
+function pollTargets(): string[] {
+  const ids = new Set<string>();
+  const active = activeSessionId.value;
+  if (active) ids.add(active);
+  // SSE 健康时只补当前会话；降级时把群聊其它会话一起补上（它们同样收不到帧）
+  if (!sseHealthy()) for (const s of sessions.sessions) ids.add(s.id);
+  return [...ids];
+}
+
+async function pollOnce(): Promise<void> {
+  let got = false;
+  for (const sessionId of pollTargets()) {
+    const afterSeq = sessionMaxSeq.value.get(sessionId) ?? 0;
+    try {
+      const res = await api.sessionEvents(sessionId, afterSeq, 500);
+      for (const frame of res.events) {
+        if (ingestFrame(frame, "live")) got = true;
+      }
+    } catch {
+      // 轮询失败不弹错：SSE 或下一次轮询会补上
+    }
+  }
+  if (got && pinnedToBottom.value) scrollToBottomSoon();
+}
+
+function schedulePoll(): void {
+  if (pollTimer !== null) return;
+  pollStartedAt = Date.now();
+  const tick = (): void => {
+    pollTimer = null;
+    if (!activeSessionId.value) return;
+    void pollOnce();
+    const active = hasLiveTurn();
+    const expired = Date.now() - pollStartedAt > POLL_MAX_MS;
+    if (active && !expired && pollTimer === null) {
+      pollTimer = window.setTimeout(tick, sseHealthy() ? POLL_MS_HEALTHY : POLL_MS_DEGRADED);
+    }
+  };
+  pollTimer = window.setTimeout(tick, sseHealthy() ? POLL_MS_HEALTHY : POLL_MS_DEGRADED);
+  void pollOnce();
+}
+
+function stopPoll(): void {
+  if (pollTimer !== null) {
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+
+/**
+ * 「还有事在发生」：pending / streaming / waiting 都算。
+ *
+ * `waiting` 是「有消息但没有事件」——公网隧道缓冲 SSE 时正好是这个形态
+ * （POST 已返回、事件一帧都没到），漏掉它轮询就永远不启动，界面停在「排队中」。
+ */
+function hasLiveTurn(): boolean {
+  return turnViews.value.some(
+    (t) => t.status === "streaming" || t.status === "pending" || t.status === "waiting",
+  );
+}
+
+// 有进行中的 Turn 就开轮询，收口后 3s 再停（留出最后一次增量）
+watch(
+  hasLiveTurn,
+  (active) => {
+    if (!activeSessionId.value) return;
+    if (active) schedulePoll();
+    else {
+      void pollOnce();
+      window.setTimeout(stopPoll, 3000);
+    }
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(stopPoll);
+
+
 
 /**
  * pending 的退场：首个事件到达（或群聊里首个新 Turn 出现）就交给正常路径。
@@ -1397,6 +1537,8 @@ async function sendText(text: string, mentionBotIds: string[] = []): Promise<boo
 
     pinnedToBottom.value = true;
     scrollToBottomSoon();
+    // 立刻起一次兜底轮询：SSE 被代理缓冲时，事件只能靠 REST 拉回来
+    schedulePoll();
     if (res.queued) ui.toast(`已排队 · 前面还有 ${res.position ?? 0} 个`);
     // 群聊：主持人可能已经降级并写了系统提示（REST 才有），补拉一次让「为什么没人说话」可见
     if (channel.value?.type === "group") {
@@ -2115,14 +2257,15 @@ watch(
 // 会话头变化后刷新吸顶判定
 watch([status, connection], () => nextTick(markStuck));
 
-// diff 块里的「查看完整文件」：由深层组件写进 filesUi store，这里统一打开面板
+// diff 块里的「查看完整文件」：由深层组件写进 filesUi store，这里统一打开查看器。
+// 直接看文件内容（而不是先打开列表面板再点一次）—— 用户点的是「这个文件」。
 watch(
   () => filesUi.pendingPath,
   (path) => {
     if (!path) return;
     filesUi.consume();
-    filesInitialPath.value = path;
-    filesOpen.value = true;
+    viewerPath.value = path;
+    viewerOpen.value = true;
   },
 );
 
@@ -2505,6 +2648,14 @@ void allPermissions;
         </button>
       </template>
     </AppModal>
+
+    <!-- 单文件内容查看器（diff 块点「查看完整文件」） -->
+    <FileViewer
+      v-model:open="viewerOpen"
+      :bot-id="primaryBot?.id ?? null"
+      :session-id="activeSessionId"
+      :path="viewerPath"
+    />
 
     <!-- 工作区文件面板：改动 diff + 文件内容（移动端反馈） -->
     <WorkspacePanel

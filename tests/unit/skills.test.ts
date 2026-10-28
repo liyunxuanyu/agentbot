@@ -52,7 +52,7 @@ describe("基础技能包（N2）", () => {
     expect(skills.map((s) => s.dirName)).toEqual([...BUILTIN_SKILL_NAMES]);
     for (const skill of skills) {
       expect(skill.content).toContain("---");
-      expect(skill.content).toMatch(/name:\s*(file|shell|search|web)-basics/);
+      expect(skill.content).toMatch(/name:\s*(file|shell|search|web|browser)-basics/);
       expect(skill.content).toMatch(/description:\s*\S/);
     }
   });

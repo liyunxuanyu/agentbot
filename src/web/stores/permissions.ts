@@ -173,11 +173,21 @@ export const usePermissionsStore = defineStore("permissions", () => {
     };
   }
 
+  /**
+   * 拉某个 Session 的权威状态。
+   *
+   * **按 Session 合并，而不是整体替换**：群聊一轮里每个发言人一个 Session，
+   * 新建会话也会切换 activeSessionId —— 整体替换会把别的会话里还在等待的卡片
+   * 抹掉（实测：手机上先看到卡片、1s 后消失）。
+   */
   async function load(sessionId: string, signal?: AbortSignal): Promise<void> {
     loading.value = true;
     try {
       const res = await api.permissions(sessionId, signal);
       const next: Record<string, PermissionView> = {};
+      for (const [id, item] of Object.entries(items.value)) {
+        if (item.sessionId !== sessionId) next[id] = item;
+      }
       for (const row of res.permissions) {
         next[row.id] = {
           requestId: row.id,

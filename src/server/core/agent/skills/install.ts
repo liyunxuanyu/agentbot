@@ -23,6 +23,8 @@ export const BUILTIN_SKILL_NAMES = [
   "shell-basics",
   "search-basics",
   "web-basics",
+  // 浏览器控制（Playwright MCP）：说明怎么用 mcp__playwright__* 那组工具
+  "browser-basics",
 ] as const;
 
 /** 新建 Bot 默认启用的技能（N4 档 B：只装基础包，长尾按需发现）。 */
