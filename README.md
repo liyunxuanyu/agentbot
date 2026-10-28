@@ -677,7 +677,8 @@ POST /api/messages（type=group）
 | 主持人不可用/超时/非 JSON | 降级为「@ 谁谁回」+ 群内系统提示；非 JSON 另有正则/文本匹配兜底 |
 
 **默认依次执行**（board 03-decisions Q3）：阅读顺序稳定、同一 worktree 只有一个写者。
-仅当用户**显式 @ 多个 Bot** 时并行。某一轮失败不阻塞后续发言人。
+仅当用户**显式 @ 多个 Bot** 时并行；并行期间写类工具由渠道级写锁（`core/group/write-lock.ts`）
+串行化，读类不排队。某一轮失败不阻塞后续发言人。
 
 主持人决策超时默认 20s（`AGENTBOT_GROUP_DECISION_MS`）：PRD 写「5s 内」是产品感知目标，
 真实 CLI 一轮就要 20s+，按 5s 截断会让主持人永远超时。
