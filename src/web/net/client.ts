@@ -168,7 +168,7 @@ export function redirectToLogin(force = false): void {
 /**
  * 把 token 附到请求 URL 上。
  *
- * 为什么不用自定义 header：后端的 `extractToken()` 只认 `?t=` 与 `agentbot_token`
+ * 为什么不用自定义 header：后端的 `tokenCandidates()` 只认 `?t=` 与 `agentbot_token`
  * cookie 两种来源（见 `src/server/http/auth.ts`），自定义 header 会被忽略。
  *
  * 为什么每次都附而不是只靠 cookie：开发态前端由 Vite 提供 HTML，带 `?t=` 的首次

@@ -69,7 +69,7 @@ export function verifyToken(candidate: string | undefined | null): boolean {
   return timingSafeEqual(a, b);
 }
 
-/** 从 `?t=` 或 cookie 取 token。 */
+/** 从 `?t=` 或 cookie 取 token（单个，按优先级取第一个）。 */
 export function extractToken(headers: Record<string, unknown>, query: Record<string, unknown>): string | null {
   return tokenCandidates(headers, query)[0] ?? null;
 }
