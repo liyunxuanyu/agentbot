@@ -1,8 +1,10 @@
 # AgentBot 变更需求对齐 · 会话控制 / 记忆作用域 / 管理员 Bot
 
 > 依据：用户 2026-10-26 的原话与四个分叉决策。本文是**本轮口径源头**。
-> 工作流据此产出 `.forge/agentbot-12-change-spec.md`（PM）与 `.forge/agentbot-13-impact.md`（架构）。
-> 与旧 PRD / UX / 架构冲突处，以本文为准；差异必须在变更规格里列成对照表。
+> 工作流原计划据此产出 `.forge/agentbot-12-change-spec.md`（PM）与 `.forge/agentbot-13-impact.md`（架构）。
+> **实际情况**：这两份产物没有落盘（`.forge/` 下不存在 12/13 号文件），实现拆解与验收记录写在
+> [`agentbot-14-handoff.md`](agentbot-14-handoff.md) 与 [`agentbot-15-change-log-session-control.md`](agentbot-15-change-log-session-control.md)。
+> 与旧 PRD / UX / 架构冲突处，以本文为准；差异已在 15 号变更日志里列成对照。
 
 ## 0. 本轮范围：只做内置引擎
 
@@ -143,8 +145,9 @@ Bot 从「绑死一个项目目录的执行体」变成「可以在任意工作�
 
 ## 10. 交付与门槛
 
-- 规格：`.forge/agentbot-12-change-spec.md`（PM）
-- 影响：`.forge/agentbot-13-impact.md`（架构）
+- 规格 / 影响：原计划的 `.forge/agentbot-12-change-spec.md` 与 `.forge/agentbot-13-impact.md` **未产出**；
+  实际交付记录见 [`agentbot-14-handoff.md`](agentbot-14-handoff.md)（拆解与顺序）与
+  [`agentbot-15-change-log-session-control.md`](agentbot-15-change-log-session-control.md)（迁移、逐条验收证据、门禁）
 - 实现：Wave 0 地基（迁移 v3 + 共享类型）→ Wave 1 四模块并行（M1 工作区/记忆、M2 内置引擎的模型与权限模式、M3 管理员、M5 前端：工作区设置 + 模型选择 + 权限模式胶囊 + 管理员标识）→ Wave 2 集成 + 三路独立验收
 - 门禁：类型检查 / 分离铁律 / 前端类型检查 / 测试 四项全过才算模块完成
 - 文档同步：PRD、UX、架构、README、`docs/memory/` 各留一条变更记录

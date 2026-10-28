@@ -582,8 +582,8 @@
   "changeRound": {
     "id": "session-control-admin-bot",
     "alignDoc": ".forge/agentbot-11-requirements-align.md",
-    "spec": ".forge/agentbot-12-change-spec.md",
-    "impact": ".forge/agentbot-13-impact.md",
+    "spec": ".forge/agentbot-11-requirements-align.md（12 号规格未产出）",
+    "impact": ".forge/agentbot-14-handoff.md（13 号影响分析未产出）",
     "modules": [
       "M1 工作区与记忆隔离",
       "M2 会话内模型与权限模式",
