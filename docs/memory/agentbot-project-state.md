@@ -42,7 +42,7 @@ metadata:
 **关键文件**
 - 供应商：`src/server/core/agent/provider.ts`、`src/server/adapters/providers/*`、`src/server/http/routes/providers.ts`
 - 循环与提示：`src/server/core/agent/{loop,prompt,limits}.ts`
-- 工具：`src/server/core/agent/tools/**`（registry / paths / truncate / builtin 八个工具）
+- 工具：`src/server/core/agent/tools/**`（registry / paths / truncate / builtin 八个工具；2026-10-28 增至十个，加 `list_skills` 与 `create_bot`）
 - 技能：`src/server/core/agent/skills.ts` + `routes/skills.ts`
 - MCP：`src/server/adapters/mcp/*` + `routes/mcp.ts`
 - 驱动：`src/server/adapters/channels/builtin/driver.ts`、`adapters/builtin-runtime.ts`
