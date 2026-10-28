@@ -428,7 +428,7 @@ pending ──approve/deny/remember──→ decided
 - `events` store 用 `shallowRef<Map<turnId, EventRow[]>>`，Map 内原地 push 后手动 `triggerRef(events)`；仅 Turn 增删时重建 Map。
 - 消息正文用 `shallowRef` 持有 `message.content`，流式 flush 时按 250ms/2KB 整体替换字符串，不逐字 `+=`。
 - 组件用 `computed(() => events.value.get(turnId) ?? [])` 只订阅自己那个 Turn，Turn 内按 `event.id` 做 key。
-**虚拟滚动**：`@tanstack/vue-virtual`（与 React 版同源，API 类似），item 粒度 = 折叠 Turn 一行 / 展开 Turn 内单条事件，仅渲染可视区 ±50。
+**虚拟滚动**：`@tanstack/vue-virtual`（与 React 版同源，API 类似），item 粒度 = 折叠 Turn 一行 / 展开 Turn 内单条事件；会话流行数 >20 才开启（短会话不虚拟化，避免测量抖动），仅渲染可视区 ±5 行（`useVirtualList` 的 `overscan: 5`）。
 
 ---
 
