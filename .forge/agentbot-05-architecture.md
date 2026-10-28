@@ -211,7 +211,9 @@ modes: { headless: true }
 
 **初稿列过 OpenCode（HTTP+SSE）与 Claude Agent SDK（进程内库）两行，均未实现**：当前实际接入的
 运行时是 ACP（gemini-cli / claude-code）、原生（codex app-server）、CLI（zcode / dsh）与内置引擎
-（`builtin`，无进程）。要接这两者需要新增通道驱动，不是改声明就能完成。
+（`builtin`，无进程）。`ProtocolKind` 里仍保留 `opencode-http` / `claude-sdk` 两个值，`custom.ts`
+也允许用户选它们，但 `createDriverFor` 会把这两种协议交给 native（Codex）驱动 —— 握手必然失败、
+探测如实置灰。要真正接入需要新增通道驱动，不是改声明就能完成。
 
 ### 3.7 CLI 兜底（ZCode）——诚实的能力降级
 

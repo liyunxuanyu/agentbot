@@ -412,11 +412,16 @@ src/server/adapters/
   launch.ts                可执行文件解析（Windows .cmd 外壳、AGENTBOT_BIN_* 覆盖）
   probe.ts                 并发探测 + 能力合并 + 缓存读写
   factory.ts               协议 → 通道驱动
+  builtin-runtime.ts       内置引擎的声明（代码里，不走 YAML / PATH 探测）
+  custom.ts                用户手动添加的运行时（声明存库，协议白名单）
   turn-context.ts          编排层给驱动注入 turnId / messageId
+  providers/               openai-chat / anthropic / store / models / http
+  mcp/                     client / manager（热插拔）/ config
   channels/
     acp/{transport,driver,mapping}.ts   JSON-RPC 传输 / 驱动 / §3.5 映射表
     cli/driver.ts                       CLI 兜底（按行启发式，ZCode / DSH）
     native/{driver,mapping}.ts          原生通道（Codex app-server；传输复用 acp/transport）
+    builtin/driver.ts                   内置引擎（无进程，agent loop 在服务进程内）
   declarations/*.yaml                   gemini-cli / claude-code / codex / zcode / dsh
 ```
 
