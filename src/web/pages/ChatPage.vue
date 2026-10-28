@@ -466,10 +466,11 @@ watch(connection, (v) => {
  *
  * `source` 只影响副作用：
  *   - live：permission_request 立刻占位并拉权威状态（卡片要快）；
- *   - history：占位即可，权威状态由回放结束后的 `permissions.load()` 统一校正
- *     （历史里绝大多数请求早已 decided，不该再弹一张待批卡）。
+ *   - history：不占位，权威状态由回放结束后的 `permissions.load()` 统一校正
+ *     （历史里绝大多数请求早已 decided，占位会变成一张 0s 的幽灵卡）。
+ *   - poll：兜底轮询（SSE 被代理缓冲时用），与 history 一样只拉权威状态。
  */
-function ingestFrame(frame: SseFrame, source: "live" | "history"): boolean {
+function ingestFrame(frame: SseFrame, source: "live" | "history" | "poll"): boolean {
   // 只处理本渠道的帧（多标签页 / 群聊多 Session 时可能短暂重叠）。
   // 群聊的额外连接也走这里，所以判断依据是「Session 属于本渠道」而不是「等于主 Session」。
   if (!isSessionOfThisChannel(frame.sessionId)) return false;
@@ -506,8 +507,12 @@ function ingestFrame(frame: SseFrame, source: "live" | "history"): boolean {
       boundaryVerdict?: unknown;
     };
     const requestId = typeof p.requestId === "string" ? p.requestId : "";
-    // 历史回放不占位：那些请求绝大多数早已 decided / denied，占位会变成一张
-    // 幽灵「等待批准」卡（还锁输入框）。权威状态由回放后的 permissions.load() 给。
+    // 占位只为「刚刚由 SSE 推来的」请求建。
+    //
+    // 历史回放与轮询补拉都会带回很久以前的 permission_request（早已 decided /
+    // invalidated），给它们建占位就是一张 0s 的幽灵「等待批准」卡，还会锁住输入框
+    // （实测：手机端刷新后输入框点不动、卡片点不动）。轮询这条路径改为
+    // 只拉权威状态（下面的 load），不建占位。
     if (requestId && source === "live") {
       permissions.placeholder({
         requestId,
@@ -527,10 +532,13 @@ function ingestFrame(frame: SseFrame, source: "live" | "history"): boolean {
           p.boundaryVerdict === "denied" ? "denied" : p.boundaryVerdict === "allowed" ? "allowed" : "pending",
         createdAt: frame.createdAt,
       });
+    }
+    if (requestId && source !== "history") {
       // 端点存在时拉权威状态（超时策略/截止时间/已决状态只有它有）。
       // 必须按**帧自己的 Session** 拉：群聊 / 新建会话时它可能不是 activeSessionId。
+      // 轮询路径也走这里：占位不给，但卡片要由权威状态补出来。
       void permissions.load(frame.sessionId);
-      bots.bumpPending(botId, 1);
+      if (source === "live") bots.bumpPending(botId, 1);
     }
   }
 
@@ -794,7 +802,7 @@ async function pollOnce(): Promise<void> {
     try {
       const res = await api.sessionEvents(sessionId, afterSeq, 500);
       for (const frame of res.events) {
-        if (ingestFrame(frame, "live")) got = true;
+        if (ingestFrame(frame, "poll")) got = true;
       }
     } catch {
       // 轮询失败不弹错：SSE 或下一次轮询会补上

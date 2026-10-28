@@ -591,12 +591,17 @@ export function buildTurnView(input: BuildTurnInput): TurnView {
   if (error && error.fatal) status = "failed";
   else if (done) status = done.stopReason === "cancelled" ? "interrupted" : "done";
   else if (failedMessage) status = "failed";
-  else if (messageViews.some((m) => m.streaming) || display.some((d) => d.kind === "thought" && d.streaming)) {
-    status = "streaming";
-  } else if (messageViews.length > 0 && messageViews.every((m) => m.status !== "streaming")) {
-    // 消息都已落库且没有 done 事件（进程被杀 / 连接中断）：按完成处理，
-    // 不能让「已经结束但没收到收口事件」永远停在生成中。
+  else if (messageViews.length > 0 && messageViews.every((m) => m.status !== "streaming")) {
+    // 消息都已落库且没有 done 事件（进程被杀 / 连接中断 / 服务重启）：
+    // 按完成处理，不能让「已经结束但没收到收口事件」永远停在生成中。
+    //
+    // **这一条必须排在「思考仍在流式」之前**：服务重启或连接中断时，
+    // thought 的 start 帧已落库、end 帧永远不会来，那一轮会永远被判定为
+    // streaming —— 发送键卡在「停止」、输入框发不出消息（实测：手机端刷新后
+    // 整个会话都发不了消息，只有新开会话才恢复）。
     status = "done";
+  } else if (messageViews.some((m) => m.streaming) || display.some((d) => d.kind === "thought" && d.streaming)) {
+    status = "streaming";
   } else if (events.length > 0) {
     // 没有 done/error 也没在流式：多半在等权限或运行时静默
     status = "waiting";
