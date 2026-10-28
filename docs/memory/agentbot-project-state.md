@@ -147,3 +147,51 @@ R1–R8 已实现并验收：迁移 v3、会话/渠道工作区、记忆作用�
 - 开发态 `/login` 必须代理到后端，否则被 SPA 兜底吞掉。
 
 **门禁**：tsc / vue-tsc / boundaries 全绿；vitest **500 passed / 1 skipped（38 文件）**；`smoke:builtin` 通过。
+
+## 2026-10-28：移动端 / 公网访问修复 + 文件查看 + 浏览器控制
+
+**背景**：用户用手机通过 cloudflared 隧道访问 Web 界面，报了三个问题（权限弹窗不出现 /
+「绑定运行时」卡很久 / 看不到 diff 与文件内容），并要求给 Bot 加浏览器控制能力。
+
+**根因（全部实测确认，不是猜测）**
+
+1. **权限确认框不出现 = 两个独立 bug 叠加**
+   - 服务端：`allow_dirs` 默认 `[]`，写请求在边界判定阶段就判成 `denied_boundary` 并直接回传 deny，
+     **从不落 pending** —— 用户永远看不到卡片。
+   - 前端：`kindOf()` 按 `boundaryVerdict === 'denied'` 判成 `boundary` 行（「已自动拒绝」、无按钮）。
+   - 修法：confirm 模式下「未配置允许目录」的写改为落 pending（快照仍记 denied，卡片标「超出边界 ·
+   批准只放行这一次」，120s 超时拒绝）；`auto` 仍直接拒绝；已配目录却写别处仍直接拒绝。
+2. **「绑定运行时」卡顿 = cloudflared 缓冲 SSE 响应体**
+   - 实测：隧道下 `/api/stream` 响应头立刻 200，但 body 要攒到约 128KB 才放行，
+     且放行一次后后续小帧仍不推（两条独立隧道 + 逐字节采样确认）。本机直连完全正常。
+   - 修法：SSE 保留为快路径 + **REST 兜底轮询**（`/api/sessions/:id/events?afterSeq=`）；
+     有进行中 Turn 才开，SSE 健康 5s / 降级 1.2s；与 SSE 共用 `ingestFrame`（按 id 去重）。
+   - 附带：SSE 建连后立刻写 `: connected` 注释（否则代理在首块 body 前不交响应头，
+     EventSource 要等 15s 首次心跳才 open）。
+3. **看不到 diff / 文件** = 产品里根本没有这条路（只有 Assignment 报告的 numstat 行数）。
+   - 新增 `/api/files`、`/api/files/tree`、`/api/files/changes`（只读、`resolveInside` 限界）；
+   - 写类工具 `ToolResult.data.fileChange`（before/after + 行级 diff）→ `tool_result` payload →
+     `DiffBlock.vue` 直接渲染；会话页「文件」按钮 → `WorkspacePanel.vue`。
+4. **会话卡在「生成中」**（连带发现）：`turnModel` 先判「thought 仍在流式」再判「消息都落库」，
+   服务重启后 thought 缺 end 帧 → 永远 streaming → 发送键卡在「停止」、整个会话发不出去。
+   顺序已对调。
+
+**浏览器控制**
+- `@playwright/mcp@0.0.83`（devDependency）+ `scripts/install-browser-mcp.mjs`（`npm run setup:browser`）。
+- 参数 `--headless --isolated --no-sandbox --browser chromium --output-dir ~/.agentbot/browser`；
+  无显示器可用，不需要 Xvfb。实测 Bot 走 `browser_navigate → browser_evaluate → browser_close`
+  拿到 `Example Domain` 标题。
+- **MCP 子进程 cwd 改为 `~/.agentbot`**：Playwright 会把输出写到 cwd，落在仓库里会污染 git 状态。
+- 内置技能 `browser-basics` 说明使用口径；MCP 工具按 `network` 裁决，**边界必须开「允许联网」**。
+
+**新增的坑（改这块代码前必看）**
+- **cloudflared 会缓冲 SSE**：任何「只靠 SSE 推增量」的设计在公网都会哑；必须有 REST 兜底。
+- 浏览器实测下载的 Chromium 目录版本号与 MCP 期望的不一致（1247 vs 1248），
+  要用 MCP 自己的 `install-browser chrome-for-testing`，不要复用 `playwright install chromium`。
+- 历史回放/轮询补拉**不能**给 `permission_request` 建占位卡：会变成 0s 的幽灵「等待批准」卡并锁输入框。
+- `activeSessionId` 必须优先用「本次发送返回的 Session」：编排层可能新开会话，渠道详情里的
+  `currentSession` 还是旧的，事件流会盯错 Session（新会话的权限请求永远看不到）。
+- 权限状态 `load()` 要**按 Session 合并**，不能整体替换（群聊每个发言人一个 Session）。
+
+**门禁**：tsc / vue-tsc / boundaries 全绿；vitest **529 passed / 1 skipped（41 文件）**；`npm run build` 通过。
+真机验证：本机 + 真 cloudflared 隧道各跑了一遍「弹卡 → 批准 → 写文件 → diff → 文件面板」，均通过。
