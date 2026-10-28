@@ -372,7 +372,7 @@
     },
     "session-controls": {
       "startedAt": "2026-10-26",
-      "status": "planning",
+      "status": "done",
       "requirements": [
         "创建 Bot 时不要求项目地址",
         "进入会话/群聊时可指定工作区（也可默认不指定）",
@@ -380,7 +380,7 @@
         "全局默认管理员 Bot（可多个），能引导创建其它 Bot",
         "会话内四档权限模式切换：完全访问 / 计划模式 / 自动模式 / 变更前确认"
       ],
-      "design": null,
+      "design": ".forge/agentbot-11-requirements-align.md + .forge/agentbot-15-change-log-session-control.md",
       "modules": [
         "M1 会话工作区",
         "M2 会话内模型切换",
@@ -388,6 +388,56 @@
         "M4 管理员 Bot",
         "M5 前端会话设置栏",
         "M6 文档对齐"
+      ],
+      "finishedAt": "2026-10-27",
+      "verification": {
+        "tests": "409 passed（当时）",
+        "smoke": "npm run smoke:builtin 通过",
+        "boundaries": "通过"
+      }
+    },
+    "requirements-round-2026-10-28": {
+      "startedAt": "2026-10-28",
+      "finishedAt": "2026-10-28",
+      "status": "done",
+      "design": ".forge/agentbot-18-fix-list.md + .forge/agentbot-19-new-requirements.md",
+      "modules": [
+        "R1–R8/G1–G9 七条缺口",
+        "N1 初始化引导",
+        "N2 基础技能包",
+        "N3-1 技能热插拔",
+        "N3-2 MCP 热插拔",
+        "N4 技能按需加载"
+      ],
+      "verification": {
+        "tests": "500 passed / 1 skipped（38 文件，Linux 实跑）",
+        "smoke": "npm run smoke:builtin 通过",
+        "boundaries": "通过"
+      },
+      "decisions": [
+        "R3 走方案 A（群聊记忆真共享）",
+        "R5 走方案 B（auto 越界直接拒绝）",
+        "迁移 v4 合并 cache_reported + enabled_skills"
+      ]
+    },
+    "auth-login-page": {
+      "startedAt": "2026-10-28",
+      "finishedAt": "2026-10-28",
+      "status": "done",
+      "design": "README「登录与登录态」+ .forge/agentbot-05-architecture.md §8",
+      "modules": [
+        "服务端渲染登录页 GET/POST /login",
+        "持久 HttpOnly cookie（30 天）",
+        "POST /logout 与 POST /api/auth/logout",
+        "Vite dev 代理 /login /logout"
+      ],
+      "verification": {
+        "tests": "http-login / http-auth-page 单测通过",
+        "boundaries": "通过"
+      },
+      "decisions": [
+        "登录页放鉴权钩子之外并内联样式/脚本，避免 SPA 拿不到",
+        "cookie 默认不加 Secure，仅 HTTPS/生产或显式覆盖时加"
       ]
     }
   },
