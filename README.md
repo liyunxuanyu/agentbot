@@ -740,9 +740,12 @@ Bot 可以通过 MCP 真正操作浏览器（打开页面、点击、填表、�
 ```bash
 npm run setup:browser          # 幂等：检查依赖 → 缺浏览器就下载 → 合并写入 ~/.agentbot/mcp.json
 node scripts/install-browser-mcp.mjs --check   # 只检查
+# 服务在跑时：设置 › MCP › 刷新（或 curl -X POST /api/mcp/sync）热接入，不用重启
 ```
 
-装完**不需要重启服务**（MCP 热插拔）。用之前还要做一件事：
+装完**不需要重启服务**：设置 › MCP 点「刷新」（`POST /api/mcp/sync`）即可把
+盘上新增的条目热接进来（旧构建只重拉内存快照，必须重启才看得到，已修）。
+用之前还要做一件事：
 **Bot 详情 › 权限边界 打开「允许联网」** —— MCP 工具按 `network` 裁决，
 plan 模式裁剪、confirm 弹卡、full 自动批，边界没开联网会被直接拒绝。
 
