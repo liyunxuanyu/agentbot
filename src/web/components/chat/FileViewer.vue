@@ -27,7 +27,18 @@ const copied = ref(false);
 const lines = computed(() => (content.value.length === 0 ? [] : content.value.split("\n")));
 
 async function load(): Promise<void> {
-  if (!props.path || !props.botId) return;
+  // botId 还没就绪（Bot 列表异步加载）：**不能**静默 return。
+  // 打开时 botId 为 null 的话，旧实现既不加载也不提示，用户看到的是一张
+  // 空白弹层，只能关掉重开（与文件面板同一类问题）。这里给一句可读的提示；
+  // 下方 watch 会在 botId 到位后自动补拉。
+  if (!props.path) return;
+  if (!props.botId) {
+    content.value = "";
+    size.value = 0;
+    error.value = "正在解析这个文件所属的 Bot，请稍候…";
+    loading.value = false;
+    return;
+  }
   loading.value = true;
   error.value = "";
   copied.value = false;
@@ -84,6 +95,8 @@ async function copy(): Promise<void> {
         <button class="btn btn--sm btn--ghost" :disabled="loading" @click="load">刷新</button>
       </div>
       <div v-if="loading" class="hint">读取中…</div>
+      <!-- 「正在解析 Bot」不是错误：用提示样式，不要红色告警 -->
+      <div v-else-if="error && error.startsWith('正在解析')" class="hint">{{ error }}</div>
       <div v-else-if="error" class="field-err" role="alert">{{ error }}</div>
       <div v-else-if="content.length === 0" class="hint">（空文件）</div>
       <pre v-else class="file-viewer-body"><span v-for="(line, i) in lines" :key="i" class="file-line">{{ line }}
