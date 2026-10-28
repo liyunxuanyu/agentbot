@@ -14,7 +14,7 @@
 
 ### 2.1 页面树（10 页 = PRD 9 页 + 补 1 页）
 ```
-/                   有 Bot → /bots；无 Bot → /setup
+/                   一律重定向到 /bots；`/api/setup/state` 说必需项没齐时，App.vue 挂载后跳 /setup
 /setup              L0 首启向导（5 步：运行时 → 供应商 → Bot → 工作区 → 技能，+ 发消息演练）
 /login              L0 登录页（服务端渲染，非 Vue 路由；输入访问令牌换持久 cookie）
 /bots               L1 Bot 总览（默认落地页，S3）

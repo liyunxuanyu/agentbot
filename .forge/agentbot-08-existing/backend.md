@@ -2,6 +2,9 @@
 
 > 只读考古。运行验证：`npx tsc --noEmit` exit 0；`node scripts/check-boundaries.mjs` exit 0（2026-10-26，未安装依赖、未启动服务）。
 > 本文只记录现状；每节“gap”对照 `.forge/agentbot-06-builtin-engine.md`。
+> **注意：这是 2026-10-26 开工前的快照**，其中「未找到 / 假设不成立」多数已随后落地
+> （`/api/providers`、`/api/mcp`、`/api/skills`、`/api/setup/state`、`builtin` 协议与
+> `internal` 权限通道、`core/agent/prompt.ts` 等）。当前状态以 README 为准。
 
 ## 1. Adapter 契约（contract.ts）
 
@@ -162,6 +165,7 @@
 - **已验证**：按版本增量执行、事务内 step+setVersion、`schema_meta` 版本机制。
 - **假设不成立**：文档 §9 称“builder 加一条 v2 迁移即可”；实际 `SCHEMA_VERSION=1`、`STEPS` 只有 v1（migrate.ts:14, 72-80），没有 v2；`bots` 无 `provider_id`（schema.sql:29-47）。
 - **未找到**：providers 表/`~/.agentbot/providers.json` 读写/`/api/providers`；`config.secretsPath` 只定义未使用（config.ts:20）。
+  - 2026-10-26 之后已落地：`providers.json` + `/api/providers*`、`mcp.json` + `/api/mcp*`、`skills/` + `/api/skills*`；`secretsPath` 仍未使用。
 - **事实**：schema.sql 是 v1 的建表脚本，由迁移 step v1 执行（migrate.ts:75-78），不是独立于迁移的“当前 schema”。
 
 ## 8. HTTP 路由、404 与鉴权（routes/index / server / dto / auth）
@@ -170,6 +174,7 @@
 - 路由注册：`registerRoutes` 先注册 `/api/health`（免鉴权，只回 `{ok:true}`）与 `/api/meta`（需鉴权，返回 version/schemaVersion/startedAt/runtimes），再依次注册 runtime/bot/channel/event/message/permission/assignment/memory/usage/schedule/token/admin（routes/index.ts:30-56），最后注册 SSE（59-64，用进程级 `eventBus` + `createBotIdEnricher`）。
 - 404 语义：未实现端点**故意不注册**（routes/index.ts:26-28）；`setNotFoundHandler` 统一回 `404 {"error":"not_found"}`（server.ts:344-346）；静态资源在 `/api/*` 未命中时返回 false 交给 404，非 API 未知路径回落 `index.html`（server.ts:243-248, 334-341）；统一错误处理回 `500 {"error":"internal_error"}`，不吐堆栈（349-355）。
 - 鉴权：`onRequest` 钩子（server.ts:276-328）跳过 `/api/health`（279）；先查来源锁定，命中回 429 JSON 或 HTML（282-300）；从 `?t=` 或 cookie `agentbot_token` 取 token（auth.ts:73-83）；`verifyToken` 用 `timingSafeEqual`（64-70）；失败回 401 JSON（`/api/*`）或 HTML（非 API 且 Accept 含 text/html，server.ts:42-47, 306-320），并记失败；成功清失败计数，若请求带 `?t=` 则种 `HttpOnly; SameSite=Strict; Path=/` cookie（323-326；auth.ts:85-88）。
+  - **2026-10-28 更新**：上一条已被登录页取代 —— 免鉴权路径多了 `/login`、`/logout`、`/api/auth/logout`；未登录的浏览器导航改为 **302 到 `/login?next=<原路径>`**（不再是 HTML 说明页）；cookie 变**持久**（`Max-Age=30 天`，HTTPS/生产加 `Secure`）；`?t=` 与 cookie 两个候选**逐个校验**。当前实现见 README「登录与登录态」与 `agentbot-05-architecture.md` §8。
 - 限流：连续 10 次失败锁 60s（auth.ts:94-95, 105-133）；锁定期内连 token 都不比对（server.ts:282-300）。
 - token 文件：`~/.agentbot/token`，32 字节 base64url；已有文件长度 ≥32 则复用；写入 mode 0600，Windows 用 icacls（auth.ts:13-30, 41-61）；`resetToken` 清缓存后重新 ensure（32-35）。
 - DTO：`RuntimeDto` 含 `id/displayName/protocol/version/healthStatus/capabilitiesSource/capabilities/adapterName/command/minVersion/availability/executable/meetsMinVersion/probeDetail/lastProbeAt/eventCapabilities/requiresWorktree`（dto.ts:25-52）；`toRuntimeDto` 把 `healthStatus` 设为 `record.availability`，capabilities 映射为 `plan/permission/resume/contextWindow/streaming`（59-88）；`requiresWorktree` 用 `record.permissionChannel ?? undefined` 判定（85-87）。`BotDto`（92-108）、`SessionDto`（297-309）、`EventDto`（498-508）、`toEventDto`（517-532）均在 dto.ts。
@@ -178,6 +183,7 @@
 ### 与 06 的 gap
 - **已验证**：路由集中注册、health 免鉴权、未实现端点不注册→统一 404、token/cookie/限流、DTO 形状。
 - **未找到**：文档 §9 的 `/api/providers` CRUD/test、`/api/mcp`、`/api/skills`；`src/server/http/routes/` 只有 13 个文件（admin/assignments/bots/channels/events/index/memory/messages/permissions/runtimes/schedules/token/usage），无 providers/mcp/skills，按 index 的约定会 404。
+  - 2026-10-28 现状：`routes/` 已扩到 18 个文件（新增 providers / mcp / skills / setup / sessions 等；登录路由在 `http/login.ts`），上述端点均已注册。
 - **假设不成立/事实**：`/api/meta` 的 runtimes 是启动快照（main.ts:107-115, 300-315），启动后新增/重探的运行时不会出现在这里；`GET /api/runtimes` 才读库（routes/runtimes.ts:205-207）。内置运行时若只在启动后注册，不会进入 `/api/meta`。
 - **事实**：`RuntimeDto.requiresWorktree` 由缓存里的 `permissionChannel` 决定；该键为 null 时返回 false（dto.ts:85-87；worktree-guard.ts:26-28），即缓存缺 `_probe.permissionChannel` 的运行时不强制 worktree。
 
