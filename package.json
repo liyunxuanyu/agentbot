@@ -22,7 +22,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint:boundaries": "node scripts/check-boundaries.mjs",
-    "setup:browser": "node scripts/install-browser-mcp.mjs"
+    "setup:browser": "node scripts/install-browser-mcp.mjs",
+    "e2e:mobile": "node scripts/e2e-mobile.mjs"
   },
   "dependencies": {
     "@tanstack/vue-virtual": "^3.10.8",
