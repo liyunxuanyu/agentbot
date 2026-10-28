@@ -420,7 +420,7 @@ pending ──approve/deny/remember──→ decided
 
 1. 客户端按 `event.id` 去重，重复投递直接丢弃。
 2. assistant 正文的**权威副本是 `messages.content`**，不是事件累积。服务端每 250ms 或每 2KB 把增量 flush 进 `content` 并 `content_version++`。
-3. 重连时：先 `GET /messages?channelId=&after=<最后已知 messageId>`，对 `content_version` 更大的消息用服务端文本整体替换本地文本；再回放 `id > lastEventId` 的事件。消息身份由 `messageId` 保证，不会出现重复气泡。
+3. 重连时：先 `GET /api/channels/:id` 拿 `messages`（权威正文，按 `content_version` 整体替换本地文本），再用 `GET /api/sessions/:id/events?afterSeq=` 补事件（含 `meta`），最后回放 `id > lastEventId` 的 SSE 增量。消息身份由 `messageId` 保证，不会出现重复气泡。
 
 **Pinia store 分域**：`bots`、`channels`、`runtimes`、`providers`、`mcp`、`skills`、`setup`（初始化引导状态）、`sessions`（当前会话与消息）、`events`（按 turnId 索引的事件表）、`permissions`（待批与已决）、`ui`（面板开合、主题、toast）。REST 结果落对应 store，SSE 只做增量合并；不引入 TanStack Query，避免两套缓存语义。
 
@@ -428,7 +428,9 @@ pending ──approve/deny/remember──→ decided
 - `events` store 用 `shallowRef<Map<turnId, EventRow[]>>`，Map 内原地 push 后手动 `triggerRef(events)`；仅 Turn 增删时重建 Map。
 - 消息正文用 `shallowRef` 持有 `message.content`，流式 flush 时按 250ms/2KB 整体替换字符串，不逐字 `+=`。
 - 组件用 `computed(() => events.value.get(turnId) ?? [])` 只订阅自己那个 Turn，Turn 内按 `event.id` 做 key。
-**虚拟滚动**：`@tanstack/vue-virtual`（与 React 版同源，API 类似），item 粒度 = 折叠 Turn 一行 / 展开 Turn 内单条事件；会话流行数 >20 才开启（短会话不虚拟化，避免测量抖动），仅渲染可视区 ±5 行（`useVirtualList` 的 `overscan: 5`）。
+**虚拟滚动**：`@tanstack/vue-virtual`（与 React 版同源，API 类似），item 粒度 = 折叠 Turn 一行 / 展开 Turn 内单条事件；**会话流行数 >20 才开启**（短会话不虚拟化，避免测量抖动），只渲染可视区 ±5 行（`useVirtualList` 的 `overscan: 5`）。
+
+> 初稿写「仅渲染可视区 ±50」，实际实现是 ±5；且触发条件是「会话流行数 >20」，不是「单轮事件 >2000 条」。
 
 ---
 
