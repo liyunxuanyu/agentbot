@@ -26,9 +26,32 @@ export const FILE_CHANGE_MAX_CHARS = 32 * 1024;
 /** diff 文本最大字符数。 */
 export const DIFF_MAX_CHARS = 64 * 1024;
 
+/**
+ * 拆行。
+ *
+ * **必须去掉末尾换行产生的那个空串**：`"a\nb\n".split("\n")` 得到
+ * `["a","b",""]`，直接比较会把「文件以换行结尾」当成多出一行空内容 ——
+ * 新建文件时 diff 多渲染一条空 `+` 行、增删计数也多 1（真机实测：
+ * 写一行内容显示 +2）。
+ *
+ * 但「末尾有没有换行」本身是文件内容的差异：`"a\n"` 与 `"a"` 不是同一个文件。
+ * 所以末行没有换行时给它加一个不可见标记参与比较，渲染时再摘掉 ——
+ * 否则这类改动会被 diff 判成「没有任何变化」。
+ */
+const NO_EOL = "\u0000";
+
 function splitLines(text: string): string[] {
   if (text.length === 0) return [];
-  return text.split("\n");
+  const lines = text.split("\n");
+  const endsWithNewline = lines[lines.length - 1] === "";
+  if (endsWithNewline) lines.pop();
+  else lines[lines.length - 1] = `${lines[lines.length - 1]}${NO_EOL}`;
+  return lines;
+}
+
+/** 摘掉「末行无换行」标记，得到用户看到的行文本。 */
+function visibleLine(line: string): string {
+  return line.endsWith(NO_EOL) ? line.slice(0, -1) : line;
 }
 
 /**
@@ -83,13 +106,15 @@ export function unifiedDiff(before: string, after: string): UnifiedDiff {
   const left = truncated ? a.slice(0, DIFF_MAX_LINES) : a;
   const right = truncated ? b.slice(0, DIFF_MAX_LINES) : b;
 
-  const lines = lcsDiff(left, right);
+  const raw = lcsDiff(left, right);
   let added = 0;
   let removed = 0;
-  for (const line of lines) {
+  for (const line of raw) {
     if (line.kind === "+") added += 1;
     else if (line.kind === "-") removed += 1;
   }
+  // 「末行无换行」标记只参与比较，不出现在展示文本里
+  const lines = raw.map((line) => ({ kind: line.kind, text: visibleLine(line.text) }));
   return { lines, added, removed, truncated };
 }
 

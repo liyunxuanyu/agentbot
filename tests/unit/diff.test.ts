@@ -12,11 +12,17 @@ import {
  * 上下文行数量与顺序不作为契约（LCS 可能有多种合法解）。
  */
 describe("unifiedDiff", () => {
-  it("新建文件：全部行都是新增", () => {
+  it("新建文件：全部行都是新增，末尾换行不算一行", () => {
     const d = unifiedDiff("", "a\nb\n");
-    expect(d.added).toBe(3); // "a" / "b" / "" （末尾换行产生的空行）
+    expect(d.added).toBe(2); // "a" / "b" —— 文件末尾的换行不是第三行
     expect(d.removed).toBe(0);
     expect(d.truncated).toBe(false);
+    expect(d.lines.map((l) => `${l.kind}${l.text}`)).toEqual(["+a", "+b"]);
+  });
+
+  it("只差末尾换行也是改动（不能判成没有变化）", () => {
+    const d = unifiedDiff("a\n", "a");
+    expect(d.added + d.removed).toBeGreaterThan(0);
   });
 
   it("单行替换：一加一删，未变更行保留为上下文", () => {
