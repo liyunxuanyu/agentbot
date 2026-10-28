@@ -819,3 +819,119 @@ describe("切 plan 的持久系统块（G3）", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 切 full：挂起请求自动批准（2026-10-28 真机反馈）
+// ---------------------------------------------------------------------------
+
+describe("切 full 时自动批准挂起请求", () => {
+  it("PATCH controls {permissionMode:'full'} → 挂起请求变 decided，响应带 approvedPending", async () => {
+    const { buildServer } = await import("../../src/server/http/server.js");
+    const { createEventBus } = await import("../../src/server/core/events/bus.js");
+    const { createSessionLock } = await import("../../src/server/core/orchestrator/session-lock.js");
+    const { createTurnOrchestrator } = await import("../../src/server/core/orchestrator/turn.js");
+    const { createSupervisor } = await import("../../src/server/core/process/supervisor.js");
+    const { createPermissionResolver } = await import(
+      "../../src/server/core/permissions/resolver.js"
+    );
+    const { listenEphemeral } = await import("./http-listen.js");
+
+    const db = openDb(":memory:");
+    const now = Date.now();
+    // allow_dirs 为空：confirm 模式下「未配置允许目录」的写会落 pending（这是
+    // 用户真机上的形态），切 full 时必须被自动批准。
+    db.prepare(
+      `INSERT INTO bots (id, name, persona, allow_dirs, created_at, updated_at)
+       VALUES ('b1', '小助', '', '[]', ?, ?)`,
+    ).run(now, now);
+    db.prepare(
+      `INSERT INTO channels (id, type, name, participant_bot_ids, created_at)
+       VALUES ('ch1', 'dm', '私聊', '["b1"]', ?)`,
+    ).run(now);
+    db.prepare(
+      `INSERT INTO sessions (id, bot_id, channel_id, status, started_at)
+       VALUES ('s1', 'b1', 'ch1', 'waiting_permission', ?)`,
+    ).run(now);
+
+    const responded: string[] = [];
+    const bus = createEventBus();
+    const supervisor = createSupervisor({ db, bus, resolveRuntime: () => null });
+    const permissions = createPermissionResolver({
+      db,
+      bus,
+      isSessionAlive: () => true,
+      sessionCwdOf: () => dirA,
+      respond: async (_s, requestId) => {
+        responded.push(requestId);
+        return true;
+      },
+      setHeld: () => undefined,
+      setSessionStatus: () => undefined,
+      log: () => undefined,
+    });
+    const orchestrator = createTurnOrchestrator({
+      db,
+      bus,
+      lock: createSessionLock(),
+      resolveRuntime: () => null,
+      supervisor,
+    });
+    const app = buildServer(
+      {
+        db,
+        runtimes: [],
+        schemaVersion: 4,
+        startedAt: now,
+        resolveRuntime: () => null,
+        orchestrator,
+        permissions,
+        assignments: { stop: () => undefined } as never,
+      },
+      { authEnabled: false, webRoot: join(root, "no-web") },
+    );
+    const base = await listenEphemeral(app);
+    try {
+      await permissions.handle({
+        sessionId: "s1",
+        botId: "b1",
+        turnId: "t1",
+        source: "interactive",
+        request: { requestId: "req_full", action: "write", target: join(dirA, "a.md") },
+      });
+      expect(permissions.get("req_full")?.status).toBe("pending");
+
+      const res = await fetch(`${base}/api/sessions/s1/controls`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ permissionMode: "full" }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; approvedPending?: number };
+      expect(body.approvedPending).toBe(1);
+
+      const row = permissions.get("req_full");
+      expect(row?.status).toBe("decided");
+      expect(row?.decision).toBe("approve");
+      // 回传运行时用的原始 requestId（不是落库 id 的后缀形态）
+      expect(responded).toContain("req_full");
+
+      // 审计 meta 带 approvedPending 与 modeSwitchedTo:'full'（分隔条据此生成）
+      const meta = db
+        .prepare(
+          `SELECT payload FROM events WHERE session_id = 's1' AND type = 'meta' ORDER BY id DESC LIMIT 1`,
+        )
+        .get() as { payload: string } | undefined;
+      const payload = JSON.parse(meta?.payload ?? "{}") as {
+        data?: { approvedPending?: number; modeSwitchedTo?: string };
+      };
+      expect(payload.data?.approvedPending).toBe(1);
+      expect(payload.data?.modeSwitchedTo).toBe("full");
+    } finally {
+      await app.close();
+      permissions.dispose();
+      await orchestrator.dispose();
+      await supervisor.dispose();
+      db.close();
+    }
+  });
+});
