@@ -146,11 +146,32 @@ export class McpManager {
     return "removed";
   }
 
+  /**
+   * 重连一个 server（也会把 `mcp.json` 里**新增**的条目接进来）。
+   *
+   * 为什么要重新读盘并合并：`npm run setup:browser` 这类脚本是直接写
+   * `mcp.json` 的（不经过 HTTP 路由），而内存里的 `configs` 是启动时快照。
+   * 旧实现只从盘上找**已有**的那个 id，盘上新增的条目永远进不来 ——
+   * 用户按文档装完浏览器控制、重启服务才生效，与「MCP 热插拔」的说法矛盾
+   * （真机踩到：/api/mcp 一直回空列表）。
+   */
   async reconnect(id: string): Promise<"not_found" | "connected" | "failed"> {
     const existing = this.clients.get(id);
     if (existing) await existing.dispose();
-    const cfg = readMcpFile(this.configPath).servers.find((s) => s.id === id);
-    if (!cfg) return "not_found";
+
+    const file = readMcpFile(this.configPath);
+    const cfg = file.servers.find((s) => s.id === id);
+    if (!cfg) {
+      // 盘上也没有：把它从内存配置里摘掉（外部删了条目，状态不该继续挂着）
+      this.configs = this.configs.filter((s) => s.id !== id);
+      this.clients.delete(id);
+      return "not_found";
+    }
+    // 盘上的条目是权威：合并进内存配置（新增则追加，已有则替换）
+    this.configs = this.configs.some((s) => s.id === id)
+      ? this.configs.map((s) => (s.id === id ? cfg : s))
+      : [...this.configs, cfg];
+
     const client = new McpClient(cfg);
     this.clients.set(id, client);
     if (!cfg.enabled) {
@@ -163,6 +184,33 @@ export class McpManager {
     } catch {
       return "failed";
     }
+  }
+
+  /**
+   * 把所有 `mcp.json` 里还没接进来的条目补上（不重连已连接的）。
+   *
+   * 给「外部脚本改了配置文件，用户点刷新」这个场景用；返回新接入的 id。
+   */
+  async syncFromFile(): Promise<string[]> {
+    const file = readMcpFile(this.configPath);
+    const added: string[] = [];
+    for (const cfg of file.servers) {
+      if (this.clients.has(cfg.id)) continue;
+      this.configs = [...this.configs.filter((s) => s.id !== cfg.id), cfg];
+      const client = new McpClient(cfg);
+      this.clients.set(cfg.id, client);
+      added.push(cfg.id);
+      if (!cfg.enabled) {
+        client.status = "disabled";
+        continue;
+      }
+      try {
+        await client.connect();
+      } catch {
+        // 单个失败只标状态，不影响其它
+      }
+    }
+    return added;
   }
 
   statuses(): McpServerStatus[] {

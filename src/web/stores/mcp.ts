@@ -72,6 +72,32 @@ export const useMcpStore = defineStore("mcp", () => {
     }
   }
 
+  /**
+   * 把 `mcp.json` 里外部新增的条目接进来（`npm run setup:browser` 之后点「刷新」）。
+   *
+   * 旧实现的「刷新」只重拉 `GET /api/mcp`，而列表来自服务启动时的内存快照 ——
+   * 外部脚本写盘的新条目永远不出现，用户必须重启服务。返回新接入的数量。
+   */
+  async function sync(): Promise<number> {
+    status.value = "loading";
+    try {
+      const res = await api.syncMcpServers();
+      servers.value = res.servers;
+      running.value = true;
+      status.value = res.servers.length === 0 ? "empty" : "ready";
+      return res.added.length;
+    } catch (err) {
+      if (isMissingEndpoint(err)) {
+        // 旧构建没有这个端点：退回普通刷新，并如实提示要重启
+        await load();
+        return 0;
+      }
+      errorText.value = err instanceof Error ? err.message : "同步 MCP 配置失败";
+      status.value = "error";
+      throw err;
+    }
+  }
+
   return {
     servers,
     running,
@@ -85,5 +111,6 @@ export const useMcpStore = defineStore("mcp", () => {
     update,
     remove,
     reconnect,
+    sync,
   };
 });

@@ -1062,6 +1062,16 @@ async function rescanSkills(): Promise<void> {
 // ---------------------------------------------------------------------------
 // 生命周期
 // ---------------------------------------------------------------------------
+/** 刷新 MCP：先同步配置文件里外部新增的条目，再拉列表。 */
+async function refreshMcp(): Promise<void> {
+  try {
+    const added = await mcp.sync();
+    ui.toast(added > 0 ? `已接入 ${added} 个新 MCP server` : "MCP 配置已是最新");
+  } catch {
+    ui.toast("同步 MCP 配置失败，请查看服务端日志");
+  }
+}
+
 onMounted(async () => {
   ui.setCrumb([{ text: "设置" }]);
   if (runtimes.runtimes.length === 0) void runtimes.load();
@@ -1410,7 +1420,13 @@ onBeforeUnmount(() => {
               {{ mcp.servers.length }} 个 · 已连接 {{ mcp.connectedCount }} · {{ mcp.toolCount }} 个工具
             </span>
             <span class="spacer" />
-            <button class="btn btn--sm btn--secondary" :disabled="mcp.status === 'loading'" @click="mcp.load()">刷新</button>
+            <!-- 刷新 = 重新读 mcp.json 并接入外部新增的条目（`npm run setup:browser`
+                 直接写盘，不经过 POST /api/mcp）。旧实现只重拉内存快照，新条目要重启才出现。 -->
+            <button
+              class="btn btn--sm btn--secondary"
+              :disabled="mcp.status === 'loading'"
+              @click="refreshMcp"
+            >刷新</button>
             <button class="btn btn--sm btn--primary" @click="openAddMcp">添加 server</button>
           </div>
 

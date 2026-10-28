@@ -172,6 +172,17 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: ServerContext): voi
     return reply.code(204).send();
   });
 
+  /**
+   * 把 `mcp.json` 里外部新增的条目接进来（不重连已连接的）。
+   *
+   * 场景：`npm run setup:browser` 直接写配置文件，不经过 POST /api/mcp。
+   * 旧实现下这些条目要重启服务才可见；设置页的「刷新」现在走这个端点。
+   */
+  app.post("/api/mcp/sync", async () => {
+    const added = (await ctx.mcp?.syncFromFile()) ?? [];
+    return { added, servers: ctx.mcp?.statuses() ?? [] };
+  });
+
   app.post<{ Params: { id: string } }>("/api/mcp/:id/reconnect", async (req, reply) => {
     if (!ctx.mcp) return json(reply, 409, { error: "mcp_unavailable" });
     const result = await ctx.mcp.reconnect(req.params.id);

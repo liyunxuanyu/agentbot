@@ -217,6 +217,75 @@ describe("MCP 热插拔（N3-2）", () => {
   }, 30_000);
 });
 
+describe("MCP 配置外部变更（npm run setup:browser 直接写盘）", () => {
+  /**
+   * 真机踩到：用脚本把 playwright 条目写进 mcp.json 后，`/api/mcp` 一直回空列表，
+   * 必须重启服务才生效 —— 与「MCP 热插拔」的说法矛盾。
+   *
+   * 根因：`configs` 是启动时的内存快照，`reconnect()` 只从盘上找**已有**的 id，
+   * 盘上新增的条目永远进不来。
+   */
+  it("syncFromFile() 接入盘上新增的条目，且不重连已连接的", async () => {
+    const dir = tempDir();
+    const server = fakeServer(dir);
+    const configPath = join(dir, "mcp.json");
+    writeMcpFile(
+      { servers: [{ id: "old", command: server.command, args: server.args, enabled: true }] },
+      configPath,
+    );
+    const manager = new McpManager(configPath);
+    await manager.start();
+    expect(manager.tools().map((t) => t.name)).toEqual(["mcp__old__echo"]);
+
+    // 外部脚本追加一条（模拟 install-browser-mcp.mjs）
+    writeMcpFile(
+      {
+        servers: [
+          { id: "old", command: server.command, args: server.args, enabled: true },
+          { id: "playwright", command: server.command, args: server.args, enabled: true, permission: "network" },
+        ],
+      },
+      configPath,
+    );
+
+    const added = await manager.syncFromFile();
+    expect(added).toEqual(["playwright"]);
+    expect(manager.statuses().map((s) => s.id).sort()).toEqual(["old", "playwright"]);
+    expect(manager.tools().map((t) => t.name).sort()).toEqual([
+      "mcp__old__echo",
+      "mcp__playwright__echo",
+    ]);
+    expect(manager.statuses().find((s) => s.id === "playwright")?.permission).toBe("network");
+
+    // 幂等：再同步一次不重复接入
+    expect(await manager.syncFromFile()).toEqual([]);
+    await manager.dispose();
+  }, 30_000);
+
+  it("reconnect() 也能接入盘上新增的条目；盘上删掉后状态不再挂着", async () => {
+    const dir = tempDir();
+    const server = fakeServer(dir);
+    const configPath = join(dir, "mcp.json");
+    writeMcpFile({ servers: [] }, configPath);
+    const manager = new McpManager(configPath);
+    await manager.start();
+
+    writeMcpFile(
+      { servers: [{ id: "fresh", command: server.command, args: server.args, enabled: true }] },
+      configPath,
+    );
+    expect(await manager.reconnect("fresh")).toBe("connected");
+    expect(manager.tools().map((t) => t.name)).toEqual(["mcp__fresh__echo"]);
+
+    // 外部把条目删掉：再 reconnect 要清掉内存里的状态
+    writeMcpFile({ servers: [] }, configPath);
+    expect(await manager.reconnect("fresh")).toBe("not_found");
+    expect(manager.statuses()).toEqual([]);
+    expect(manager.tools()).toEqual([]);
+    await manager.dispose();
+  }, 30_000);
+});
+
 describe("MCP 热插拔的 HTTP 层（N3-2）", () => {
   it("POST/PATCH/DELETE 直接生效，响应不要求重启", async () => {
     const { buildServer } = await import("../../src/server/http/server.js");

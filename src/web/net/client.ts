@@ -543,6 +543,17 @@ export const api = {
       { method: "POST", timeoutMs: 30_000 },
     ),
 
+  /**
+   * 把 `mcp.json` 里外部新增的条目接进来（`npm run setup:browser` 写盘后
+   * 不用重启服务）。返回新接入的 id 与最新列表。
+   */
+  syncMcpServers: (signal?: AbortSignal) =>
+    request<{ added: string[]; servers: McpServerDto[] }>("/api/mcp/sync", {
+      method: "POST",
+      signal,
+      timeoutMs: 60_000,
+    }),
+
   skills: (signal?: AbortSignal) => request<SkillsResponse>("/api/skills", { signal }),
 
   /** 初始化引导的完成度（N1）：首启跳转与侧栏提示共用。 */
