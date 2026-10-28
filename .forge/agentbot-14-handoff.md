@@ -2,6 +2,9 @@
 
 > 写于 2026-10-27。给「换一台设备接着做」的人看：现状、要做什么、按什么顺序、哪里会踩坑。
 > 口径源头是 [`agentbot-11-requirements-align.md`](agentbot-11-requirements-align.md)；本文是执行视角的拆解。
+> **历史文档**：本文的「现状」只覆盖 2026-10-27 那一轮。2026-10-28 之后又落地了
+> 18 号 7 条缺口、19 号四条需求与登录页/持久 cookie，当前状态请看 README 与
+> [`docs/memory/agentbot-project-state.md`](../../docs/memory/agentbot-project-state.md)。
 
 ## 1. 现在在哪
 
@@ -169,8 +172,15 @@ git clone https://github.com/liyunxuanyu/agentbot.git
 cd agentbot
 git checkout continue-dev
 npm install
-npm run build && npm run start:local     # 控制台打印带 token 的 URL
+npm run build && npm run start:local     # 控制台打印登录页地址与带 token 的链接
 ```
+
+打开 `http://127.0.0.1:8787/login` 输入 `~/.agentbot/token` 里的令牌即可（2026-10-28 起
+支持持久 HttpOnly cookie，见 README「登录与登录态」；旧的 `?t=<token>` 链接仍有效）。
+
+> 本文写于 2026-10-27，描述的是**上一轮（会话控制 / 记忆隔离 / 管理员 Bot）**的交接状态。
+> 2026-10-28 又完成了 18 号 7 条缺口与 19 号四条需求（初始化引导 / 基础技能 / 热插拔 /
+> 技能按需加载），当前状态以 README 与 `docs/memory/agentbot-project-state.md` 为准。
 
 然后按顺序读：
 
