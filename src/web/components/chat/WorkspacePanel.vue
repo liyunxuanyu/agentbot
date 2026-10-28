@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { ApiError, api } from "../../net/client";
 import type { ChangedFileDto, FileContentDto, FileDiffDto, FileTreeEntryDto } from "../../net/types";
 import AppIcon from "../common/AppIcon.vue";
@@ -45,6 +45,8 @@ const detailLoading = ref(false);
 const error = ref("");
 /** 上次成功加载对应的 `botId:sessionId`：props 迟到时用来判断要不要补拉。 */
 const loadedFor = ref<string | null>(null);
+/** 详情区（窄屏下在列表下方，选中文件后要滚过去，否则用户以为点了没反应）。 */
+const detailEl = ref<HTMLElement | null>(null);
 
 const selectedChange = computed(() =>
   selected.value ? (changes.value.find((f) => f.path === selected.value) ?? null) : null,
@@ -117,6 +119,13 @@ async function selectFile(path: string): Promise<void> {
   error.value = "";
   content.value = null;
   diff.value = null;
+  // 窄屏（<900px）时详情区在列表下方、单列排布：点了文件不滚过去的话，
+  // 用户看到的仍是列表，以为「点了没反应」（真机反馈的形态）。
+  // 宽屏是左右两栏，详情本来就在视野里，不滚。
+  if (typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches) {
+    await nextTick();
+    detailEl.value?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
   try {
     // 两个请求并行：diff 可能不存在（未改动），内容也可能不可读（二进制）
     const [fileRes, diffRes] = await Promise.allSettled([
@@ -234,12 +243,12 @@ function copy(text: string): void {
           </template>
         </div>
 
-        <div class="ws-detail">
+        <div ref="detailEl" class="ws-detail">
           <div v-if="!selected" class="hint">选一个文件查看内容或 diff。</div>
           <div v-else-if="detailLoading" class="hint">读取…</div>
           <template v-else>
             <div class="ws-detail-head">
-              <span class="u-mono ws-path" :title="selected">{{ selected }}</span>
+              <span class="u-mono ws-path ws-detail-path" :title="selected">{{ selected }}</span>
               <span class="spacer" />
               <span v-if="content" class="u-faint">{{ content.size }} 字节</span>
               <button v-if="content" class="btn btn--sm btn--ghost" @click="copy(content.content)">复制内容</button>
