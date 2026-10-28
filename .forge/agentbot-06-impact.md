@@ -2,6 +2,8 @@
 
 > 输入：`.forge/agentbot-06-builtin-engine.md`、`.forge/agentbot-09-change-spec.md`、`.forge/agentbot-08-existing/backend.md`
 > 结论：**加法式改动**，不改既有通道协议；风险集中在四处契约扩展、一处迁移、一处无进程生命周期。
+> **历史文档（2026-10-26）**：其中「内置工具 8 个」在 2026-10-28 已增至 10 个（+`list_skills`、`create_bot`），
+> 设置页也从三个分区扩到八个。当前状态以 README 为准。
 
 ## 1. 改动模块
 

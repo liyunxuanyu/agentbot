@@ -4,6 +4,9 @@
 > 验收依据：`agentbot-01-prd.md` P0-01 至 P0-15 的「验收标准」与「边界处理」两列
 > 验收方式：两个 critic 实例并行只读验收（分 P0-01~08 / P0-09~15），主流程独立复测
 > 日期：2026-10-25
+> **历史报告**：本报告描述的是 2026-10-25 的代码状态。之后 P0-14 的「HTML 说明页」已被
+> 服务端登录页 + 持久 HttpOnly cookie 取代（2026-10-28，见 README「登录与登录态」），
+> 相关小节保留作演进记录。
 
 ---
 
@@ -150,6 +153,10 @@ build:server           dist/server.js 产出正常
 **新增测试**：`tests/unit/http-auth-page.test.ts` 5 条（HTML 页 / `/api/*` 仍 JSON / fetch 默认仍 JSON / 带 token 能进 SPA 并种 cookie / 429 也是 HTML 页）。
 
 **复测**：`vitest` 336/336 全绿；浏览器实测「带 token 打开一次 → 之后直接点导航均可用」。
+
+> **后续演进（2026-10-28）**：这里的「HTML 说明页」已被**服务端渲染登录页**取代 ——
+> 浏览器导航现在 302 到 `/login?next=<原路径>`，用户输入令牌后种 30 天 HttpOnly cookie；
+> `http-auth-page.test.ts` 的断言相应改为「302 + location 指向 /login」。详见 README「登录与登录态」。
 
 ---
 
