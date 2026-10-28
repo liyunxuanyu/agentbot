@@ -4,7 +4,7 @@
 > 口径源头是 [`agentbot-11-requirements-align.md`](agentbot-11-requirements-align.md)；本文是执行视角的拆解。
 > **历史文档**：本文的「现状」只覆盖 2026-10-27 那一轮。2026-10-28 之后又落地了
 > 18 号 7 条缺口、19 号四条需求与登录页/持久 cookie，当前状态请看 README 与
-> [`docs/memory/agentbot-project-state.md`](../../docs/memory/agentbot-project-state.md)。
+> [`docs/memory/agentbot-project-state.md`](../docs/memory/agentbot-project-state.md)。
 
 ## 1. 现在在哪
 
